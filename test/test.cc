@@ -15,7 +15,7 @@
 struct init_logging
 {
   init_logging() {
-    boost::log::core::get()->set_filter(boost::log::trivial::severity >= boost::log::trivial::info);
+    boost::log::core::get()->set_filter(boost::log::trivial::severity >= boost::log::trivial::debug);
   }
 };
 
@@ -344,3 +344,299 @@ BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
   // heartbeats time out.  Candidate then regains connection to leader and starts a new election.  The leader gets
   // a vote request at new term but doesn't vote for candidate due to the fact that the candidate is behind on log messages.
 }
+
+class RaftTestFixture
+{
+public:
+  std::size_t cluster_size;
+  raft::test_communicator comm;
+  raft::client c;
+  std::shared_ptr<raft::server> s;
+
+  RaftTestFixture();
+  ~RaftTestFixture()
+  {
+  }
+
+  void make_leader(uint64_t term);
+};
+
+RaftTestFixture::RaftTestFixture()
+  :
+  cluster_size(5)
+{
+  std::vector<raft::peer> peers(cluster_size);
+  for(std::size_t i=0; i<cluster_size; ++i) {
+    peers[i].peer_id = i;
+  }
+  s.reset(new raft::server(comm, c, 0, peers));
+  BOOST_CHECK_EQUAL(0U, s->current_term());
+  BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s->get_state());
+  BOOST_CHECK_EQUAL(0U, comm.q.size());
+}
+
+void RaftTestFixture::make_leader(uint64_t term)
+{
+  std::this_thread::sleep_for (std::chrono::milliseconds(500));
+  s->on_timer();
+  BOOST_CHECK_EQUAL(term, s->current_term());
+  BOOST_CHECK_EQUAL(raft::server::CANDIDATE, s->get_state());
+  BOOST_CHECK_EQUAL(cluster_size-1, comm.q.size());
+  while(comm.q.size() > 0) {
+    BOOST_CHECK_EQUAL(0U, comm.q.back().which());
+    comm.q.pop_back();
+  }
+  raft::vote_response vote_response_msg;
+  for(uint64_t p=1; p!=cluster_size; ++p) {
+    vote_response_msg.peer_id = p;
+    vote_response_msg.term_number = term;
+    vote_response_msg.request_term_number = term;
+    vote_response_msg.granted = true;
+    s->on_vote_response(vote_response_msg);
+  }
+  BOOST_CHECK_EQUAL(raft::server::LEADER, s->get_state());
+  BOOST_CHECK_EQUAL(cluster_size-1, comm.q.size());
+  while(comm.q.size() > 0) {
+    BOOST_CHECK_EQUAL(2U, comm.q.back().which());
+    comm.q.pop_back();
+  }
+}
+
+BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
+{
+  {
+    raft::append_entry msg;
+    msg.recipient_id = 0;
+    msg.term_number = 1;
+    msg.leader_id = 1;
+    msg.previous_log_index = 0;
+    msg.previous_log_term = 0;
+    msg.leader_commit_index = 0;
+    msg.entry.push_back(raft::log_entry());
+    msg.entry.back().type = raft::log_entry::COMMAND;
+    msg.entry.back().term = 1;
+    msg.entry.back().data = "1";
+    s->on_append_entry(msg);
+  }
+  BOOST_CHECK_EQUAL(1U, s->current_term());
+  BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s->get_state());
+  BOOST_CHECK_EQUAL(0U, comm.q.size());
+
+  s->on_log_sync(1);
+  BOOST_CHECK_EQUAL(1U, s->current_term());
+  BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s->get_state());
+  BOOST_CHECK_EQUAL(1U, comm.q.size());
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_response>(comm.q.back()).recipient_id);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_response>(comm.q.back()).term_number);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_response>(comm.q.back()).request_term_number);
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_response>(comm.q.back()).begin_index);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_response>(comm.q.back()).last_index);
+  BOOST_CHECK(boost::get<raft::append_response>(comm.q.back()).success);
+  comm.q.pop_back();
+
+  // Pretend a leader from expired term sends a message, this should respond with current term
+  {
+    raft::append_entry msg;
+    msg.recipient_id = 0;
+    msg.term_number = 0;
+    msg.leader_id = 2;
+    msg.previous_log_index = 2;
+    msg.previous_log_term = 1;
+    msg.leader_commit_index = 1;
+    msg.entry.push_back(raft::log_entry());
+    msg.entry.back().type = raft::log_entry::COMMAND;
+    msg.entry.back().term = 0;
+    msg.entry.back().data = "0";
+    s->on_append_entry(msg);
+  }
+  BOOST_CHECK_EQUAL(1U, s->current_term());
+  BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s->get_state());
+  BOOST_CHECK_EQUAL(1U, comm.q.size());
+  BOOST_CHECK_EQUAL(3U, comm.q.back().which());
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_response>(comm.q.back()).recipient_id);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_response>(comm.q.back()).term_number);
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_response>(comm.q.back()).request_term_number);
+  BOOST_CHECK(!boost::get<raft::append_response>(comm.q.back()).success);
+  comm.q.pop_back();
+
+  // Supposing the leader has committed lets go to another message
+  // which creates a gap.  This should be rejected by the peer.
+  {
+    raft::append_entry msg;
+    msg.recipient_id = 0;
+    msg.term_number = 1;
+    msg.leader_id = 1;
+    msg.previous_log_index = 2;
+    msg.previous_log_term = 1;
+    msg.leader_commit_index = 1;
+    msg.entry.push_back(raft::log_entry());
+    msg.entry.back().type = raft::log_entry::COMMAND;
+    msg.entry.back().term = 1;
+    msg.entry.back().data = "3";
+    s->on_append_entry(msg);
+  }
+  BOOST_CHECK_EQUAL(1U, s->current_term());
+  BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s->get_state());
+  BOOST_CHECK_EQUAL(1U, comm.q.size());
+  BOOST_CHECK_EQUAL(3U, comm.q.back().which());
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_response>(comm.q.back()).recipient_id);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_response>(comm.q.back()).term_number);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_response>(comm.q.back()).request_term_number);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_response>(comm.q.back()).last_index);
+  BOOST_CHECK(!boost::get<raft::append_response>(comm.q.back()).success);
+  comm.q.pop_back();
+
+  // Send three messages with the first one a duplicate
+  {
+    raft::append_entry msg;
+    msg.recipient_id = 0;
+    msg.term_number = 1;
+    msg.leader_id = 1;
+    msg.previous_log_index = 0;
+    msg.previous_log_term = 0;
+    msg.leader_commit_index = 0;
+    for(std::size_t i=1; i<=3; ++i) {
+      msg.entry.push_back(raft::log_entry());
+      msg.entry.back().type = raft::log_entry::COMMAND;
+      msg.entry.back().term = 1;
+      msg.entry.back().data = (boost::format("%1%") % i).str();
+    }
+    s->on_append_entry(msg);
+  }
+  BOOST_CHECK_EQUAL(1U, s->current_term());
+  BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s->get_state());
+  BOOST_CHECK_EQUAL(0U, comm.q.size());
+  s->on_log_sync(3);
+  BOOST_CHECK_EQUAL(1U, s->current_term());
+  BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s->get_state());
+  BOOST_CHECK_EQUAL(1U, comm.q.size());
+  BOOST_CHECK_EQUAL(3U, comm.q.back().which());
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_response>(comm.q.back()).recipient_id);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_response>(comm.q.back()).term_number);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_response>(comm.q.back()).request_term_number);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_response>(comm.q.back()).begin_index);
+  BOOST_CHECK_EQUAL(3U, boost::get<raft::append_response>(comm.q.back()).last_index);
+  BOOST_CHECK(boost::get<raft::append_response>(comm.q.back()).success);
+  comm.q.pop_back();
+
+  // Let's go to another message
+  // which uses a newer term.  The idea in this example is that entries previously
+  // sent to the peer didn't get committed but a new leader got elected and DID commit
+  // at those indexes and is trying to append from them on the new term.  We must reject
+  // so that the new leader backs up to find where its log agrees with that of the peer.
+  {
+    raft::append_entry msg;
+    msg.recipient_id = 0;
+    msg.term_number = 3;
+    msg.leader_id = 2;
+    msg.previous_log_index = 3;
+    msg.previous_log_term = 3;
+    msg.leader_commit_index = 3;
+    msg.entry.push_back(raft::log_entry());
+    msg.entry.back().type = raft::log_entry::COMMAND;
+    msg.entry.back().term = 3;
+    msg.entry.back().data = "4";
+    s->on_append_entry(msg);
+  }
+  BOOST_CHECK_EQUAL(3U, s->current_term());
+  BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s->get_state());
+  BOOST_CHECK_EQUAL(1U, comm.q.size());
+  BOOST_CHECK_EQUAL(3U, comm.q.back().which());
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_response>(comm.q.back()).recipient_id);
+  BOOST_CHECK_EQUAL(3U, boost::get<raft::append_response>(comm.q.back()).term_number);
+  BOOST_CHECK_EQUAL(3U, boost::get<raft::append_response>(comm.q.back()).request_term_number);
+  BOOST_CHECK_EQUAL(3U, boost::get<raft::append_response>(comm.q.back()).last_index);
+  BOOST_CHECK(!boost::get<raft::append_response>(comm.q.back()).success);
+  comm.q.pop_back();
+
+  // Let's suppose that only log entry at index 1 on term 1 got committed.  We should be able to
+  // overwrite log entries starting at that point.
+  {
+    raft::append_entry msg;
+    msg.recipient_id = 0;
+    msg.term_number = 3;
+    msg.leader_id = 2;
+    msg.previous_log_index = 1;
+    msg.previous_log_term = 1;
+    msg.leader_commit_index = 3;
+    for (std::size_t i=2; i<=4; ++i) {
+      msg.entry.push_back(raft::log_entry());
+      msg.entry.back().type = raft::log_entry::COMMAND;
+      msg.entry.back().term = 3;
+      msg.entry.back().data = (boost::format("%1%a") % i).str();
+    }
+    s->on_append_entry(msg);
+  }
+  BOOST_CHECK_EQUAL(3U, s->current_term());
+  BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s->get_state());
+  BOOST_CHECK_EQUAL(0U, comm.q.size());
+  s->on_log_sync(4);
+  BOOST_CHECK_EQUAL(3U, s->current_term());
+  BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s->get_state());
+  BOOST_CHECK_EQUAL(1U, comm.q.size());
+  BOOST_CHECK_EQUAL(3U, comm.q.back().which());
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_response>(comm.q.back()).recipient_id);
+  BOOST_CHECK_EQUAL(3U, boost::get<raft::append_response>(comm.q.back()).term_number);
+  BOOST_CHECK_EQUAL(3U, boost::get<raft::append_response>(comm.q.back()).request_term_number);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_response>(comm.q.back()).begin_index);
+  BOOST_CHECK_EQUAL(4U, boost::get<raft::append_response>(comm.q.back()).last_index);
+  BOOST_CHECK(boost::get<raft::append_response>(comm.q.back()).success);
+  comm.q.pop_back();
+}
+
+BOOST_FIXTURE_TEST_CASE(AppendEntriesNegativeResponse, RaftTestFixture)
+{
+  // Make me leader
+  make_leader(1);
+  // Client request to trigger append entries
+  raft::client_request cli_req;
+  cli_req.id = 1;
+  cli_req.command = "1";
+  s->on_client_request(cli_req);
+
+  // On first attempt have clients respond negatively.  On second have them succeed
+  for(std::size_t attempt=0; attempt<=1; ++attempt) {
+    // Wait so the server will try to send log records.
+    s->on_timer();
+    BOOST_CHECK_EQUAL(1U, s->current_term());
+    BOOST_CHECK_EQUAL(raft::server::LEADER, s->get_state());
+    BOOST_CHECK_EQUAL(cluster_size-1, comm.q.size());
+    uint64_t expected = 1;
+    while(comm.q.size() > 0) {
+      BOOST_CHECK_EQUAL(2U, comm.q.back().which());
+      BOOST_CHECK_EQUAL(expected, boost::get<raft::append_entry>(comm.q.back()).recipient_id);
+      BOOST_CHECK_EQUAL(1U, boost::get<raft::append_entry>(comm.q.back()).term_number);
+      BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).leader_id);
+      BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).previous_log_index);
+      BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).previous_log_term);
+      BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).leader_commit_index);
+      BOOST_CHECK_EQUAL(1U, boost::get<raft::append_entry>(comm.q.back()).entry.size());
+      BOOST_CHECK_EQUAL(raft::log_entry::COMMAND, boost::get<raft::append_entry>(comm.q.back()).entry[0].type);
+      BOOST_CHECK_EQUAL(1U, boost::get<raft::append_entry>(comm.q.back()).entry[0].term);
+      BOOST_CHECK_EQUAL(0, ::strcmp("1", boost::get<raft::append_entry>(comm.q.back()).entry[0].data.c_str()));
+      raft::append_response resp;
+      resp.recipient_id = expected;
+      resp.term_number = 1;
+      resp.request_term_number = 1;
+      resp.begin_index = 0;
+      resp.last_index = attempt == 0 ? 0 : 1;
+      resp.success = attempt == 0 ? false : true;
+      s->on_append_response(resp);
+      if (attempt==0 || expected!=3) {
+	BOOST_CHECK_EQUAL(0U, c.responses.size());
+      } else {
+	// Majority vote!
+	BOOST_CHECK_EQUAL(1U, c.responses.size());
+	BOOST_CHECK_EQUAL(1U, c.responses.back().id);
+	c.responses.pop_back();
+      }
+      expected += 1;
+      comm.q.pop_back();
+    }
+  }
+}
+
+// TODO: Leader creates some log entries but fails to replicate them and crashes.  While crashed the rest of the cluster picks up
+// and moves forward on a new term (or many new terms) and successfully replicate entries.  Once the former leader rejoins the cluster
+// and the new leader figures out the last index in the former leaders log that doesn't cause a gap, we'll detect a term mismatch on
+// the tail of the old leaders log and eventually make our way back to the point at which the logs agree.

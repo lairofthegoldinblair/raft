@@ -56,8 +56,14 @@ namespace raft {
       return entries_.at(i - start_index());
     }
 
+    const log_entry & last_entry() const
+    {
+      return entries_.back();
+    }
+
     /**
-     * Index of first entry in log.  Only valid if !empty()
+     * Index of first entry in log.  Only valid if !empty() or equivalently
+     * if start_index() != last_index().
      */
     index_type start_index() const
     {
@@ -65,7 +71,7 @@ namespace raft {
     }
 
     /**
-     * Points one past the last index inserted.
+     * Points one past the last index inserted.  Always valid.
      */
     index_type last_index() const
     {
@@ -85,11 +91,14 @@ namespace raft {
       // TODO:
     }
     /**
-     * Throw away the entries of the log in the range (idx, last_index()]
+     * Throw away the entries of the log in the range [idx, last_index())
      */
     void truncate_suffix(index_type idx)
     {
-      // TODO:
+      index_type last = last_index();
+      while (idx++ < last) {
+	entries_.pop_back();
+      }
     }
   };
 }

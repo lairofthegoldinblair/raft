@@ -57,7 +57,16 @@ namespace raft {
     uint64_t recipient_id;
     uint64_t term_number;
     uint64_t leader_id;
-    // One after the last log entry sent
+    // Basic point of Raft is the Log Matching Property which comprises:
+    // 1) Index and Term of a log entry uniquely define the content
+    // 2) If two logs have entries at the same index with the same term then all preceeding entries
+    // also agree
+    //
+    // Part 1) of the property arises by having a leader be the only one that proposes entries and guaranteeing
+    // that a leader never modifies a log entry with a given (index,term) once created.  Part 2) is guaranteed
+    // by ensuring that a peer never appends to its log from a leader unless the content of the last entry is correct; by
+    // Part 1) the content of that last entry may be specified by sending the (index,term) from the leader on every append request.
+    // One after the last log entry sent.  If no log entries sent yet then 0.
     uint64_t previous_log_index;
     // The last term sent (only valid if previous_log_index > 0).
     uint64_t previous_log_term;
@@ -118,6 +127,8 @@ namespace raft {
     boost::logic::tribool vote_;
     // Used only when LEADER; when does this peer need another heartbeat?
     std::chrono::time_point<std::chrono::steady_clock> requires_heartbeat_;
+    // Is the value of next_index_ a guess or has it been confirmed by communication with the peer
+    bool is_next_index_reliable_;
   };
 
   class client_response_continuation
@@ -134,6 +145,8 @@ namespace raft {
   class append_entry_continuation
   {
   public:
+    // Leader that sent the append entry request we are responding to.
+    uint64_t leader_id;
     // The log index we need flushed
     uint64_t begin_index;
     uint64_t end_index;
@@ -191,7 +204,12 @@ namespace raft {
     in_memory_log log_;
 
     // TODO: How to determine committed.  Right now this is only updated
-    // in on_log_sync; is that right? 
+    // in on_log_sync; is that right?  No, we can learn of the commit from a
+    // checkpoint or from a majority of peers acknowledging a log entry.
+    // last_committed_index_ represents the last point in the log that we KNOW
+    // is replicated and therefore safe to apply to a state machine.  It may
+    // be an underestimate of last successfully replicated log entry but that fact
+    // will later be learned (e.g. when a leader tries to append again).
     uint64_t last_committed_index_;
     // TODO: How to determine applied
     uint64_t last_applied_index_;
@@ -206,8 +224,9 @@ namespace raft {
 
     uint64_t last_log_entry_term() const {
       // Something subtle with snapshots/checkpoints occurs here.  
-      // Presumably after a checkpoint we have no log entries!
-      return log_.empty() ? last_checkpoint_term_ : log_.entry(log_.last_index()).term;
+      // Presumably after a checkpoint we have no log entries so the term has to be recorded at the time
+      // of the checkpoint!
+      return log_.empty() ? last_checkpoint_term_ : log_.last_entry().term;
     }
     uint64_t last_log_entry_index() const {
       return log_.last_index();
