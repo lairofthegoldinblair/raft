@@ -45,10 +45,23 @@ namespace raft {
       return std::make_pair(start_added, last_added);
     }
 
-    void append(uint64_t current_term, uint64_t voted_for)
+    void update_header(uint64_t current_term, uint64_t voted_for)
     {
       current_term_ = current_term;
       voted_for_ = voted_for;
+    }
+
+    uint64_t current_term() const {
+      return current_term_;
+    }
+    
+    uint64_t voted_for() const {
+      return voted_for_;
+    }
+
+    void sync_header()
+    {
+      // TODO: Implement
     }
 
     const log_entry & entry(index_type i) const
@@ -88,8 +101,13 @@ namespace raft {
      */
     void truncate_prefix(index_type idx)
     {
-      // TODO:
+      index_type i = start_index_;
+      while(i++ < idx) {
+	entries_.pop_front();
+      }
+      start_index_ = idx;
     }
+
     /**
      * Throw away the entries of the log in the range [idx, last_index())
      */
