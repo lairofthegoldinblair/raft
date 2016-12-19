@@ -1375,18 +1375,21 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpoint, RaftTestFixture)
   comm.q.pop_back();
 
   raft::append_checkpoint_chunk_response resp;
-  resp.recipient_id = 1;
-  resp.term_number = 1U;
-  resp.request_term_number = 1U;
-  resp.bytes_stored = 2U;
-  s->on_append_checkpoint_chunk_response(resp);  
-  BOOST_REQUIRE_EQUAL(1U, comm.q.size());
-  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).recipient_id);
-  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).term_number);
-  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).leader_id);
-  BOOST_CHECK_EQUAL(2U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).checkpoint_begin);
-  BOOST_CHECK_EQUAL(4U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).checkpoint_end);
-  comm.q.pop_back();
+  // Ack with bytes_stored=2 twice to validate the checkpoint protocol will resend data if requested
+  for(int i=0; i<2; ++i) {
+    resp.recipient_id = 1;
+    resp.term_number = 1U;
+    resp.request_term_number = 1U;
+    resp.bytes_stored = 2U;
+    s->on_append_checkpoint_chunk_response(resp);  
+    BOOST_REQUIRE_EQUAL(1U, comm.q.size());
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).checkpoint_begin);
+    BOOST_CHECK_EQUAL(4U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).checkpoint_end);
+    comm.q.pop_back();
+  }
 
   resp.recipient_id = 1;
   resp.term_number = 1U;
@@ -1409,6 +1412,68 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpoint, RaftTestFixture)
   BOOST_REQUIRE_EQUAL(0U, comm.q.size());
 }
 
+// Test that a checkpoint transfer is properly cancelled by a term update
+BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpointAbandon, RaftTestFixture)
+{
+  uint64_t term = 1;
+  make_leader(term);
+
+  const char * cmd = "1";
+  uint64_t client_index=0;
+  // Send success response from all peers except 1.  This will commit entry
+  // so that it can be checkpointed.
+  boost::dynamic_bitset<> responses;
+  responses.resize(cluster_size, true);
+  responses.flip(1);
+  send_client_request(term, cmd, client_index++, responses);
+  BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
+  BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
+  BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+  
+  auto ckpt = s->begin_checkpoint(1U);
+  BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
+  BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
+  BOOST_REQUIRE(nullptr != ckpt.get());
+  BOOST_CHECK_EQUAL(1U, ckpt->header().last_log_entry_index);
+  BOOST_CHECK_EQUAL(1U, ckpt->header().last_log_entry_term);
+  BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+  uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
+  ckpt->write(&data[0], 5U);
+  s->complete_checkpoint(1U, ckpt);
+  BOOST_CHECK_EQUAL(1U, s->checkpoint().last_checkpoint_index());
+  BOOST_CHECK_EQUAL(1U, s->checkpoint().last_checkpoint_term());
+  BOOST_CHECK(ckpt == s->checkpoint().last_checkpoint());
+
+  // Fire timer.  Peer 1 still doesn't have first log entry but since that entry is
+  // discarded, a checkpoint will need to be sent to 1.
+  s->on_timer();
+  BOOST_REQUIRE_EQUAL(1U, comm.q.size());
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).recipient_id);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).term_number);
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).leader_id);
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).checkpoint_begin);
+  BOOST_CHECK_EQUAL(2U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).checkpoint_end);
+  comm.q.pop_back();
+
+  raft::append_checkpoint_chunk_response resp;
+  resp.recipient_id = 1;
+  resp.term_number = 2U;
+  resp.request_term_number = 1U;
+  resp.bytes_stored = 2U;
+  s->on_append_checkpoint_chunk_response(resp);  
+  BOOST_CHECK(s->log_header_sync_required());
+  BOOST_CHECK_EQUAL(2U, s->current_term());
+  BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s->get_state());
+  BOOST_CHECK_EQUAL(0U, comm.q.size());
+  s->on_log_header_sync();
+
+  // Send unexpected response; this should be happily ignored
+  resp.recipient_id = 2;
+  resp.term_number = 2U;
+  resp.request_term_number = 1U;
+  resp.bytes_stored = 2U;
+  s->on_append_checkpoint_chunk_response(resp);  
+}
 
 // TODO: Leader creates some log entries but fails to replicate them and crashes.  While crashed the rest of the cluster picks up
 // and moves forward on a new term (or many new terms) and successfully replicate entries.  Once the former leader rejoins the cluster

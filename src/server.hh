@@ -11,6 +11,7 @@
 #include <deque>
 #include "boost/variant.hpp"
 
+#include "configuration.hh"
 #include "log.hh"
 
 namespace raft {
@@ -173,6 +174,8 @@ namespace raft {
   // but is it a dedicated file, is it just a bunch of blocks scattered throughout a file or something else entirely?
   // Right now I'm representing a checkpoint as a list of blocks with an implementation as an
   // array of data (could be a linked list of stuff as well).
+  // TODO: This block stuff is half baked because it isn't consistent with the ack'ing protocol that is expressed
+  // in terms of byte offsets; it works but it's goofy.
   class checkpoint_data
   {
   private:
@@ -191,6 +194,17 @@ namespace raft {
     const checkpoint_header & header() const
     {
       return header_;
+    }
+
+    checkpoint_block block_at_offset(uint64_t offset) const {
+      if (offset >= data_.size()) {
+	return checkpoint_block();	
+      }
+      
+      std::size_t next_block_start = offset;
+      std::size_t next_block_end = (std::min)(next_block_start+block_size_, data_.size());
+      std::size_t next_block_size = next_block_end - next_block_start;
+      return checkpoint_block(&data_[next_block_start], next_block_size);
     }
     
     checkpoint_block next_block(const checkpoint_block & current_block) {
@@ -226,11 +240,42 @@ namespace raft {
 	data_.push_back(data[i]);
       }
     }
-};
+  };
 
+
+  // Checkpoints live here
+  class checkpoint_data_store
+  {
+  public:
+    typedef std::shared_ptr<checkpoint_data> checkpoint_data_ptr;
+  private:
+    std::shared_ptr<checkpoint_data> last_checkpoint_;
+  public:
+    std::shared_ptr<checkpoint_data> create(uint64_t last_entry_index, uint64_t last_entry_term) const
+    {
+      checkpoint_header header;
+      header.last_log_entry_index = last_entry_index;
+      header.last_log_entry_term = last_entry_term;
+      return std::shared_ptr<checkpoint_data>(new checkpoint_data(header));
+    }
+    void commit(std::shared_ptr<checkpoint_data> f)
+    {
+      last_checkpoint_ = f;
+    }
+    std::shared_ptr<checkpoint_data> last_checkpoint() {
+      return last_checkpoint_;
+    }
+  };
+
+  // Raft only really cares about the fact that a checkpoint maintains the index and term
+  // at which the checkpoint is taken.  What client data and how that client data is communicated
+  // to peers and disk is more or less irrelevant.  I want to structure things so that these latter
+  // aspects are decoupled.
   class peer_checkpoint
   {
   public:
+    typedef checkpoint_data_store::checkpoint_data_ptr checkpoint_data_ptr;
+    
     // One past last byte to written in checkpoint file.
     uint64_t checkpoint_next_byte_;
     // The last log entry that the checkpoint covers.  Need to resume
@@ -239,20 +284,39 @@ namespace raft {
     // The term of the last log entry that the checkpoint covers.  
     uint64_t checkpoint_last_log_entry_term_;
     // Checkpoint data we are sending to this peer
-    std::shared_ptr<checkpoint_data> data_;
+    checkpoint_data_ptr data_;
     // Last block sent.  We do not assume that the checkpoint bytes are contiguous in memory
     // so cannot use checkpoint_next_byte_ to know where the next chunk is in data_.
     checkpoint_block last_block_sent_;
     // Has the last block been acked?  TODO: Generalize to a window/credit system?
-    bool awaiting_ack;
+    bool awaiting_ack_;
+
+    peer_checkpoint(uint64_t checkpoint_last_log_entry_index, uint64_t checkpoint_last_log_entry_term,
+		    checkpoint_data_ptr data)
+      :
+      checkpoint_next_byte_(0),
+      checkpoint_last_log_entry_index_(checkpoint_last_log_entry_index),
+      checkpoint_last_log_entry_term_(checkpoint_last_log_entry_term),
+      data_(data),
+      awaiting_ack_(false)
+    {
+    }
+
+    bool prepare_checkpoint_chunk(append_checkpoint_chunk & msg);
   };
 
   // A peer encapsulates what a server knows about other servers in the cluster
   class peer
   {
   public:
+    typedef std::string address_type;
+
+  public:
     // peer id = same as index in peer array
     uint64_t peer_id;
+    // TODO: Templatize; do we actually want multiple addresses?  Does protocol really
+    // need to know whether this is one or more addresses?
+    std::string address;
     // Leader specific state about peers
     // Index of next log entry to send
     uint64_t next_index_;
@@ -264,8 +328,18 @@ namespace raft {
     std::chrono::time_point<std::chrono::steady_clock> requires_heartbeat_;
     // Is the value of next_index_ a guess or has it been confirmed by communication with the peer
     bool is_next_index_reliable_;
+    // TODO: Implement the exit protocol
+    bool exiting_;
     // Checkpoint state for sending a checkpoint from a server to this peer
     std::shared_ptr<peer_checkpoint> checkpoint_;
+    // State for tracking whether a peer that is newly added to a configuration tracking
+    // log appends
+    std::shared_ptr<peer_configuration_change> configuration_;
+
+    void exit()
+    {
+      exiting_ = true;
+    }
   };
 
   class client_response_continuation
@@ -301,28 +375,6 @@ namespace raft {
     void on_client_response(const client_response & resp)
     {
       responses.push_front(resp);
-    }
-  };
-
-  // Checkpoints live here
-  class checkpoint_data_store
-  {
-  private:
-    std::shared_ptr<checkpoint_data> last_checkpoint_;
-  public:
-    std::shared_ptr<checkpoint_data> create(uint64_t last_entry_index, uint64_t last_entry_term) const
-    {
-      checkpoint_header header;
-      header.last_log_entry_index = last_entry_index;
-      header.last_log_entry_term = last_entry_term;
-      return std::shared_ptr<checkpoint_data>(new checkpoint_data(header));
-    }
-    void commit(std::shared_ptr<checkpoint_data> f)
-    {
-      last_checkpoint_ = f;
-    }
-    std::shared_ptr<checkpoint_data> last_checkpoint() {
-      return last_checkpoint_;
     }
   };
 

@@ -161,22 +161,45 @@ namespace raft {
     }
   }
 
+  bool peer_checkpoint::prepare_checkpoint_chunk(append_checkpoint_chunk & msg)
+  {
+    if (awaiting_ack_) {
+      return false;
+    }
+
+    if (data_->is_final(last_block_sent_)) {
+      return false;
+    }
+
+    last_block_sent_ = data_->block_at_offset(checkpoint_next_byte_);
+
+    msg.last_checkpoint_index = checkpoint_last_log_entry_index_;
+    msg.last_checkpoint_term = checkpoint_last_log_entry_term_;
+    msg.checkpoint_begin = data_->block_begin(last_block_sent_);
+    msg.checkpoint_end = data_->block_end(last_block_sent_);
+    msg.checkpoint_done = data_->is_final(last_block_sent_);
+    msg.data.assign(last_block_sent_.block_data_,
+		    last_block_sent_.block_data_+last_block_sent_.block_length_);
+    awaiting_ack_ = true;
+    return true;
+  }
+
   void server::send_checkpoint_chunk(std::chrono::time_point<std::chrono::steady_clock> clock_now, uint64_t peer_id)
   {
     peer & p(peer_from_id(peer_id));
-    // TODO: Assert that we have a checkpoint to send!
-    // TODO: Are we waiting for a response to a previous chunk?
+
+    // Internal error if we call this method without a checkpoint to send
+    BOOST_ASSERT(checkpoint_.last_checkpoint());
+
     // TODO: Should we arrange for abstractions that permit use of sendfile for checkpoint data?  Manual chunking
     // involves extra work and shouldn't really be necessary.
     if (!p.checkpoint_) {
-      p.checkpoint_.reset(new peer_checkpoint());
-      p.checkpoint_->checkpoint_next_byte_ = 0;
-      p.checkpoint_->checkpoint_last_log_entry_index_ = checkpoint_.last_checkpoint_index_;
-      p.checkpoint_->checkpoint_last_log_entry_term_ = checkpoint_.last_checkpoint_term_;
-      p.checkpoint_->data_ = checkpoint_.last_checkpoint();
+      p.checkpoint_.reset(new peer_checkpoint(checkpoint_.last_checkpoint_index_, checkpoint_.last_checkpoint_term_,
+					      checkpoint_.last_checkpoint()));
     }
 
-    if (p.checkpoint_->awaiting_ack) {
+    // Are we waiting for a response to a previous chunk?
+    if (p.checkpoint_->awaiting_ack_) {
       return;
     }
 
@@ -184,7 +207,7 @@ namespace raft {
       return;
     }
 
-    p.checkpoint_->last_block_sent_ = p.checkpoint_->data_->next_block(p.checkpoint_->last_block_sent_);
+    p.checkpoint_->last_block_sent_ = p.checkpoint_->data_->block_at_offset(p.checkpoint_->checkpoint_next_byte_);
 
     append_checkpoint_chunk msg;
     msg.recipient_id = peer_id;
@@ -198,8 +221,7 @@ namespace raft {
     msg.data.assign(p.checkpoint_->last_block_sent_.block_data_,
 		    p.checkpoint_->last_block_sent_.block_data_+p.checkpoint_->last_block_sent_.block_length_);
     comm_.send(peer_id, msg);
-    p.requires_heartbeat_ = new_heartbeat_timeout(clock_now);
-    p.checkpoint_->awaiting_ack = true;
+    p.checkpoint_->awaiting_ack_ = true;
 
     BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
       " sending append_checkpoint_chunk to peer " << peer_id << "; log_start_index()=" << log_start_index() <<
@@ -208,6 +230,8 @@ namespace raft {
       " checkpoint.last_log_entry_index=" << p.checkpoint_->checkpoint_last_log_entry_index_ <<
       " checkpoint.last_log_entry_term=" << p.checkpoint_->checkpoint_last_log_entry_term_ <<
       " bytes_sent=" << (msg.checkpoint_end -  msg.checkpoint_begin);
+
+    p.requires_heartbeat_ = new_heartbeat_timeout(clock_now);
   }
   
   bool server::can_become_follower_at_term(uint64_t term)
@@ -267,14 +291,15 @@ namespace raft {
       log_.update_header(current_term_, voted_for_->peer_id);
       log_.sync_header();
       // Set flag so that vote requests get sent once the log header sync completes (this
-      // flag is basically a continuation).
+      // flag is basically a continuation).  TODO: Do we really need this flag or should this be
+      // based on checking that state_ == CANDIDATE after the log header sync is done (in on_log_header_sync)?
       send_vote_requests_ = true;
 
       // TODO: Cancel any snapshot/checkpoint that is in progress?
 
 
     } else {
-      // TODO: Perhaps make a continuation here?
+      // TODO: Perhaps make a continuation here and make the candidate transition after the sync?
       BOOST_LOG_TRIVIAL(warning) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
 	" can't become CANDIDATE at term " << (current_term_+1) << " due to outstanding log header sync";
     }
@@ -397,8 +422,15 @@ namespace raft {
     append_entry_header_sync_continuations_.clear();
     if (send_vote_requests_) {
       send_vote_requests_ = false;
-      send_vote_requests();
-      // TODO: Special case single server cluster become_leader
+      // If not a candidate then presumably shouldn't send out vote requests.
+      // TODO: On the other hand, if I am a candidate then is it even possible that
+      // send_vote_requests_ = false?  We know that setting state_=CANDIDATE implies
+      // send_vote_requests_=true, so the question is whether after becoming a CANDIDATE
+      // is it possible to trigger multiple log header syncs
+      if (state_ == CANDIDATE) {
+	send_vote_requests();
+	// TODO: Special case single server cluster become_leader
+      }
     }
   }
   
@@ -488,7 +520,7 @@ namespace raft {
     // proven in Ongaro's thesis.
     //
     // Note that in fact it is impossible for req.term_number > current_term_ at this point because
-    // we have already updated current_term_ above in that case.  Logically this way of writing things
+    // we have already updated current_term_ above in that case and become a FOLLOWER.  Logically this way of writing things
     // is a bit clearer to me.
     if (req.term_number >= current_term_ && candidate_log_more_complete_than_mine && nullptr == voted_for_) {
       BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
@@ -852,6 +884,11 @@ namespace raft {
 	p.next_index_ = p.match_index_;
 	p.is_next_index_reliable_ = true;
       }
+
+      if (p.configuration_) {
+	std::chrono::time_point<std::chrono::steady_clock> clock_now = std::chrono::steady_clock::now();
+	p.configuration_->on_append_response(clock_now, p.match_index_, last_log_entry_index());
+      }
     } else {
       // Peer failed processing the append_entries request (e.g. our append request would have caused
       // a gap in the peer's log or a term mismatch on the log).  Backup the next_index_ to send to this peer.  
@@ -1014,37 +1051,45 @@ namespace raft {
     BOOST_ASSERT(!log_header_sync_required_);
     
     if (resp.term_number > current_term_) {
+      BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	" received on_append_checkpoint_chunk_response at term " << resp.term_number <<
+	". Becoming FOLLOWER and abandoning the append_checkpoint process.";
+      BOOST_ASSERT(can_become_follower_at_term(resp.term_number));
       if (can_become_follower_at_term(resp.term_number)) {
 	become_follower(resp.term_number);
+	BOOST_ASSERT(log_header_sync_required_);
 	if (log_header_sync_required_) {
 	  log_.sync_header();
 	}
 	// TODO: What to do here.  We should no longer bother sending the rest of the checkpoint, that much
 	// is clear.
+	peer & p(peer_from_id(resp.recipient_id));
+	p.checkpoint_.reset();
       } else {
 	// This may be impossible because if we are waiting for a log header flush
 	// for current_term_ then we should never have been leader at current_term_
 	// and thus won't be getting a response.
 	BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
 	  " cannot become follower at term " << resp.term_number <<
-	  ". Ignoring complete_checkpoint message";
+	  ". Ignoring on_append_checkpoint_chunk_response message";
       }
       return;
     }    
 
     peer & p(peer_from_id(resp.recipient_id));
 
-    if(!p.checkpoint_->awaiting_ack) {
+    if(!p.checkpoint_ || !p.checkpoint_->awaiting_ack_) {
       BOOST_LOG_TRIVIAL(warning) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
 	" received unexpected append_checkpoint_chunk_message from peer " << resp.recipient_id <<
 	". Ignoring message.";
       return;
     }
 
-    
+    // Peer tells us what is needed next
+    p.checkpoint_->checkpoint_next_byte_ = resp.bytes_stored;
 
     // Send next chunk
-    p.checkpoint_->awaiting_ack = false;
+    p.checkpoint_->awaiting_ack_ = false;
     std::chrono::time_point<std::chrono::steady_clock> clock_now = std::chrono::steady_clock::now();
     send_checkpoint_chunk(clock_now, resp.recipient_id);
   }  
