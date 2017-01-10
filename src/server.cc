@@ -8,31 +8,32 @@
 #include "server.hh"
 
 namespace raft {
-  server_checkpoint::server_checkpoint()
-    :
-    last_checkpoint_index_(0),
-    last_checkpoint_term_(0)    
-  {
-  }
 
-  server::server(test_communicator & comm, client & c, std::size_t cluster_idx, const std::vector<peer>& peers)
+  server::server(server::communicator_type & comm, client & c, server::log_type & l,
+		 configuration_manager_type & config_manager)
     :
     comm_(comm),
     client_(c),
     state_(FOLLOWER),
     election_timeout_max_(300),
     election_timeout_min_(150),
-    cluster_(peers),
-    cluster_idx_(cluster_idx),
     current_term_(0),
     voted_for_(nullptr),
+    log_(l),
     log_header_sync_required_(false),
     last_committed_index_(0),
     last_applied_index_(0),
     last_synced_index_(0),
+    configuration_(config_manager),
     send_vote_requests_(false)
   {
     election_timeout_ = new_election_timeout();
+
+    // TODO: Read the log if non-empty and apply entries as necessary
+
+    // TODO: Update log header variables (term, voted_for)
+
+    // TODO: Read any checkpoint
   }
 
   server::~server()
@@ -60,15 +61,16 @@ namespace raft {
   {
     BOOST_ASSERT(!log_header_sync_required_);
     // request_vote message to peers
-    for(std::size_t i=0; i<cluster_.size(); ++i) {
-      BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+    for(std::size_t i=0; i<num_known_peers(); ++i) {
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" requesting vote from peer " << i;
-      cluster_[i].vote_ = boost::logic::indeterminate;
-      if (i != cluster_idx_) {
+      peer_type & p(peer_from_id(i));
+      p.vote_ = boost::logic::indeterminate;
+      if (i != my_cluster_id()) {
 	request_vote msg;
 	msg.recipient_id = i;
 	msg.term_number = current_term_;
-	msg.candidate_id = cluster_idx_;
+	msg.candidate_id = my_cluster_id();
 	msg.last_log_index = last_log_entry_index();
 	msg.last_log_term = last_log_entry_term();
 	// TODO: Templatize and abstract out the communicator address of the peer.
@@ -79,11 +81,12 @@ namespace raft {
 
   void server::send_append_entries(std::chrono::time_point<std::chrono::steady_clock> clock_now)
   {
-    for(std::size_t i=0; i<cluster_.size(); ++i) {
-      if (i != cluster_idx_ && last_log_entry_index() > cluster_[i].match_index_) {
+    for(std::size_t i=0; i<num_known_peers(); ++i) {
+      if (i != my_cluster_id() && last_log_entry_index() > get_peer_from_id(i).match_index_) {
 	// This is next log entry the peer needs
-	uint64_t previous_log_index = cluster_[i].next_index_;
-	if (cluster_[i].next_index_ < log_start_index()) {
+	peer_type & p(peer_from_id(i));
+	uint64_t previous_log_index = p.next_index_;
+	if (p.next_index_ < log_start_index()) {
 	  // We have checkpointed a portion of the log the peer requires
 	  // we must send a checkpoint instead and then we can apply log entries.
 	  send_checkpoint_chunk(clock_now, i);
@@ -108,14 +111,14 @@ namespace raft {
 	  return;
 	}
 
-	BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " sending append_entry to peer " << i << "; last_log_entry_index()=" << last_log_entry_index() <<
-	  " peer.match_index=" << cluster_[i].match_index_ << "; peer.next_index_=" << cluster_[i].next_index_;
+	  " peer.match_index=" << p.match_index_ << "; peer.next_index_=" << p.next_index_;
 
-	append_entry msg;
+	append_entry_type msg;
 	msg.recipient_id = i;
 	msg.term_number = current_term_;
-	msg.leader_id = cluster_idx_;
+	msg.leader_id = my_cluster_id();
 	msg.previous_log_index = previous_log_index;
 	msg.previous_log_term = previous_log_term;
 
@@ -123,7 +126,7 @@ namespace raft {
 	uint64_t log_entries_sent = 0;
 	// Actually put the entries into the message.
 	uint64_t idx_end = last_log_entry_index();
-	for(uint64_t idx = cluster_[i].next_index_; idx != idx_end; ++idx) {
+	for(uint64_t idx = p.next_index_; idx != idx_end; ++idx) {
 	  // TODO: Enforce message size limits
 	  msg.entry.push_back(log_.entry(idx));
 	  log_entries_sent += 1;
@@ -132,21 +135,21 @@ namespace raft {
 	
 	// TODO: Templatize and abstract out the communicator address of the peer.
 	comm_.send(i, msg);
-	cluster_[i].requires_heartbeat_ = new_heartbeat_timeout(clock_now);
+	p.requires_heartbeat_ = new_heartbeat_timeout(clock_now);
       }
     }
   }
 
   void server::send_heartbeats(std::chrono::time_point<std::chrono::steady_clock> clock_now)
   {
-    for(std::size_t i=0; i<cluster_.size(); ++i) {
-      BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
-	" sending empty append_entry to peer " << i << " as heartbeat";
-      if (i != cluster_idx_ && cluster_[i].requires_heartbeat_ <= clock_now) {
-	append_entry msg;
+    for(std::size_t i=0; i<num_known_peers(); ++i) {
+      if (i != my_cluster_id() && get_peer_from_id(i).requires_heartbeat_ <= clock_now) {
+	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+	  " sending empty append_entry to peer " << i << " as heartbeat";
+	append_entry_type msg;
 	msg.recipient_id = i;
 	msg.term_number = current_term_;
-	msg.leader_id = cluster_idx_;
+	msg.leader_id = my_cluster_id();
 	// TODO: What to set in these 3???  Should this logic be the same
 	// as send_append_entries???
 	msg.previous_log_index = 0;
@@ -156,37 +159,14 @@ namespace raft {
 	//msg.entry;
 	// TODO: Templatize and abstract out the communicator address of the peer.
 	comm_.send(i, msg);
-	cluster_[i].requires_heartbeat_ = new_heartbeat_timeout(clock_now);
+	peer_from_id(i).requires_heartbeat_ = new_heartbeat_timeout(clock_now);
       }
     }
   }
 
-  bool peer_checkpoint::prepare_checkpoint_chunk(append_checkpoint_chunk & msg)
-  {
-    if (awaiting_ack_) {
-      return false;
-    }
-
-    if (data_->is_final(last_block_sent_)) {
-      return false;
-    }
-
-    last_block_sent_ = data_->block_at_offset(checkpoint_next_byte_);
-
-    msg.last_checkpoint_index = checkpoint_last_log_entry_index_;
-    msg.last_checkpoint_term = checkpoint_last_log_entry_term_;
-    msg.checkpoint_begin = data_->block_begin(last_block_sent_);
-    msg.checkpoint_end = data_->block_end(last_block_sent_);
-    msg.checkpoint_done = data_->is_final(last_block_sent_);
-    msg.data.assign(last_block_sent_.block_data_,
-		    last_block_sent_.block_data_+last_block_sent_.block_length_);
-    awaiting_ack_ = true;
-    return true;
-  }
-
   void server::send_checkpoint_chunk(std::chrono::time_point<std::chrono::steady_clock> clock_now, uint64_t peer_id)
   {
-    peer & p(peer_from_id(peer_id));
+    peer_type & p(peer_from_id(peer_id));
 
     // Internal error if we call this method without a checkpoint to send
     BOOST_ASSERT(checkpoint_.last_checkpoint());
@@ -194,8 +174,8 @@ namespace raft {
     // TODO: Should we arrange for abstractions that permit use of sendfile for checkpoint data?  Manual chunking
     // involves extra work and shouldn't really be necessary.
     if (!p.checkpoint_) {
-      p.checkpoint_.reset(new peer_checkpoint(checkpoint_.last_checkpoint_index_, checkpoint_.last_checkpoint_term_,
-					      checkpoint_.last_checkpoint()));
+      p.checkpoint_.reset(new peer_checkpoint_type(checkpoint_.last_checkpoint_index_, checkpoint_.last_checkpoint_term_,
+						   checkpoint_.last_checkpoint_configuration_, checkpoint_.last_checkpoint()));
     }
 
     // Are we waiting for a response to a previous chunk?
@@ -203,18 +183,21 @@ namespace raft {
       return;
     }
 
+    // Did we already finish the checkpoint?
     if (p.checkpoint_->data_->is_final(p.checkpoint_->last_block_sent_)) {
       return;
     }
 
+    // Move to next chunk and send
     p.checkpoint_->last_block_sent_ = p.checkpoint_->data_->block_at_offset(p.checkpoint_->checkpoint_next_byte_);
 
-    append_checkpoint_chunk msg;
+    append_checkpoint_chunk_type msg;
     msg.recipient_id = peer_id;
     msg.term_number = current_term_;
-    msg.leader_id = cluster_idx_;
+    msg.leader_id = my_cluster_id();
     msg.last_checkpoint_index = p.checkpoint_->checkpoint_last_log_entry_index_;
     msg.last_checkpoint_term = p.checkpoint_->checkpoint_last_log_entry_term_;
+    msg.last_checkpoint_configuration = p.checkpoint_->checkpoint_last_configuration_;
     msg.checkpoint_begin = p.checkpoint_->data_->block_begin(p.checkpoint_->last_block_sent_);
     msg.checkpoint_end = p.checkpoint_->data_->block_end(p.checkpoint_->last_block_sent_);
     msg.checkpoint_done = p.checkpoint_->data_->is_final(p.checkpoint_->last_block_sent_);
@@ -223,10 +206,10 @@ namespace raft {
     comm_.send(peer_id, msg);
     p.checkpoint_->awaiting_ack_ = true;
 
-    BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+    BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
       " sending append_checkpoint_chunk to peer " << peer_id << "; log_start_index()=" << log_start_index() <<
       " last_log_entry_index()=" << last_log_entry_index() <<
-      " peer.match_index=" << cluster_[peer_id].match_index_ << " peer.next_index_=" << cluster_[peer_id].next_index_ <<
+      " peer.match_index=" << p.match_index_ << " peer.next_index_=" << p.next_index_ <<
       " checkpoint.last_log_entry_index=" << p.checkpoint_->checkpoint_last_log_entry_index_ <<
       " checkpoint.last_log_entry_term=" << p.checkpoint_->checkpoint_last_log_entry_term_ <<
       " bytes_sent=" << (msg.checkpoint_end -  msg.checkpoint_begin);
@@ -250,19 +233,25 @@ namespace raft {
   {
     if (term > current_term_) {
       BOOST_ASSERT(can_become_follower_at_term(term));
-      BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" becoming FOLLOWER at term " << term;
       state_ = FOLLOWER;
       current_term_ = term;
       voted_for_ = nullptr;
       // We've updated current_term_ and voted_for_ ; must sync to disk before responding 
+      // Don't call log_.sync_header() here.  We've set the flag and the caller needs to request the sync
+      // before returning.
       log_header_sync_required_ = true;
       // ??? Do this now or after the sync completes ???
       election_timeout_ = new_election_timeout();
       leader_id_ = INVALID_PEER_ID;
       log_.update_header(current_term_, INVALID_PEER_ID);
-      // Don't call log_.sync_header() here.  We've set the flag and the caller needs to request the sync
-      // before returning.
+
+      // Cancel any pending configuration change
+      configuration().reset_staging_servers();
+
+      // Cancel any in-progress checkpoint
+      checkpoint_.abandon();
     }
 
     // TODO: If transitioning from leader there may be a flush to disk
@@ -280,8 +269,12 @@ namespace raft {
     if (!log_header_sync_required_) {
       BOOST_ASSERT(no_log_header_sync_continuations_exist());
       BOOST_ASSERT(!send_vote_requests_);
-      BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" becoming CANDIDATE and starting election at term " << (current_term_+1);
+
+      // Cancel any in-progress checkpoint
+      checkpoint_.abandon();
+      
       current_term_ += 1;
       state_ = CANDIDATE;
       election_timeout_ = new_election_timeout();
@@ -295,12 +288,9 @@ namespace raft {
       // based on checking that state_ == CANDIDATE after the log header sync is done (in on_log_header_sync)?
       send_vote_requests_ = true;
 
-      // TODO: Cancel any snapshot/checkpoint that is in progress?
-
-
     } else {
       // TODO: Perhaps make a continuation here and make the candidate transition after the sync?
-      BOOST_LOG_TRIVIAL(warning) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" can't become CANDIDATE at term " << (current_term_+1) << " due to outstanding log header sync";
     }
   
@@ -308,26 +298,45 @@ namespace raft {
 
   void server::become_leader()
   {
-    BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+    BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
       " becoming LEADER";
     BOOST_ASSERT(!log_header_sync_required_);
     state_ = LEADER;
-    leader_id_ = cluster_idx_;
+    leader_id_ = my_cluster_id();
     election_timeout_ = new_election_timeout();
+
+    // TODO: Make this relative to the configuration.  I do think this is correct; send out to all known servers.
     // Send out empty append entries to assert leadership
     std::chrono::time_point<std::chrono::steady_clock> clock_now = std::chrono::steady_clock::now();
-    for(std::size_t i=0; i<cluster_.size(); ++i) {
-      if (i != cluster_idx_) {
-	cluster_[i].requires_heartbeat_ = clock_now;
-	// Guess that peer is up to date with our log.  We'll avoid chewing up bandwidth until
+    for(std::size_t i=0; i<configuration().num_known_peers(); ++i) {
+      if (i != my_cluster_id()) {
+	peer_type & p(configuration().peer_from_id(i));
+	p.requires_heartbeat_ = clock_now;
+	// Guess that peer is up to date with our log; this may be optimistic.  We'll avoid chewing up bandwidth until
 	// we hear back from the peer about it's last log entry.
-	cluster_[i].next_index_ = last_log_entry_index();
-	cluster_[i].is_next_index_reliable_ = false;
+	p.next_index_ = last_log_entry_index();
+	p.is_next_index_reliable_ = false;
+	p.match_index_ = 0;
+	p.checkpoint_.reset();
+      } else {
+	// TODO: Is this really guaranteed to be true?
+	last_synced_index_ = last_log_entry_index();
       }
     }
+
+    // TODO: Do we really do this or is this equivalent to sending the NOOP log entry?
     send_heartbeats(clock_now);
 
-    // Append a new log entry.  TODO: Do we need to flush the log????
+    // Append a new log entry in order to get the committed index updated.  TODO: Do we need to flush the log????
+    // The empty log entry will also trigger append_entry messages to the peers to let them know we have
+    // become leader.  The latter could also be achieved with heartbeats, but would it get the commit index advanced?
+    // The rationale for getting commit index advanced has to do with the protocol for doing non-stale reads (that uses
+    // RaftConsensus::getLastCommitIndex in logcabin); I need to understand this protocol.
+    // std::vector<log_entry_type> v(1);
+    // v.back().type = log_entry_type::NOOP;
+    // v.back().term = current_term_;
+    // log_.append(v);
+    
 
     // TODO: As an optimization cancel any outstanding request_vote since they are not needed
     // we've already got quorum
@@ -342,14 +351,14 @@ namespace raft {
     switch(state_) {
     case FOLLOWER:
       if (election_timeout_ < clock_now) {
-	BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " FOLLOWER lost contact with leader.";
 	become_candidate();
       }
       break;
     case CANDIDATE:
       if (election_timeout_ < clock_now) {
-	BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " CANDIATE timed out election.";
 	become_candidate();
       }
@@ -366,7 +375,7 @@ namespace raft {
   void server::on_log_sync(uint64_t index)
   {
     last_synced_index_ = index;
-    BOOST_LOG_TRIVIAL(debug) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+    BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
       " log synced to " << last_synced_index_ <<
       " with end of log at " << last_log_entry_index();
     try_to_commit();
@@ -381,7 +390,7 @@ namespace raft {
 	for(; it != e; ++it) {
 	  BOOST_ASSERT(it->second.end_index <= last_synced_index_);
 	  append_response resp;
-	  resp.recipient_id = cluster_idx_;
+	  resp.recipient_id = my_cluster_id();
 	  resp.term_number = current_term_;
 	  resp.request_term_number = it->second.term;
 	  resp.begin_index = it->second.begin_index;
@@ -394,7 +403,7 @@ namespace raft {
 	}
 	append_entry_continuations_.erase(append_entry_continuations_.begin(), e);
       } else {
-	BOOST_LOG_TRIVIAL(debug) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " log synced to " << last_synced_index_ <<
 	  " but no append_entries successfully synced";
       }
@@ -458,8 +467,8 @@ namespace raft {
     case LEADER:
       {
 	// Create a log entry and try to replicate it
-	std::vector<log_entry> v(1);
-	v.back().type = log_entry::COMMAND;
+	std::vector<log_entry_type> v(1);
+	v.back().type = log_entry_type::COMMAND;
 	v.back().data = req.command;
 	v.back().term = current_term_;
 	// Append to the in memory log then we have to wait for
@@ -494,13 +503,13 @@ namespace raft {
     // we are possibly giving up leadership.
     if (req.term_number > current_term_) {
       if (!can_become_follower_at_term(req.term_number)) {
-	BOOST_LOG_TRIVIAL(warning) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " cannot advance to term " << req.term_number <<
 	  " due to outstanding log header sync.  Ignoring request_vote message from candidate " <<
 	  req.candidate_id << ".";
 	return;
       }
-      BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" becoming follower due to vote request from " << req.candidate_id << " at higher term " << req.term_number;
       become_follower(req.term_number);
     }
@@ -523,7 +532,7 @@ namespace raft {
     // we have already updated current_term_ above in that case and become a FOLLOWER.  Logically this way of writing things
     // is a bit clearer to me.
     if (req.term_number >= current_term_ && candidate_log_more_complete_than_mine && nullptr == voted_for_) {
-      BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" voting for " << req.candidate_id << " at term " << req.term_number;
       become_follower(req.term_number);
       voted_for_ = &peer_from_id(req.candidate_id);
@@ -535,7 +544,7 @@ namespace raft {
     }
 
     vote_response msg;
-    msg.peer_id = cluster_idx_;
+    msg.peer_id = my_cluster_id();
     msg.term_number = current_term_;
     msg.request_term_number = req.term_number;
     msg.granted = current_term_ == req.term_number && voted_for_ == &peer_from_id(req.candidate_id);
@@ -564,7 +573,7 @@ namespace raft {
 	      log_.sync_header();
 	    }
 	  } else {
-	    BOOST_LOG_TRIVIAL(warning) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	    BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	      " cannot advance to term " << resp.term_number <<
 	      " due to outstanding log header sync.  Ignoring vote_response message.";
 	  }
@@ -573,9 +582,9 @@ namespace raft {
 	  // Vote requests didn't go out until header was synced.
 	  BOOST_ASSERT(!log_header_sync_required_);
 	  BOOST_ASSERT(current_term_ == resp.term_number);
-	  BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	    " received vote " << resp.granted << " from peer " << resp.peer_id;
-	  peer & p(peer_from_id(resp.peer_id));
+	  peer_type & p(peer_from_id(resp.peer_id));
 	  // TODO: What happens if we get multiple responses from the same peer
 	  // but with different votes?  Is that a protocol error????
 	  p.vote_ = resp.granted;
@@ -592,7 +601,7 @@ namespace raft {
     }
   }
 
-  void server::internal_append_entry(const append_entry & req)
+  void server::internal_append_entry(const server::append_entry_type & req)
   {
     BOOST_ASSERT(req.term_number == current_term_ && state_ == FOLLOWER);
 
@@ -608,11 +617,11 @@ namespace raft {
 
     // Do we have all log entries up to this one?
     if (req.previous_log_index > last_log_entry_index()) {
-      BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" received append entry with gap.  req.previous_log_index=" << req.previous_log_index <<
 	" last_log_entry_index()=" << last_log_entry_index();
       append_response msg;
-      msg.recipient_id = cluster_idx_;
+      msg.recipient_id = my_cluster_id();
       msg.term_number = current_term_;
       msg.request_term_number = req.term_number;
       msg.last_index = last_log_entry_index();
@@ -626,12 +635,12 @@ namespace raft {
     // See the extended Raft paper Figure 7 for examples of how this can come to pass.
     if (req.previous_log_index > log_start_index() &&
 	req.previous_log_term != log_.entry(req.previous_log_index-1).term) {
-      BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" received append entry with mismatch term.  req.previous_log_index=" << req.previous_log_index <<
 	" req.previous_log_term=" << req.previous_log_term <<
 	" log_.entry(" << (req.previous_log_index-1) << ").term=" << log_.entry(req.previous_log_index-1).term;
       append_response msg;
-      msg.recipient_id = cluster_idx_;
+      msg.recipient_id = my_cluster_id();
       msg.term_number = current_term_;
       msg.request_term_number = req.term_number;
       msg.last_index = req.previous_log_index;
@@ -668,11 +677,12 @@ namespace raft {
 	BOOST_ASSERT(last_committed_index_ < entry_index);
 	// At this point we know that the leader log differs from what we've got so get rid of things
 	// from here to the end
-	BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " truncating uncommitted log entries [" << entry_index <<
 	  "," << last_log_entry_index() << ") starting at term " << log_.entry(entry_index).term;
 	log_.truncate_suffix(entry_index);
-	// TODO: Something with configurations
+	configuration_.truncate_suffix(entry_index);
+	// TODO: Something with configurations.  Anything other than truncate the state in the manager?
 	break;
       } else {
 	// A new entry; start appending from here.
@@ -683,17 +693,25 @@ namespace raft {
     // TODO: If nothing remains to append we should just return here.  Should update the committed id even if no new log entries
 
     if (it != entry_end) {
-      BOOST_LOG_TRIVIAL(debug) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" appending log entries [" << entry_index <<
 	"," << (entry_index + std::distance(it,entry_end)) << ") starting at term " << it->term;
     }
 
-    std::vector<log_entry> to_append;
+    // Append to the log
+    std::vector<log_entry_type> to_append;
     uint64_t entry_end_index = entry_index;
     for(; it != entry_end; ++it, ++entry_end_index) {
       to_append.push_back(*it);
     }
-    log_.append(to_append);
+    std::pair<log_index_type, log_index_type> range = log_.append(to_append);
+
+    // Make sure any configuration entries added are reflected in the configuration manager.
+    for(std::size_t i=0; i<to_append.size(); ++i) {
+      if (to_append[i].type == log_entry_type::CONFIGURATION) {
+	configuration_.add_logged_description(range.first + i, to_append[i].configuration);
+      }
+    }
 
     // Update committed id
     // TODO: Do we need to wait for log flush to update this?  I don't see why since the leader has determined
@@ -711,7 +729,8 @@ namespace raft {
     cont.end_index = entry_end_index;
     cont.term= req.term_number;
     // TODO: Not currently using this since I advance last_committed_index_ above.  Figure out if that
-    // is the correct thing to do.
+    // is the correct thing to do (we should not need this in the continuation according to Ongaro, I just need to understand why).
+    // TODO: Better to use lambdas for the continuation?  That way we can include the code right here.
     cont.commit_index = req.leader_commit_index;
     append_entry_continuations_.insert(std::make_pair(cont.end_index, cont));
         
@@ -721,12 +740,12 @@ namespace raft {
     // entry is committed?  Answer: Yes.
   }
 
-  void server::on_append_entry(const append_entry & req)
+  void server::on_append_entry(const server::append_entry_type & req)
   {
     if (req.term_number < current_term_) {
       // There is a leader out there that needs to know it's been left behind.
       append_response msg;
-      msg.recipient_id = cluster_idx_;
+      msg.recipient_id = my_cluster_id();
       msg.term_number = current_term_;
       msg.request_term_number = req.term_number;
       msg.last_index = last_log_entry_index();
@@ -743,7 +762,7 @@ namespace raft {
     // I highly doubt a disk write can be reliably cancelled so we have to wait for
     // an outstanding one to complete.  Instead of queuing up just pretend the message is lost.
     if (!can_become_follower_at_term(req.term_number)) {
-      BOOST_LOG_TRIVIAL(warning) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" cannot advance to term " << req.term_number <<
 	" due to outstanding log header sync.  Ignoring append_entry message.";
       return;
@@ -757,7 +776,7 @@ namespace raft {
     // it here as well
     if (log_header_sync_required_) {
       // TODO: We need to put a limit on number of continuations we'll queue up
-      BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" waiting for log header sync.  Queuing append_entry message from recipient " <<
 	req.recipient_id << " previous_log_term " << req.previous_log_term <<
 	" previous_log_index " << req.previous_log_index;
@@ -774,23 +793,12 @@ namespace raft {
     if (state_ != LEADER) {
       return;
     }
-    // TODO: make this relative to a configuration...
-    
-    // Figure out the minimum over a quorum.
-    std::vector<uint64_t> acked;
-    // For a leader, syncing to a log is "acking"
-    acked.push_back(last_synced_index_);
-    // For peers we need an append response to get an ack
-    for(auto & c : cluster_) {
-      if (c.peer_id != cluster_idx_) {
-	acked.push_back(c.match_index_);
-      }
-    }
-    std::sort(acked.begin(), acked.end());
-    uint64_t committed = acked[(acked.size()-1)/2];
+
+    // Committed index is relative to a configuration...
+    uint64_t committed = configuration().get_committed(last_synced_index_);
     if (last_committed_index_ >= committed) {
       // Nothing new to commit
-      // TODO: Can committed go backwards?
+      // TODO: Can committed go backwards (e.g. on a configuration change)?  
       return;
     }
 
@@ -802,14 +810,39 @@ namespace raft {
       return;
     }
 
-    BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+    BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
       " committed log entries [" << last_committed_index_ <<
       "," << committed << ")";
     last_committed_index_ = committed;
 
-    // TODO: If we have committed a new configuration and we are leader then
-    // we need to become_follower().
+    // TODO: Check use of >= vs. >
+    if (state_ == LEADER && last_committed_index_ >= configuration().configuration_id()) {
+      if (!configuration().includes_self()) {
+	// We've committed a new configuration that doesn't include us anymore so give up
+	// leadership
+	if (can_become_follower_at_term(current_term_+1)) {
+	  become_follower(current_term_+1);
+	  BOOST_ASSERT(log_header_sync_required_);
+	  if (log_header_sync_required_) {
+	    log_.sync_header();
+	  }
+	  // TODO: Anything else to do here?  Do we need a continuation for the log header sync?
+	  return;
+	} else {
+	  // TODO:  What do I do here???
+	  BOOST_ASSERT(false);
+	}
 
+	if (configuration().is_transitional()) {
+	  // Log the new configuration to which we are transitioning
+	  std::vector<log_entry_type> v(1);
+	  v.back().type = log_entry_type::CONFIGURATION;
+	  v.back().configuration.from = configuration().description().to;
+	  v.back().term = current_term_;	  
+	}
+      }
+    }
+    
     // Based on the new commit point we may be able to complete some client requests/configuration change
     // if we are leader or we may be able to respond to the leader for some
     // append entries requests if we are follower
@@ -853,24 +886,24 @@ namespace raft {
 	// This may be impossible because if we are waiting for a log header flush
 	// for current_term_ then we should never have been leader at current_term_
 	// and thus won't be getting a response.
-	BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " cannot become follower at term " << req.term_number <<
 	  ". Ignoring append_response message";
       }
       return;
     }
-    peer & p(cluster_[req.recipient_id]);
+    peer_type & p(peer_from_id(req.recipient_id));
     if (req.success) {
       if (p.match_index_ > req.last_index) {
 	// TODO: This is unexpected if we don't pipeline append entries message,
 	// otherwise it is OK but we need more complex state around the management of
 	// what entries the peer has acknowledged (have we done enough here???)
-	BOOST_LOG_TRIVIAL(warning) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " peer " << req.recipient_id << " acknowledged index entries [" << req.begin_index <<
 	  "," << req.last_index <<
 	  ") but we already had acknowledgment up to index " << p.match_index_;
       } else {
-	BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " peer " << req.recipient_id << " acknowledged index entries [" << req.begin_index <<
 	  "," << req.last_index << ")";
 	p.match_index_ = req.last_index;
@@ -885,9 +918,11 @@ namespace raft {
 	p.is_next_index_reliable_ = true;
       }
 
-      if (p.configuration_) {
+      // A configuration change is underway, we are tracking how quickly the peers are accepting
+      // log entries in order to decide whether we should allow the peers into a new config.
+      if (p.configuration_change_) {
 	std::chrono::time_point<std::chrono::steady_clock> clock_now = std::chrono::steady_clock::now();
-	p.configuration_->on_append_response(clock_now, p.match_index_, last_log_entry_index());
+	p.configuration_change_->on_append_response(clock_now, p.match_index_, last_log_entry_index());
       }
     } else {
       // Peer failed processing the append_entries request (e.g. our append request would have caused
@@ -905,7 +940,7 @@ namespace raft {
       // regress unnecessarily?  Is there anyway to detect and prevent that?
       if (p.next_index_ > req.last_index) {
 	if (p.is_next_index_reliable_) {
-	  BOOST_LOG_TRIVIAL(warning) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	  BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	    " peer " << req.recipient_id << " rejected append_entries with peer log at " << req.last_index <<
 	    " but leader had a reliable next index of  " << p.next_index_;
 	}
@@ -917,20 +952,53 @@ namespace raft {
   void server::load_checkpoint()
   {
     // TODO: Actually load the checkpoint image
+    checkpoint_data_ptr ckpt = checkpoint_.last_checkpoint();
+    if (!ckpt) {
+      // TODO: Should be a WARNING or ERROR
+      return;
+    }
+    const checkpoint_header_type & header(ckpt->header());
 
-    // Now get the log in order.  If my log is consistent with the checkpoint then I
-    // may want to keep it around.  For example, if I become leader then I may need to
+    if (header.last_log_entry_index < checkpoint_.last_checkpoint_index()) {
+      return;
+    }
+
+    // Update server_checkpoint 
+    checkpoint_.last_checkpoint_index_ = header.last_log_entry_index;
+    checkpoint_.last_checkpoint_term_ = header.last_log_entry_term;
+    checkpoint_.last_checkpoint_configuration_ = header.configuration;
+
+    // Anything checkpointed must be committed so we learn of commits this way
+    if(last_committed_index_ < checkpoint_.last_checkpoint_index_) {
+      last_committed_index_ = checkpoint_.last_checkpoint_index_;
+    }
+
+    // TODO: Now get the log in order.  If my log is consistent with the checkpoint then I
+    // may want to keep some of it around.  For example, if I become leader then I may need to
     // bring some peers up to date and it is likely cheaper to send them some log entries
     // rather than a full checkpoint.  If my log is shorter than the range covered by the checkpoint
     // then my log is useless (I can't bring anyone fully up to date and will have to resort to the
-    // checkpoint).  If my log is as long the checkpoint
+    // checkpoint).  If my log is at least as long the checkpoint
     // range but the term at the end of the checkpoint range doesn't match the checkpoint term
-    // then I've got the wrong entries in the log and I should trash them.
-    
-    
+    // then I've got the wrong entries in the log and I should trash the entire log as well.
+    if (last_log_entry_index() < checkpoint_.last_checkpoint_index_ ||
+	(log_start_index() <= checkpoint_.last_checkpoint_index_ &&
+	 log_.entry(checkpoint_.last_checkpoint_index_-1).term != checkpoint_.last_checkpoint_term_)) {
+      log_.truncate_prefix(checkpoint_.last_checkpoint_index_);
+      log_.truncate_suffix(checkpoint_.last_checkpoint_index_);
+      configuration_.truncate_prefix(checkpoint_.last_checkpoint_index_);
+      configuration_.truncate_suffix(checkpoint_.last_checkpoint_index_);
+      
+      // TODO: What's up with the log sync'ing logic here????
+      
+      // logcabin waits for the log to sync when FOLLOWER (but not when
+      // LEADER).
+    }
+
+    configuration_.set_checkpoint(header.configuration);
   }
 
-  void server::internal_append_checkpoint_chunk(const append_checkpoint_chunk & req)
+  void server::internal_append_checkpoint_chunk(const server::append_checkpoint_chunk_type & req)
   {
     BOOST_ASSERT(req.term_number == current_term_ && state_ == FOLLOWER);
 
@@ -943,13 +1011,15 @@ namespace raft {
     }
 
     if (!checkpoint_.current_checkpoint_) {
-      checkpoint_.current_checkpoint_.reset(new in_progress_checkpoint(checkpoint_.store_,
-								       req.last_checkpoint_index,
-								       req.last_checkpoint_term));
+      checkpoint_header_type header;
+      header.last_log_entry_index = req.last_checkpoint_index;
+      header.last_log_entry_term = req.last_checkpoint_term;
+      header.configuration = req.last_checkpoint_configuration;
+      checkpoint_.current_checkpoint_.reset(new in_progress_checkpoint<checkpoint_data_store_type>(checkpoint_.store_, header));
     }
 
     if (req.checkpoint_begin != checkpoint_.current_checkpoint_->end()) {
-      BOOST_LOG_TRIVIAL(warning) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" received checkpoint chunk at " << req.checkpoint_begin <<
 	" expecting at offset " << checkpoint_.current_checkpoint_->end() << ".  Ignoring append_checkpoint_chunk message.";
       return;
@@ -957,12 +1027,12 @@ namespace raft {
 
     checkpoint_.current_checkpoint_->write(req.data);
     append_checkpoint_chunk_response resp;
-    resp.recipient_id = cluster_idx_;
+    resp.recipient_id = my_cluster_id();
     resp.term_number = resp.request_term_number = current_term_;
     resp.bytes_stored = checkpoint_.current_checkpoint_->end();
     if (req.checkpoint_done) {
       if (req.last_checkpoint_index < checkpoint_.last_checkpoint_index_) {
-	BOOST_LOG_TRIVIAL(warning) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " received completed checkpoint at index " << req.last_checkpoint_index <<
 	  " but already have a checkpoint at " << checkpoint_.last_checkpoint_index_ << ".  Ignoring entire out of date checkpoint.";
 	checkpoint_.abandon();
@@ -990,12 +1060,12 @@ namespace raft {
     checkpoint_.current_checkpoint_.reset();
   }
   
-  void server::on_append_checkpoint_chunk(const append_checkpoint_chunk & req)
+  void server::on_append_checkpoint_chunk(const server::append_checkpoint_chunk_type & req)
   {
     if (req.term_number < current_term_) {
       // There is a leader out there that needs to know it's been left behind.
       append_checkpoint_chunk_response msg;
-      msg.recipient_id = cluster_idx_;
+      msg.recipient_id = my_cluster_id();
       msg.term_number = current_term_;
       msg.request_term_number = req.term_number;
       msg.bytes_stored = 0;
@@ -1011,7 +1081,7 @@ namespace raft {
     // I highly doubt a disk write can be reliably cancelled so we have to wait for
     // an outstanding one to complete.  Instead of queuing up just pretend the message is lost.
     if (!can_become_follower_at_term(req.term_number)) {
-      BOOST_LOG_TRIVIAL(warning) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" cannot advance to term " << req.term_number <<
 	" due to outstanding log header sync.  Ignoring append_checkpoint_chunk message.";
       return;
@@ -1025,7 +1095,7 @@ namespace raft {
     // it here as well
     if (log_header_sync_required_) {
       // TODO: We need to put a limit on number of continuations we'll queue up
-      BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" waiting for log header sync.  Queuing append_checkpoint_chunk message from recipient " <<
 	req.recipient_id << " checkpoint_begin " << req.checkpoint_begin <<
 	" checkpoint_end " << req.checkpoint_end;
@@ -1051,7 +1121,7 @@ namespace raft {
     BOOST_ASSERT(!log_header_sync_required_);
     
     if (resp.term_number > current_term_) {
-      BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" received on_append_checkpoint_chunk_response at term " << resp.term_number <<
 	". Becoming FOLLOWER and abandoning the append_checkpoint process.";
       BOOST_ASSERT(can_become_follower_at_term(resp.term_number));
@@ -1063,23 +1133,23 @@ namespace raft {
 	}
 	// TODO: What to do here.  We should no longer bother sending the rest of the checkpoint, that much
 	// is clear.
-	peer & p(peer_from_id(resp.recipient_id));
+	peer_type & p(peer_from_id(resp.recipient_id));
 	p.checkpoint_.reset();
       } else {
 	// This may be impossible because if we are waiting for a log header flush
 	// for current_term_ then we should never have been leader at current_term_
 	// and thus won't be getting a response.
-	BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " cannot become follower at term " << resp.term_number <<
 	  ". Ignoring on_append_checkpoint_chunk_response message";
       }
       return;
     }    
 
-    peer & p(peer_from_id(resp.recipient_id));
+    peer_type & p(peer_from_id(resp.recipient_id));
 
     if(!p.checkpoint_ || !p.checkpoint_->awaiting_ack_) {
-      BOOST_LOG_TRIVIAL(warning) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" received unexpected append_checkpoint_chunk_message from peer " << resp.recipient_id <<
 	". Ignoring message.";
       return;
@@ -1094,18 +1164,18 @@ namespace raft {
     send_checkpoint_chunk(clock_now, resp.recipient_id);
   }  
 
-  std::shared_ptr<checkpoint_data> server::begin_checkpoint(uint64_t last_index_in_checkpoint) const
+  server::checkpoint_data_ptr server::begin_checkpoint(uint64_t last_index_in_checkpoint) const
   {
-    // TODO: What if log_header_sync_required_?
+    // TODO: What if log_header_sync_required_==true?
 
     if (last_index_in_checkpoint > last_committed_index_) {
-      BOOST_LOG_TRIVIAL(warning) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" got request for checkpoint at index " << last_index_in_checkpoint << " but current committed index is " <<
 	last_committed_index_;
-      return std::shared_ptr<checkpoint_data>();
+      return checkpoint_data_ptr();
     }
 
-    checkpoint_header header;
+    checkpoint_header_type header;
     header.last_log_entry_index = last_index_in_checkpoint;
     if (last_index_in_checkpoint > log_start_index() &&
 	last_index_in_checkpoint <= last_log_entry_index()) {
@@ -1123,20 +1193,26 @@ namespace raft {
       // we can't perform the requested checkpoint.  for example it is possible that
       // we've gotten a checkpoint from a leader that is newer than anything the client
       // is aware of yet.
-      return std::shared_ptr<checkpoint_data>();
+      return checkpoint_data_ptr();
     }
 
-    // TODO: Configuration state
-    return checkpoint_.store_.create(header.last_log_entry_index,
-				     header.last_log_entry_term);
+    // Configuration state as of the checkpoint goes in the header...
+    if (configuration_.has_configuration_at(last_index_in_checkpoint)) {
+      configuration_.get_checkpoint_state(last_index_in_checkpoint, header.configuration);
+    } else {
+      BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+	" got request for checkpoint at index " << last_index_in_checkpoint << " but does not have configuration at that index.";
+    }
+    
+    return checkpoint_.store_.create(header);
   }
 
-  bool server::complete_checkpoint(uint64_t last_index_in_checkpoint, std::shared_ptr<checkpoint_data> i_dont_like_this)
+  bool server::complete_checkpoint(uint64_t last_index_in_checkpoint, checkpoint_data_ptr i_dont_like_this)
   {
     // TODO: What if log_header_sync_required_?
     
     if (last_index_in_checkpoint <= checkpoint_.last_checkpoint_index_) {
-      BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" got request to complete checkpoint at index " << last_index_in_checkpoint << " but already has checkpoint " <<
 	" at index " << checkpoint_.last_checkpoint_index_;
       return false;
@@ -1145,25 +1221,36 @@ namespace raft {
     // Only remaining case here is that the checkpoint index is in the log
     if (last_index_in_checkpoint <= log_start_index() ||
 	last_index_in_checkpoint > last_log_entry_index()) {
-      BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" got request to complete checkpoint at index " << last_index_in_checkpoint << " but log interval is [" <<
 	log_start_index() << "," << last_log_entry_index() << ")";
       return false;
     }
 
     checkpoint_.last_checkpoint_index_ = last_index_in_checkpoint;
+
+    // TODO: Didn't we already calculate both the last term and configuration when we started
+    // the checkpoint (and created the header)?  Shouldn't we be able to get this info from the
+    // header object in the checkpoint_data_ptr?
     const auto & e(log_.entry(last_index_in_checkpoint-1));
     checkpoint_.last_checkpoint_term_ = e.term;
 
-    // TODO: Configuration stuff
+    // Configuration stuff
+    if (configuration_.has_configuration_at(last_index_in_checkpoint)) {
+      configuration_.get_checkpoint_state(last_index_in_checkpoint, checkpoint_.last_checkpoint_configuration_);
+    } else {
+      BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+	" got request for checkpoint at index " << last_index_in_checkpoint << " but does not have configuration at that index.";
+    }
 
     // Discard log entries
     // TODO: Understand the log sync'ing implications here
     log_.truncate_prefix(checkpoint_.last_checkpoint_index_);
+    configuration_.truncate_prefix(checkpoint_.last_checkpoint_index_);
 
     checkpoint_.store_.commit(i_dont_like_this);
     
-    BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") at term " << current_term_ <<
+    BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
       " completed checkpoint at index " << checkpoint_.last_checkpoint_index_ << " and term " <<
       checkpoint_.last_checkpoint_term_ << " current log entries [" << log_start_index() << "," <<
       last_log_entry_index() << ")";

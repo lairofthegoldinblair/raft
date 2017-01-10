@@ -3,6 +3,7 @@
 
 #include "server.hh"
 
+#include <boost/algorithm/string/predicate.hpp>
 #include <boost/dynamic_bitset.hpp>
 #include <boost/format.hpp>
 #include <boost/log/core.hpp>
@@ -22,16 +23,184 @@ struct init_logging
 
 init_logging il;
 
+struct test_peer
+{
+  uint64_t peer_id;
+  uint64_t match_index;
+  boost::logic::tribool vote_;
+  bool exited_;
+  raft::server_description::address_type address;
+  std::shared_ptr<raft::peer_configuration_change> configuration_change_;  
+  void exit()
+  {
+    exited_ = true;
+  }
+};
+
+class RaftSimpleConfigurationTestFixture
+{
+public:
+  raft::simple_configuration<test_peer> c;
+
+  void make_configuration(std::size_t sz);
+};
+
+void RaftSimpleConfigurationTestFixture::make_configuration(std::size_t sz)
+{
+  for (std::size_t i=0; i<sz; ++i) {
+    c.peers_.push_back(std::shared_ptr<test_peer>(new test_peer()));
+    c.peers_.back()->peer_id=i;
+    c.peers_.back()->match_index=0;
+    c.peers_.back()->exited_=false;
+  }
+}
+
+BOOST_FIXTURE_TEST_CASE(MajorityVoteOdd, RaftSimpleConfigurationTestFixture)
+{
+  make_configuration(5);
+  for(std::size_t i=0; i<5; ++i) {
+    BOOST_CHECK(!c.has_majority_vote(i));
+  }
+  c.peers_[1]->vote_ = true;
+  for(std::size_t i=0; i<5; ++i) {
+    BOOST_CHECK(!c.has_majority_vote(i));
+  }
+  c.peers_[2]->vote_ = true;
+  BOOST_CHECK(c.has_majority_vote(0));
+  BOOST_CHECK(!c.has_majority_vote(1));
+  BOOST_CHECK(!c.has_majority_vote(2));
+  BOOST_CHECK(c.has_majority_vote(3));
+  BOOST_CHECK(c.has_majority_vote(4));
+
+  c.peers_[3]->vote_ = false;
+  BOOST_CHECK(c.has_majority_vote(0));
+  BOOST_CHECK(!c.has_majority_vote(1));
+  BOOST_CHECK(!c.has_majority_vote(2));
+  BOOST_CHECK(c.has_majority_vote(3));
+  BOOST_CHECK(c.has_majority_vote(4));
+
+  c.peers_[4]->vote_ = true;
+  for(std::size_t i=0; i<5; ++i) {
+    BOOST_CHECK(c.has_majority_vote(i));
+  }
+}
+
+BOOST_FIXTURE_TEST_CASE(MajorityVoteEven, RaftSimpleConfigurationTestFixture)
+{
+  make_configuration(4);
+  for(std::size_t i=0; i<4; ++i) {
+    BOOST_CHECK(!c.has_majority_vote(i));
+  }
+  c.peers_[1]->vote_ = true;
+  for(std::size_t i=0; i<4; ++i) {
+    BOOST_CHECK(!c.has_majority_vote(i));
+  }
+  c.peers_[2]->vote_ = true;
+  BOOST_CHECK(c.has_majority_vote(0));
+  BOOST_CHECK(!c.has_majority_vote(1));
+  BOOST_CHECK(!c.has_majority_vote(2));
+  BOOST_CHECK(c.has_majority_vote(3));
+
+  c.peers_[3]->vote_ = true;
+  for(std::size_t i=0; i<4; ++i) {
+    BOOST_CHECK(c.has_majority_vote(i));
+  }
+
+  raft::configuration_description desc;
+  desc.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}};
+  raft::configuration<test_peer, raft::configuration_description> config(0);
+  BOOST_CHECK_EQUAL(0U, config.num_known_peers());
+  BOOST_CHECK_EQUAL(0U, config.my_cluster_id());
+  BOOST_CHECK(!config.includes_self());
+  config.set_configuration(1, desc);
+  BOOST_CHECK_EQUAL(3U, config.num_known_peers());
+  BOOST_CHECK_EQUAL(0U, config.my_cluster_id());
+  BOOST_CHECK_EQUAL(1U, config.configuration_id());
+  BOOST_CHECK(config.includes_self());
+  BOOST_CHECK_EQUAL(0U, config.self().peer_id);
+  BOOST_CHECK(boost::algorithm::equals("192.168.1.1", config.self().address));
+  BOOST_CHECK_EQUAL(1U, config.peer_from_id(1).peer_id);
+  BOOST_CHECK(boost::algorithm::equals("192.168.1.2", config.peer_from_id(1).address));
+  BOOST_CHECK_EQUAL(2U, config.peer_from_id(2).peer_id);
+  BOOST_CHECK(boost::algorithm::equals("192.168.1.3", config.peer_from_id(2).address));
+}
+
+// TODO: Unit tests for match index quorum
+
+BOOST_AUTO_TEST_CASE(BasicConfigurationManagerTests)
+{
+  raft::configuration_manager<test_peer, raft::configuration_description> mgr(0);
+  for(uint64_t i=0; i<20; ++i) {
+    BOOST_CHECK(!mgr.has_configuration_at(i));
+  }
+  raft::configuration_description desc;
+  desc.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}};
+  mgr.add_logged_description(5, desc);
+  BOOST_CHECK_EQUAL(5U, mgr.configuration().configuration_id());
+  BOOST_CHECK_EQUAL(3U, mgr.configuration().num_known_peers());
+  for(uint64_t i=0; i<5; ++i) {
+    BOOST_CHECK(!mgr.has_configuration_at(i));
+  }
+  for(uint64_t i=5; i<20; ++i) {
+    BOOST_CHECK(mgr.has_configuration_at(i));
+  }
+  raft::configuration_description desc2;
+  desc2.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"}};
+  mgr.add_logged_description(10, desc2);
+  BOOST_CHECK_EQUAL(10U, mgr.configuration().configuration_id());
+  BOOST_CHECK_EQUAL(4U, mgr.configuration().num_known_peers());
+  for(uint64_t i=0; i<5; ++i) {
+    BOOST_CHECK(!mgr.has_configuration_at(i));
+  }
+  for(uint64_t i=5; i<10; ++i) {
+    BOOST_CHECK(mgr.has_configuration_at(i));
+    raft::configuration_checkpoint<raft::configuration_description> ckpt;
+    mgr.get_checkpoint_state(i, ckpt);
+    BOOST_CHECK_EQUAL(5U, ckpt.index);
+  }
+  for(uint64_t i=10; i<20; ++i) {
+    BOOST_CHECK(mgr.has_configuration_at(i));
+    raft::configuration_checkpoint<raft::configuration_description> ckpt;
+    mgr.get_checkpoint_state(i, ckpt);
+    BOOST_CHECK_EQUAL(10U, ckpt.index);
+  }
+}
+
+BOOST_AUTO_TEST_CASE(ConfigurationManagerSetCheckpointTests)
+{
+  raft::server::configuration_manager_type cm(0);
+  raft::server::configuration_manager_type::checkpoint_type ckpt;
+  BOOST_CHECK(!ckpt.is_valid());
+  ckpt.index = 0;
+  ckpt.description.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"},  {4, "192.168.1.5"}};
+  BOOST_CHECK(ckpt.is_valid());
+  cm.set_checkpoint(ckpt);
+  BOOST_CHECK_EQUAL(0U, cm.configuration().configuration_id());
+  BOOST_CHECK_EQUAL(0U, cm.configuration().my_cluster_id());
+  BOOST_CHECK_EQUAL(5U, cm.configuration().num_known_peers());
+  BOOST_CHECK(cm.configuration().includes_self());
+}
+
 BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
 {
   std::size_t cluster_size(5);
-  std::vector<raft::peer> peers(cluster_size);
+  std::vector<raft::server::peer_type> peers(cluster_size);
   for(std::size_t i=0; i<cluster_size; ++i) {
     peers[i].peer_id = i;
   }
-  raft::test_communicator comm;
+  raft::server::communicator_type comm;
   raft::client c;
-  raft::server s(comm, c, 0, peers);
+  raft::server::log_type l;
+  // raft::server::configuration_manager_type cm(0, peers);
+  raft::server::configuration_manager_type cm(0);
+  raft::server::configuration_manager_type::checkpoint_type ckpt;
+  ckpt.index = 0;
+  ckpt.description.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"},  {4, "192.168.1.5"}};
+  cm.set_checkpoint(ckpt);
+  BOOST_CHECK_EQUAL(0U, cm.configuration().configuration_id());
+  BOOST_CHECK_EQUAL(5U, cm.configuration().num_known_peers());
+  BOOST_CHECK(cm.configuration().includes_self());
+  raft::server s(comm, c, l, cm);
   BOOST_CHECK_EQUAL(0U, s.current_term());
   BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s.get_state());
   BOOST_CHECK_EQUAL(0U, comm.q.size());
@@ -124,14 +293,14 @@ BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
   expected = 1;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<raft::append_entry>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(2U, boost::get<raft::append_entry>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(expected, boost::get<raft::server::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_id);
     // TODO: What about the next 3 values ????
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).previous_log_index);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).leader_commit_index);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).entry.size());
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry.size());
     expected += 1;
     comm.q.pop_back();
   }
@@ -152,20 +321,20 @@ BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
   expected = 1;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<raft::append_entry>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(2U, boost::get<raft::append_entry>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(expected, boost::get<raft::server::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_id);
     // TODO: What about the next 3 values ????
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).previous_log_index);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).leader_commit_index);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).entry.size());
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry.size());
     expected += 1;
     comm.q.pop_back();
   }
 
   // Old append_entry should elicit a response with updated term
-  raft::append_entry ae_msg;
+  raft::server::append_entry_type ae_msg;
   ae_msg.recipient_id = 0;
   ae_msg.term_number = 1;
   ae_msg.leader_id = 0;
@@ -200,16 +369,16 @@ BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
   expected = 1;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<raft::append_entry>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(2U, boost::get<raft::append_entry>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).leader_id);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).previous_log_index);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).leader_commit_index);
-    BOOST_CHECK_EQUAL(1U, boost::get<raft::append_entry>(comm.q.back()).entry.size());
-    BOOST_CHECK_EQUAL(raft::log_entry::COMMAND, boost::get<raft::append_entry>(comm.q.back()).entry[0].type);
-    BOOST_CHECK_EQUAL(2U, boost::get<raft::append_entry>(comm.q.back()).entry[0].term);
-    BOOST_CHECK_EQUAL(0, ::strcmp("1", boost::get<raft::append_entry>(comm.q.back()).entry[0].data.c_str()));
+    BOOST_CHECK_EQUAL(expected, boost::get<raft::server::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry.size());
+    BOOST_CHECK_EQUAL(raft::server::log_entry_type::COMMAND, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].type);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].term);
+    BOOST_CHECK_EQUAL(0, ::strcmp("1", boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].data.c_str()));
     raft::append_response resp;
     resp.recipient_id = expected;
     resp.term_number = 2;
@@ -254,19 +423,19 @@ BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
   expected = 1;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<raft::append_entry>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(2U, boost::get<raft::append_entry>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).leader_id);
-    BOOST_CHECK_EQUAL(1U, boost::get<raft::append_entry>(comm.q.back()).previous_log_index);
-    BOOST_CHECK_EQUAL(2U, boost::get<raft::append_entry>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(1U, boost::get<raft::append_entry>(comm.q.back()).leader_commit_index);
-    BOOST_CHECK_EQUAL(2U, boost::get<raft::append_entry>(comm.q.back()).entry.size());
-    BOOST_CHECK_EQUAL(raft::log_entry::COMMAND, boost::get<raft::append_entry>(comm.q.back()).entry[0].type);
-    BOOST_CHECK_EQUAL(2U, boost::get<raft::append_entry>(comm.q.back()).entry[0].term);
-    BOOST_CHECK_EQUAL(0, ::strcmp("2", boost::get<raft::append_entry>(comm.q.back()).entry[0].data.c_str()));
-    BOOST_CHECK_EQUAL(raft::log_entry::COMMAND, boost::get<raft::append_entry>(comm.q.back()).entry[1].type);
-    BOOST_CHECK_EQUAL(2U, boost::get<raft::append_entry>(comm.q.back()).entry[1].term);
-    BOOST_CHECK_EQUAL(0, ::strcmp("3", boost::get<raft::append_entry>(comm.q.back()).entry[1].data.c_str()));
+    BOOST_CHECK_EQUAL(expected, boost::get<raft::server::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry.size());
+    BOOST_CHECK_EQUAL(raft::server::log_entry_type::COMMAND, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].type);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].term);
+    BOOST_CHECK_EQUAL(0, ::strcmp("2", boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].data.c_str()));
+    BOOST_CHECK_EQUAL(raft::server::log_entry_type::COMMAND, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[1].type);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[1].term);
+    BOOST_CHECK_EQUAL(0, ::strcmp("3", boost::get<raft::server::append_entry_type>(comm.q.back()).entry[1].data.c_str()));
     raft::append_response resp;
     resp.recipient_id = expected;
     resp.term_number = 2;
@@ -307,24 +476,24 @@ BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
   expected = 1;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<raft::append_entry>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(2U, boost::get<raft::append_entry>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).leader_id);
-    BOOST_CHECK_EQUAL(expected <= 2 ? 3U : 1U, boost::get<raft::append_entry>(comm.q.back()).previous_log_index);
-    BOOST_CHECK_EQUAL(2U, boost::get<raft::append_entry>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(3U, boost::get<raft::append_entry>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(expected, boost::get<raft::server::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(expected <= 2 ? 3U : 1U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(3U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_commit_index);
     if (expected <= 2) {
-      BOOST_CHECK_EQUAL(1U, boost::get<raft::append_entry>(comm.q.back()).entry.size());
-      BOOST_CHECK_EQUAL(raft::log_entry::COMMAND, boost::get<raft::append_entry>(comm.q.back()).entry[0].type);
-      BOOST_CHECK_EQUAL(2U, boost::get<raft::append_entry>(comm.q.back()).entry[0].term);
-      BOOST_CHECK_EQUAL(0, ::strcmp("4", boost::get<raft::append_entry>(comm.q.back()).entry[0].data.c_str()));
+      BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry.size());
+      BOOST_CHECK_EQUAL(raft::server::log_entry_type::COMMAND, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].type);
+      BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].term);
+      BOOST_CHECK_EQUAL(0, ::strcmp("4", boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].data.c_str()));
     } else {
-      BOOST_CHECK_EQUAL(3U, boost::get<raft::append_entry>(comm.q.back()).entry.size());
+      BOOST_CHECK_EQUAL(3U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry.size());
       for(std::size_t i=0; i<=2; ++i) {
-	BOOST_CHECK_EQUAL(raft::log_entry::COMMAND, boost::get<raft::append_entry>(comm.q.back()).entry[i].type);
-	BOOST_CHECK_EQUAL(2U, boost::get<raft::append_entry>(comm.q.back()).entry[i].term);
+	BOOST_CHECK_EQUAL(raft::server::log_entry_type::COMMAND, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[i].type);
+	BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[i].term);
 	BOOST_CHECK_EQUAL(0, ::strcmp((boost::format("%1%") % (i+2)).str().c_str(),
-				      boost::get<raft::append_entry>(comm.q.back()).entry[i].data.c_str()));
+				      boost::get<raft::server::append_entry_type>(comm.q.back()).entry[i].data.c_str()));
       }
     }
     raft::append_response resp;
@@ -356,8 +525,10 @@ class RaftTestFixture
 {
 public:
   std::size_t cluster_size;
-  raft::test_communicator comm;
+  raft::server::communicator_type comm;
   raft::client c;
+  raft::server::log_type l;
+  std::shared_ptr<raft::server::configuration_manager_type> cm;
   std::shared_ptr<raft::server> s;
 
   RaftTestFixture();
@@ -376,11 +547,22 @@ RaftTestFixture::RaftTestFixture()
   :
   cluster_size(5)
 {
-  std::vector<raft::peer> peers(cluster_size);
+  std::vector<raft::server::peer_type> peers(cluster_size);
   for(std::size_t i=0; i<cluster_size; ++i) {
     peers[i].peer_id = i;
   }
-  s.reset(new raft::server(comm, c, 0, peers));
+  cm.reset(new raft::server::configuration_manager_type(0));
+  raft::server::configuration_manager_type::checkpoint_type ckpt;
+  ckpt.index = 0;
+  ckpt.description.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"},  {4, "192.168.1.5"}};
+  BOOST_CHECK(ckpt.is_valid());
+  cm->set_checkpoint(ckpt);
+  BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
+  BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
+  BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
+  BOOST_CHECK(cm->configuration().includes_self());
+  // cm.reset(new raft::server::configuration_manager_type(0, peers));
+  s.reset(new raft::server(comm, c, l, *cm.get()));
   BOOST_CHECK_EQUAL(0U, s->current_term());
   BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s->get_state());
   BOOST_CHECK_EQUAL(0U, comm.q.size());
@@ -419,7 +601,7 @@ void RaftTestFixture::make_leader(uint64_t term)
 void RaftTestFixture::make_follower_with_checkpoint(uint64_t term, uint64_t log_entry)
 {
   {
-    raft::append_checkpoint_chunk msg;
+    raft::server::append_checkpoint_chunk_type msg;
     msg.recipient_id = 0;
     msg.term_number = term;
     msg.leader_id = 1;
@@ -509,17 +691,17 @@ void RaftTestFixture::send_client_request(uint64_t term, const char * cmd, uint6
   std::size_t num_responses = 0;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<raft::append_entry>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(term, boost::get<raft::append_entry>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).leader_id);
-    BOOST_CHECK_EQUAL(client_index, boost::get<raft::append_entry>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(expected, boost::get<raft::server::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(term, boost::get<raft::server::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(client_index, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_index);
     // Can't really check this in general
-    // BOOST_CHECK_EQUAL(client_index > 0 ? term : 0U, boost::get<raft::append_entry>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(client_index, boost::get<raft::append_entry>(comm.q.back()).leader_commit_index);
-    BOOST_CHECK_EQUAL(1U, boost::get<raft::append_entry>(comm.q.back()).entry.size());
-    BOOST_CHECK_EQUAL(raft::log_entry::COMMAND, boost::get<raft::append_entry>(comm.q.back()).entry[0].type);
-    BOOST_CHECK_EQUAL(term, boost::get<raft::append_entry>(comm.q.back()).entry[0].term);
-    BOOST_CHECK_EQUAL(0, ::strcmp(cmd, boost::get<raft::append_entry>(comm.q.back()).entry[0].data.c_str()));
+    // BOOST_CHECK_EQUAL(client_index > 0 ? term : 0U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(client_index, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry.size());
+    BOOST_CHECK_EQUAL(raft::server::log_entry_type::COMMAND, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].type);
+    BOOST_CHECK_EQUAL(term, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].term);
+    BOOST_CHECK_EQUAL(0, ::strcmp(cmd, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].data.c_str()));
       raft::append_response resp;
       resp.recipient_id = expected;
       resp.term_number = term;
@@ -550,15 +732,15 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
 {
   BOOST_CHECK_EQUAL(0U, comm.q.size());
   {
-    raft::append_entry msg;
+    raft::server::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
     msg.previous_log_index = 0;
     msg.previous_log_term = 0;
     msg.leader_commit_index = 0;
-    msg.entry.push_back(raft::log_entry());
-    msg.entry.back().type = raft::log_entry::COMMAND;
+    msg.entry.push_back(raft::server::log_entry_type());
+    msg.entry.back().type = raft::server::log_entry_type::COMMAND;
     msg.entry.back().term = 1;
     msg.entry.back().data = "1";
     s->on_append_entry(msg);
@@ -584,15 +766,15 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
 
   // Pretend a leader from expired term sends a message, this should respond with current term
   {
-    raft::append_entry msg;
+    raft::server::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 0;
     msg.leader_id = 2;
     msg.previous_log_index = 2;
     msg.previous_log_term = 1;
     msg.leader_commit_index = 1;
-    msg.entry.push_back(raft::log_entry());
-    msg.entry.back().type = raft::log_entry::COMMAND;
+    msg.entry.push_back(raft::server::log_entry_type());
+    msg.entry.back().type = raft::server::log_entry_type::COMMAND;
     msg.entry.back().term = 0;
     msg.entry.back().data = "0";
     s->on_append_entry(msg);
@@ -611,15 +793,15 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
   // Supposing the leader has committed lets go to another message
   // which creates a gap.  This should be rejected by the peer.
   {
-    raft::append_entry msg;
+    raft::server::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
     msg.previous_log_index = 2;
     msg.previous_log_term = 1;
     msg.leader_commit_index = 1;
-    msg.entry.push_back(raft::log_entry());
-    msg.entry.back().type = raft::log_entry::COMMAND;
+    msg.entry.push_back(raft::server::log_entry_type());
+    msg.entry.back().type = raft::server::log_entry_type::COMMAND;
     msg.entry.back().term = 1;
     msg.entry.back().data = "3";
     s->on_append_entry(msg);
@@ -638,7 +820,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
 
   // Send three messages with the first one a duplicate
   {
-    raft::append_entry msg;
+    raft::server::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
@@ -646,8 +828,8 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
     msg.previous_log_term = 0;
     msg.leader_commit_index = 0;
     for(std::size_t i=1; i<=3; ++i) {
-      msg.entry.push_back(raft::log_entry());
-      msg.entry.back().type = raft::log_entry::COMMAND;
+      msg.entry.push_back(raft::server::log_entry_type());
+      msg.entry.back().type = raft::server::log_entry_type::COMMAND;
       msg.entry.back().term = 1;
       msg.entry.back().data = (boost::format("%1%") % i).str();
     }
@@ -676,15 +858,15 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
   // at those indexes and is trying to append from them on the new term.  We must reject
   // so that the new leader backs up to find where its log agrees with that of the peer.
   {
-    raft::append_entry msg;
+    raft::server::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 3;
     msg.leader_id = 2;
     msg.previous_log_index = 3;
     msg.previous_log_term = 3;
     msg.leader_commit_index = 3;
-    msg.entry.push_back(raft::log_entry());
-    msg.entry.back().type = raft::log_entry::COMMAND;
+    msg.entry.push_back(raft::server::log_entry_type());
+    msg.entry.back().type = raft::server::log_entry_type::COMMAND;
     msg.entry.back().term = 3;
     msg.entry.back().data = "4";
     s->on_append_entry(msg);
@@ -706,7 +888,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
   // Let's suppose that only log entry at index 1 on term 1 got committed.  We should be able to
   // overwrite log entries starting at that point.
   {
-    raft::append_entry msg;
+    raft::server::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 3;
     msg.leader_id = 2;
@@ -714,8 +896,8 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
     msg.previous_log_term = 1;
     msg.leader_commit_index = 3;
     for (std::size_t i=2; i<=4; ++i) {
-      msg.entry.push_back(raft::log_entry());
-      msg.entry.back().type = raft::log_entry::COMMAND;
+      msg.entry.push_back(raft::server::log_entry_type());
+      msg.entry.back().type = raft::server::log_entry_type::COMMAND;
       msg.entry.back().term = 3;
       msg.entry.back().data = (boost::format("%1%a") % i).str();
     }
@@ -759,16 +941,16 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesNegativeResponse, RaftTestFixture)
     uint64_t expected = 1;
     while(comm.q.size() > 0) {
       BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-      BOOST_CHECK_EQUAL(expected, boost::get<raft::append_entry>(comm.q.back()).recipient_id);
-      BOOST_CHECK_EQUAL(1U, boost::get<raft::append_entry>(comm.q.back()).term_number);
-      BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).leader_id);
-      BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).previous_log_index);
-      BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).previous_log_term);
-      BOOST_CHECK_EQUAL(0U, boost::get<raft::append_entry>(comm.q.back()).leader_commit_index);
-      BOOST_CHECK_EQUAL(1U, boost::get<raft::append_entry>(comm.q.back()).entry.size());
-      BOOST_CHECK_EQUAL(raft::log_entry::COMMAND, boost::get<raft::append_entry>(comm.q.back()).entry[0].type);
-      BOOST_CHECK_EQUAL(1U, boost::get<raft::append_entry>(comm.q.back()).entry[0].term);
-      BOOST_CHECK_EQUAL(0, ::strcmp("1", boost::get<raft::append_entry>(comm.q.back()).entry[0].data.c_str()));
+      BOOST_CHECK_EQUAL(expected, boost::get<raft::server::append_entry_type>(comm.q.back()).recipient_id);
+      BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_entry_type>(comm.q.back()).term_number);
+      BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_id);
+      BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_index);
+      BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_term);
+      BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_commit_index);
+      BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry.size());
+      BOOST_CHECK_EQUAL(raft::server::log_entry_type::COMMAND, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].type);
+      BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].term);
+      BOOST_CHECK_EQUAL(0, ::strcmp("1", boost::get<raft::server::append_entry_type>(comm.q.back()).entry[0].data.c_str()));
       raft::append_response resp;
       resp.recipient_id = expected;
       resp.term_number = 1;
@@ -794,15 +976,15 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesNegativeResponse, RaftTestFixture)
 BOOST_FIXTURE_TEST_CASE(AppendEntriesSlowHeaderSync, RaftTestFixture)
 {
   {
-    raft::append_entry msg;
+    raft::server::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
     msg.previous_log_index = 0;
     msg.previous_log_term = 0;
     msg.leader_commit_index = 0;
-    msg.entry.push_back(raft::log_entry());
-    msg.entry.back().type = raft::log_entry::COMMAND;
+    msg.entry.push_back(raft::server::log_entry_type());
+    msg.entry.back().type = raft::server::log_entry_type::COMMAND;
     msg.entry.back().term = 1;
     msg.entry.back().data = "1";
     s->on_append_entry(msg);
@@ -813,15 +995,15 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesSlowHeaderSync, RaftTestFixture)
   BOOST_CHECK_EQUAL(0U, comm.q.size());
   {
     // Since a log header sync is outstanding we will ignore a new term
-    raft::append_entry msg;
+    raft::server::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 2;
     msg.leader_id = 2;
     msg.previous_log_index = 0;
     msg.previous_log_term = 0;
     msg.leader_commit_index = 0;
-    msg.entry.push_back(raft::log_entry());
-    msg.entry.back().type = raft::log_entry::COMMAND;
+    msg.entry.push_back(raft::server::log_entry_type());
+    msg.entry.back().type = raft::server::log_entry_type::COMMAND;
     msg.entry.back().term = 2;
     msg.entry.back().data = "2";
     s->on_append_entry(msg);
@@ -832,7 +1014,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesSlowHeaderSync, RaftTestFixture)
   BOOST_CHECK_EQUAL(0U, comm.q.size());
   {
     // Since a log header sync is outstanding we will ignore a new term
-    raft::append_checkpoint_chunk msg;
+    raft::server::append_checkpoint_chunk_type msg;
     msg.recipient_id = 0;
     msg.term_number = 2;
     msg.leader_id = 2;
@@ -849,15 +1031,15 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesSlowHeaderSync, RaftTestFixture)
   BOOST_CHECK_EQUAL(0U, comm.q.size());
   {
     // This one doesn't require a new term so it gets queued awaiting the log header sync
-    raft::append_entry msg;
+    raft::server::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
     msg.previous_log_index = 1;
     msg.previous_log_term = 1;
     msg.leader_commit_index = 0;
-    msg.entry.push_back(raft::log_entry());
-    msg.entry.back().type = raft::log_entry::COMMAND;
+    msg.entry.push_back(raft::server::log_entry_type());
+    msg.entry.back().type = raft::server::log_entry_type::COMMAND;
     msg.entry.back().term = 2;
     msg.entry.back().data = "2";
     s->on_append_entry(msg);
@@ -977,15 +1159,15 @@ BOOST_FIXTURE_TEST_CASE(OnVoteRequestSlowHeaderSyncTest, RaftTestFixture)
   // Send a couple of entries
   for(std::size_t i=1; i<=3; ++i) {
     {
-      raft::append_entry msg;
+      raft::server::append_entry_type msg;
       msg.recipient_id = 0;
       msg.term_number = 2;
       msg.leader_id = 1;
       msg.previous_log_index = i-1;
       msg.previous_log_term = i==1 ? 0 : 2;
       msg.leader_commit_index = i-1;
-      msg.entry.push_back(raft::log_entry());
-      msg.entry.back().type = raft::log_entry::COMMAND;
+      msg.entry.push_back(raft::server::log_entry_type());
+      msg.entry.back().type = raft::server::log_entry_type::COMMAND;
       msg.entry.back().term = 2;
       msg.entry.back().data = (boost::format("%1%") % i).str();
       s->on_append_entry(msg);
@@ -1046,15 +1228,15 @@ BOOST_FIXTURE_TEST_CASE(OnVoteRequestSlowHeaderSyncTest, RaftTestFixture)
   // TODO: We could also get an append_entry for the current term without ever seeing
   // a request_vote from the leader.
   {
-    raft::append_entry msg;
+    raft::server::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 3;
     msg.leader_id = 1;
     msg.previous_log_index = 3;
     msg.previous_log_term = 2;
     msg.leader_commit_index = 4;
-    msg.entry.push_back(raft::log_entry());
-    msg.entry.back().type = raft::log_entry::COMMAND;
+    msg.entry.push_back(raft::server::log_entry_type());
+    msg.entry.back().type = raft::server::log_entry_type::COMMAND;
     msg.entry.back().term = 3;
     msg.entry.back().data = "4";
     s->on_append_entry(msg);
@@ -1091,7 +1273,7 @@ BOOST_FIXTURE_TEST_CASE(OnVoteRequestSlowHeaderSyncTest, RaftTestFixture)
 BOOST_FIXTURE_TEST_CASE(AppendCheckpointChunk, RaftTestFixture)
 {
   {
-    raft::append_checkpoint_chunk msg;
+    raft::server::append_checkpoint_chunk_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
@@ -1128,7 +1310,7 @@ BOOST_FIXTURE_TEST_CASE(AppendCheckpointChunk, RaftTestFixture)
 BOOST_FIXTURE_TEST_CASE(AppendCheckpointChunkSlowHeaderSync, RaftTestFixture)
 {
   {
-    raft::append_checkpoint_chunk msg;
+    raft::server::append_checkpoint_chunk_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
@@ -1145,15 +1327,15 @@ BOOST_FIXTURE_TEST_CASE(AppendCheckpointChunkSlowHeaderSync, RaftTestFixture)
   BOOST_CHECK_EQUAL(0U, comm.q.size());
   {
     // Since a log header sync is outstanding we will ignore a new term
-    raft::append_entry msg;
+    raft::server::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 2;
     msg.leader_id = 2;
     msg.previous_log_index = 0;
     msg.previous_log_term = 0;
     msg.leader_commit_index = 0;
-    msg.entry.push_back(raft::log_entry());
-    msg.entry.back().type = raft::log_entry::COMMAND;
+    msg.entry.push_back(raft::server::log_entry_type());
+    msg.entry.back().type = raft::server::log_entry_type::COMMAND;
     msg.entry.back().term = 2;
     msg.entry.back().data = "2";
     s->on_append_entry(msg);
@@ -1164,7 +1346,7 @@ BOOST_FIXTURE_TEST_CASE(AppendCheckpointChunkSlowHeaderSync, RaftTestFixture)
   BOOST_CHECK_EQUAL(0U, comm.q.size());
   {
     // Since a log header sync is outstanding we will ignore a new term
-    raft::append_checkpoint_chunk msg;
+    raft::server::append_checkpoint_chunk_type msg;
     msg.recipient_id = 0;
     msg.term_number = 2;
     msg.leader_id = 2;
@@ -1182,7 +1364,7 @@ BOOST_FIXTURE_TEST_CASE(AppendCheckpointChunkSlowHeaderSync, RaftTestFixture)
 
   {
     // This one doesn't require a new term so it gets queued awaiting the log header sync
-    raft::append_checkpoint_chunk msg;
+    raft::server::append_checkpoint_chunk_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
@@ -1367,11 +1549,11 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpoint, RaftTestFixture)
   // discarded, a checkpoint will need to be sent to 1.
   s->on_timer();
   BOOST_REQUIRE_EQUAL(1U, comm.q.size());
-  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).recipient_id);
-  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).term_number);
-  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).leader_id);
-  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).checkpoint_begin);
-  BOOST_CHECK_EQUAL(2U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).checkpoint_end);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).recipient_id);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).term_number);
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).leader_id);
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_begin);
+  BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_end);
   comm.q.pop_back();
 
   raft::append_checkpoint_chunk_response resp;
@@ -1383,11 +1565,11 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpoint, RaftTestFixture)
     resp.bytes_stored = 2U;
     s->on_append_checkpoint_chunk_response(resp);  
     BOOST_REQUIRE_EQUAL(1U, comm.q.size());
-    BOOST_CHECK_EQUAL(1U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(1U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).leader_id);
-    BOOST_CHECK_EQUAL(2U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).checkpoint_begin);
-    BOOST_CHECK_EQUAL(4U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).checkpoint_end);
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_begin);
+    BOOST_CHECK_EQUAL(4U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_end);
     comm.q.pop_back();
   }
 
@@ -1397,11 +1579,11 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpoint, RaftTestFixture)
   resp.bytes_stored = 4U;
   s->on_append_checkpoint_chunk_response(resp);  
   BOOST_REQUIRE_EQUAL(1U, comm.q.size());
-  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).recipient_id);
-  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).term_number);
-  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).leader_id);
-  BOOST_CHECK_EQUAL(4U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).checkpoint_begin);
-  BOOST_CHECK_EQUAL(5U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).checkpoint_end);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).recipient_id);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).term_number);
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).leader_id);
+  BOOST_CHECK_EQUAL(4U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_begin);
+  BOOST_CHECK_EQUAL(5U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_end);
   comm.q.pop_back();
 
   resp.recipient_id = 1;
@@ -1448,11 +1630,11 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpointAbandon, RaftTestFixture)
   // discarded, a checkpoint will need to be sent to 1.
   s->on_timer();
   BOOST_REQUIRE_EQUAL(1U, comm.q.size());
-  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).recipient_id);
-  BOOST_CHECK_EQUAL(1U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).term_number);
-  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).leader_id);
-  BOOST_CHECK_EQUAL(0U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).checkpoint_begin);
-  BOOST_CHECK_EQUAL(2U, boost::get<raft::append_checkpoint_chunk>(comm.q.back()).checkpoint_end);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).recipient_id);
+  BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).term_number);
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).leader_id);
+  BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_begin);
+  BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_end);
   comm.q.pop_back();
 
   raft::append_checkpoint_chunk_response resp;
@@ -1479,3 +1661,5 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpointAbandon, RaftTestFixture)
 // and moves forward on a new term (or many new terms) and successfully replicate entries.  Once the former leader rejoins the cluster
 // and the new leader figures out the last index in the former leaders log that doesn't cause a gap, we'll detect a term mismatch on
 // the tail of the old leaders log and eventually make our way back to the point at which the logs agree.
+// TODO: Test starting from a non-empty log
+// TODO: What happens if a peer dies while we are sending a checkpoint and then restarts needing us to start sending from scratch

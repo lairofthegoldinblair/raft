@@ -11,6 +11,7 @@
 #include <deque>
 #include "boost/variant.hpp"
 
+#include "checkpoint.hh"
 #include "configuration.hh"
 #include "log.hh"
 
@@ -52,9 +53,11 @@ namespace raft {
     bool granted;
   };
 
+  template<typename _LogEntry>
   class append_entry
   {
   public:
+    typedef _LogEntry log_entry_type;
     uint64_t recipient_id;
     uint64_t term_number;
     uint64_t leader_id;
@@ -73,7 +76,7 @@ namespace raft {
     uint64_t previous_log_term;
     // Last log entry in message that is committed on leader
     uint64_t leader_commit_index;
-    std::vector<log_entry> entry;
+    std::vector<log_entry_type> entry;
   };
 
   class append_response
@@ -91,6 +94,7 @@ namespace raft {
 
   // TODO: Why do we assume that the checkpoint term is in the checkpoint_header in the
   // data and not in the chunk message?
+  template<typename checkpoint_data_store_type>
   class append_checkpoint_chunk
   {
   public:
@@ -102,10 +106,17 @@ namespace raft {
     // (which is is assumed to carry a checkpoint_header that also has the index).
     uint64_t last_checkpoint_index;
     // Ongaro's logcabin does not put the term in the message but assumes that it is
-    // serialized as part of the data (the actually checkpoint file).
+    // serialized as part of the data (the actual checkpoint file).
     // I'm not sure I like that model so I am putting it in the chunk message as well;
-    // we'll see how that goes for me :-)
+    // we'll see how that goes for me :-)  I am only look at this value in the first chunk
+    // of a checkpoint.
     uint64_t last_checkpoint_term;
+    // Ongaro's logcabin does not put the configuration in the message but assumes that it is
+    // serialized as part of the data (the actual checkpoint file).
+    // I'm not sure I like that model so I am putting it in the chunk message as well;
+    // we'll see how that goes for me :-)  I am only look at this value in the first chunk
+    // of a checkpoint.
+    typename checkpoint_data_store_type::configuration_type last_checkpoint_configuration;
     uint64_t checkpoint_begin;
     uint64_t checkpoint_end;
     bool checkpoint_done;
@@ -121,6 +132,7 @@ namespace raft {
     uint64_t bytes_stored;
   };
 
+  template<typename append_checkpoint_chunk_type, typename append_entry_type>
   class test_communicator
   {
   public:
@@ -131,150 +143,23 @@ namespace raft {
       q.push_front(msg);
     }
 
-    typedef boost::variant<request_vote, vote_response, append_entry, append_response,
-			   append_checkpoint_chunk, append_checkpoint_chunk_response> any_msg_type;
+    typedef boost::variant<request_vote, vote_response, append_entry_type, append_response,
+			   append_checkpoint_chunk_type, append_checkpoint_chunk_response> any_msg_type;
     std::deque<any_msg_type> q;
-  };
-
-  class checkpoint_header
-  {
-  public:
-    uint64_t last_log_entry_index;
-    uint64_t last_log_entry_term;
-    // TODO: Configuration stuff needs to go here
-  };
-
-  class checkpoint_block
-  {
-  public:
-    const uint8_t * block_data_;
-    std::size_t block_length_;
-
-    checkpoint_block()
-      :
-      block_data_(nullptr),
-      block_length_(0)
-    {
-    }
-
-    checkpoint_block(const uint8_t * block_data, std::size_t block_length)
-      :
-      block_data_(block_data),
-      block_length_(block_length)
-    {
-    }
-
-    bool is_null() const {
-      return block_data_ == nullptr;
-    }
-  };
-
-  // TODO: What abstractions are needed for representation of checkpoints.
-  // For example, for a real system this is likely to be on disk (at least somewhere "reliable")
-  // but is it a dedicated file, is it just a bunch of blocks scattered throughout a file or something else entirely?
-  // Right now I'm representing a checkpoint as a list of blocks with an implementation as an
-  // array of data (could be a linked list of stuff as well).
-  // TODO: This block stuff is half baked because it isn't consistent with the ack'ing protocol that is expressed
-  // in terms of byte offsets; it works but it's goofy.
-  class checkpoint_data
-  {
-  private:
-    checkpoint_header header_;
-    std::vector<uint8_t> data_;
-    // TODO: Configure block size
-    std::size_t block_size_;
-  public:
-    checkpoint_data(const checkpoint_header & header)
-      :
-      header_(header),
-      block_size_(2)
-    {
-    }
-
-    const checkpoint_header & header() const
-    {
-      return header_;
-    }
-
-    checkpoint_block block_at_offset(uint64_t offset) const {
-      if (offset >= data_.size()) {
-	return checkpoint_block();	
-      }
-      
-      std::size_t next_block_start = offset;
-      std::size_t next_block_end = (std::min)(next_block_start+block_size_, data_.size());
-      std::size_t next_block_size = next_block_end - next_block_start;
-      return checkpoint_block(&data_[next_block_start], next_block_size);
-    }
-    
-    checkpoint_block next_block(const checkpoint_block & current_block) {
-      if (current_block.is_null()) {
-	return checkpoint_block(&data_[0], block_size_);
-      } else if (!is_final(current_block)) {
-	std::size_t next_block_start = (current_block.block_data_ - &data_[0]) + current_block.block_length_;
-	std::size_t next_block_end = (std::min)(next_block_start+block_size_, data_.size());
-	std::size_t next_block_size = next_block_end - next_block_start;
-	return checkpoint_block(&data_[next_block_start], next_block_size);
-      } else {
-	return checkpoint_block();
-      }
-    }
-
-    uint64_t block_begin(const checkpoint_block & current_block) const {
-      return current_block.block_data_ - &data_[0];
-    }
-
-    uint64_t block_end(const checkpoint_block & current_block) const {
-      return current_block.block_length_ + block_begin(current_block);
-    }
-
-    bool is_final(const checkpoint_block & current_block) {
-      return !current_block.is_null() &&
-	(current_block.block_data_ + current_block.block_length_) == &data_[data_.size()];
-    }
-
-
-    void write(const uint8_t * data, std::size_t len)
-    {
-      for(std::size_t i=0; i<len; ++i) {
-	data_.push_back(data[i]);
-      }
-    }
-  };
-
-
-  // Checkpoints live here
-  class checkpoint_data_store
-  {
-  public:
-    typedef std::shared_ptr<checkpoint_data> checkpoint_data_ptr;
-  private:
-    std::shared_ptr<checkpoint_data> last_checkpoint_;
-  public:
-    std::shared_ptr<checkpoint_data> create(uint64_t last_entry_index, uint64_t last_entry_term) const
-    {
-      checkpoint_header header;
-      header.last_log_entry_index = last_entry_index;
-      header.last_log_entry_term = last_entry_term;
-      return std::shared_ptr<checkpoint_data>(new checkpoint_data(header));
-    }
-    void commit(std::shared_ptr<checkpoint_data> f)
-    {
-      last_checkpoint_ = f;
-    }
-    std::shared_ptr<checkpoint_data> last_checkpoint() {
-      return last_checkpoint_;
-    }
   };
 
   // Raft only really cares about the fact that a checkpoint maintains the index and term
   // at which the checkpoint is taken.  What client data and how that client data is communicated
   // to peers and disk is more or less irrelevant.  I want to structure things so that these latter
   // aspects are decoupled.
+  template<typename checkpoint_data_store_type>
   class peer_checkpoint
   {
   public:
-    typedef checkpoint_data_store::checkpoint_data_ptr checkpoint_data_ptr;
+    typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
+    typedef typename checkpoint_data_store_type::block_type block_type;
+    typedef typename checkpoint_data_store_type::configuration_type configuration_type;
+    typedef append_checkpoint_chunk<checkpoint_data_store_type> append_checkpoint_chunk_type;
     
     // One past last byte to written in checkpoint file.
     uint64_t checkpoint_next_byte_;
@@ -283,40 +168,66 @@ namespace raft {
     uint64_t checkpoint_last_log_entry_index_;
     // The term of the last log entry that the checkpoint covers.  
     uint64_t checkpoint_last_log_entry_term_;
+    // Configuration in effect at the time the checkpoint occured
+    configuration_type checkpoint_last_configuration_;
     // Checkpoint data we are sending to this peer
     checkpoint_data_ptr data_;
     // Last block sent.  We do not assume that the checkpoint bytes are contiguous in memory
     // so cannot use checkpoint_next_byte_ to know where the next chunk is in data_.
-    checkpoint_block last_block_sent_;
+    block_type last_block_sent_;
     // Has the last block been acked?  TODO: Generalize to a window/credit system?
     bool awaiting_ack_;
 
     peer_checkpoint(uint64_t checkpoint_last_log_entry_index, uint64_t checkpoint_last_log_entry_term,
-		    checkpoint_data_ptr data)
+		    const configuration_type & config, checkpoint_data_ptr data)
       :
       checkpoint_next_byte_(0),
       checkpoint_last_log_entry_index_(checkpoint_last_log_entry_index),
       checkpoint_last_log_entry_term_(checkpoint_last_log_entry_term),
+      checkpoint_last_configuration_(config),
       data_(data),
       awaiting_ack_(false)
     {
     }
 
-    bool prepare_checkpoint_chunk(append_checkpoint_chunk & msg);
+    bool prepare_checkpoint_chunk(append_checkpoint_chunk_type & msg)
+    {
+      if (awaiting_ack_) {
+	return false;
+      }
+
+      if (data_->is_final(last_block_sent_)) {
+	return false;
+      }
+
+      last_block_sent_ = data_->block_at_offset(checkpoint_next_byte_);
+
+      msg.last_checkpoint_index = checkpoint_last_log_entry_index_;
+      msg.last_checkpoint_term = checkpoint_last_log_entry_term_;
+      msg.last_checkpoint_configuration = checkpoint_last_configuration_;
+      msg.checkpoint_begin = data_->block_begin(last_block_sent_);
+      msg.checkpoint_end = data_->block_end(last_block_sent_);
+      msg.checkpoint_done = data_->is_final(last_block_sent_);
+      msg.data.assign(last_block_sent_.block_data_,
+		      last_block_sent_.block_data_+last_block_sent_.block_length_);
+      awaiting_ack_ = true;
+      return true;
+    }
   };
 
   // A peer encapsulates what a server knows about other servers in the cluster
+  template<typename checkpoint_data_store_type>
   class peer
   {
   public:
-    typedef std::string address_type;
+    typedef typename checkpoint_data_store_type::configuration_type::address_type address_type;
 
   public:
     // peer id = same as index in peer array
     uint64_t peer_id;
     // TODO: Templatize; do we actually want multiple addresses?  Does protocol really
     // need to know whether this is one or more addresses?
-    std::string address;
+    address_type address;
     // Leader specific state about peers
     // Index of next log entry to send
     uint64_t next_index_;
@@ -331,10 +242,10 @@ namespace raft {
     // TODO: Implement the exit protocol
     bool exiting_;
     // Checkpoint state for sending a checkpoint from a server to this peer
-    std::shared_ptr<peer_checkpoint> checkpoint_;
+    std::shared_ptr<peer_checkpoint<checkpoint_data_store_type> > checkpoint_;
     // State for tracking whether a peer that is newly added to a configuration tracking
     // log appends
-    std::shared_ptr<peer_configuration_change> configuration_;
+    std::shared_ptr<peer_configuration_change> configuration_change_;
 
     void exit()
     {
@@ -379,11 +290,15 @@ namespace raft {
   };
 
   // Peer side of a checkpoint transfer
+  template<typename checkpoint_data_store_type>
   class in_progress_checkpoint
   {
   public:
+    typedef typename checkpoint_data_store_type::header_type header_type;
+    typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
+  public:
     uint64_t end_;
-    std::shared_ptr<checkpoint_data> file_;
+    checkpoint_data_ptr file_;
     
     uint64_t end() const {
       return end_;
@@ -396,31 +311,36 @@ namespace raft {
       end_ += data.size();
     }
 
-    in_progress_checkpoint(checkpoint_data_store & store,
-			   uint64_t last_entry_index,
-			   uint64_t last_entry_term)
+    in_progress_checkpoint(checkpoint_data_store_type & store,
+			   const header_type & header)
       :
       end_(0),
-      file_(store.create(last_entry_index, last_entry_term))
+      file_(store.create(header))
     {
     }
   };
 
   // Per-server state related to checkpoints
+  template <typename checkpoint_data_store_type>
   class server_checkpoint
   {
+  public:
+    typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
+    typedef typename checkpoint_data_store_type::configuration_type configuration_type;
   public:
     // One after last log entry checkpointed.
     uint64_t last_checkpoint_index_;
     // Term of last checkpoint
     uint64_t last_checkpoint_term_;
+    // Configuration description at last checkpoint
+    configuration_type last_checkpoint_configuration_;
     // continuations depending on checkpoint sync events
     std::vector<std::pair<std::size_t, append_checkpoint_chunk_response> > checkpoint_chunk_response_sync_continuations_;
     // Object to manage receiving a new checkpoint from a leader and writing it to a reliable
     // location
-    std::shared_ptr<in_progress_checkpoint> current_checkpoint_;
+    std::shared_ptr<in_progress_checkpoint<checkpoint_data_store_type> > current_checkpoint_;
     // Checkpoints live here
-    checkpoint_data_store store_;
+    checkpoint_data_store_type store_;
 
     uint64_t last_checkpoint_index() const {
       return last_checkpoint_index_;
@@ -435,25 +355,201 @@ namespace raft {
     }
 
     void abandon() {
-      current_checkpoint_.reset();
+      if (!!current_checkpoint_) {
+	store_.discard(current_checkpoint_->file_);
+	current_checkpoint_.reset();
+      }
     }
 
-    std::shared_ptr<checkpoint_data> last_checkpoint() {
+    checkpoint_data_ptr last_checkpoint() {
       return store_.last_checkpoint();
     }
 
-    server_checkpoint();
+    server_checkpoint()
+      :
+      last_checkpoint_index_(0),
+      last_checkpoint_term_(0)    
+    {
+    }
+  };
+
+  template<typename peer_type, typename configuration_description_type>
+  class test_configuration
+  {
+  private:
+    // The cluster
+    std::vector<peer_type> cluster_;
+    // My cluster id/index
+    std::size_t cluster_idx_;
+    // ????
+    configuration_description_type default_;
+  public:
+    test_configuration(std::size_t cluster_idx, const std::vector<peer_type>& peers)
+      :
+      cluster_(peers),
+      cluster_idx_(cluster_idx)
+    {
+    }
+
+    peer_type & self() {
+      return cluster_[cluster_idx_];
+    }
+
+    std::size_t num_known_peers() const
+    {
+      return cluster_.size();
+    }
+
+    std::size_t my_cluster_id() const
+    {
+      return cluster_idx_;
+    }
+
+    peer_type & peer_from_id(uint64_t peer_id) {
+      return cluster_[peer_id];
+    }
+
+    const peer_type & get_peer_from_id(uint64_t peer_id) const {
+      return cluster_.at(peer_id);
+    }
+
+    bool has_quorum() const {
+      // Majority quorum logic
+      std::size_t num_votes(0);
+      for(auto & p : cluster_) {
+	if(p.peer_id == cluster_idx_ || p.vote_) {
+	  num_votes += 1;
+	}
+      }
+      return num_votes > (cluster_.size()/2);
+    }
+
+    uint64_t get_committed(uint64_t last_synced_index) const {
+      // Figure out the minimum over a quorum.
+      std::vector<uint64_t> acked;
+      // For a leader, syncing to a log is "acking"
+      acked.push_back(last_synced_index);
+      // For peers we need an append response to get an ack
+      for(std::size_t i=0; i<num_known_peers(); ++i) {
+	if (i != my_cluster_id()) {
+	  acked.push_back(get_peer_from_id(i).match_index_);
+	}
+      }
+      std::sort(acked.begin(), acked.end());
+      return acked[(acked.size()-1)/2];
+    }
+
+    void reset_staging_servers()
+    {
+      // Noop
+    }
+
+    uint64_t configuration_id() const {
+      return 0;
+    }
+
+    bool includes_self() const {
+      return true;
+    }
+
+    bool is_transitional() const {
+      return false;
+    }
+
+    const configuration_description_type & description() const {
+      return default_;
+    }
+  };
+
+  template<typename peer_type, typename configuration_description_type>
+  class test_configuration_manager
+  {
+  public:
+    typedef test_configuration<peer_type, configuration_description_type> configuration_type;
+    typedef configuration_description description_type;
+    typedef typename configuration_description_type::checkpoint_type checkpoint_type;
+  private:
+    configuration_type configuration_;
+  public:
+    test_configuration_manager(std::size_t cluster_idx, const std::vector<peer_type>& peers)
+      :
+      configuration_(cluster_idx, peers)
+    {
+    }
+    
+    const configuration_type & configuration() const
+    {
+      return configuration_;
+    }
+
+    configuration_type & configuration()
+    {
+      return configuration_;
+    }
+
+    bool has_configuration_at(uint64_t log_index) const
+    {
+      return false;
+    }
+
+    void add_logged_description(uint64_t log_index, const description_type & description)
+    {
+      // Not supported
+    }
+
+    void set_checkpoint(const checkpoint_type & description)
+    {
+      // TODO: Validate that config is same
+    }
+    
+    void get_checkpoint_state(uint64_t log_index, checkpoint_type & ck) const
+    {
+    }
+
+    void truncate_prefix(uint64_t )
+    {
+    }
+
+    void truncate_suffix(uint64_t )
+    {
+    }    
   };
 
   // A server encapsulates what a participant in the consensus protocol knows about itself
   class server
   {
   public:
+    // Checkpoint types
+    typedef checkpoint_data_store<configuration_description::checkpoint_type> checkpoint_data_store_type;
+    typedef checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
+    typedef checkpoint_data_store_type::header_type checkpoint_header_type;
+    typedef peer_checkpoint<checkpoint_data_store_type> peer_checkpoint_type;
+    typedef server_checkpoint<checkpoint_data_store_type> server_checkpoint_type;
+
+    typedef peer<checkpoint_data_store_type> peer_type;
+
+    // Log types
+    typedef in_memory_log<configuration_description> log_type;
+    typedef log_type::entry_type log_entry_type;
+    typedef log_type::index_type log_index_type;
+
+    // Message types
+    typedef append_checkpoint_chunk<checkpoint_data_store_type> append_checkpoint_chunk_type;
+    typedef append_entry<log_entry_type> append_entry_type;
+
+    typedef test_communicator<append_checkpoint_chunk_type, append_entry_type> communicator_type;
+
+    // Configuration types
+    typedef configuration_manager<peer_type, configuration_description> configuration_manager_type;
+    // typedef test_configuration_manager<peer_type, configuration_description> configuration_manager_type;
+    typedef configuration_manager_type::configuration_type configuration_type;
+    typedef configuration_description configuration_description_type;
+    
     enum state { LEADER, FOLLOWER, CANDIDATE };
   private:
     static const std::size_t INVALID_PEER_ID = std::numeric_limits<std::size_t>::max();
     
-    test_communicator & comm_;
+    communicator_type & comm_;
 
     client & client_;
 
@@ -471,12 +567,6 @@ namespace raft {
     std::chrono::milliseconds election_timeout_max_;
     std::chrono::milliseconds election_timeout_min_;
 
-    // The cluster 
-    std::vector<peer> cluster_;
-
-    // My cluster id/index
-    std::size_t cluster_idx_;
-
     // Leader id if I know it (learned from append_entry and append_checkpoint_chunk messages)
     std::size_t leader_id_;
 
@@ -484,10 +574,10 @@ namespace raft {
     uint64_t current_term_;
 
     // the peer that got my vote (could be myself)
-    peer * voted_for_;
+    peer_type * voted_for_;
 
     // Common log state
-    in_memory_log log_;
+    log_type & log_;
 
     // We can learn of the commit from a
     // checkpoint or from a majority of peers acknowledging a log entry.
@@ -502,14 +592,49 @@ namespace raft {
     uint64_t last_synced_index_;
 
     // State related to checkpoint processing
-    server_checkpoint checkpoint_;
+    server_checkpoint_type checkpoint_;
+
+    // State related to configuration management
+    configuration_manager_type & configuration_;
     
+    const configuration_type & configuration() const
+    {
+      return configuration_.configuration();
+    }
+
+    configuration_type & configuration()
+    {
+      return configuration_.configuration();
+    }
+
+    peer_type & self() {
+      return configuration().self();
+    }
+
+    peer_type & peer_from_id(uint64_t peer_id) {
+      return configuration().peer_from_id(peer_id);
+    }
+
+    std::size_t num_known_peers() const
+    {
+      return configuration().num_known_peers();
+    }
+
+    std::size_t my_cluster_id() const
+    {
+      return configuration().my_cluster_id();
+    }
+
+    bool has_quorum() const {
+      return configuration().has_quorum();
+    }
+
     // continuations depending on log sync events
     std::multimap<uint64_t, client_response_continuation> client_response_continuations_;
     std::multimap<uint64_t, append_entry_continuation> append_entry_continuations_;
     // continuations depending on log header sync events
-    std::vector<append_entry> append_entry_header_sync_continuations_;
-    std::vector<append_checkpoint_chunk> append_checkpoint_chunk_header_sync_continuations_;
+    std::vector<append_entry_type> append_entry_header_sync_continuations_;
+    std::vector<append_checkpoint_chunk_type> append_checkpoint_chunk_header_sync_continuations_;
     std::vector<std::pair<uint64_t, vote_response> > vote_response_header_sync_continuations_;
     // This flag is essentially another log header sync continuation that indicates vote requests 
     // should be sent out after log header sync (which is the case when we transition to CANDIDATE
@@ -538,14 +663,6 @@ namespace raft {
     // Used by FOLLOWER and CANDIDATE to decide when to initiate a new election.
     std::chrono::time_point<std::chrono::steady_clock> election_timeout_;
 
-    peer & self() {
-      return cluster_[cluster_idx_];
-    }
-
-    peer & peer_from_id(uint64_t peer_id) {
-      return cluster_[peer_id];
-    }
-
     std::chrono::time_point<std::chrono::steady_clock> new_election_timeout() const;
     std::chrono::time_point<std::chrono::steady_clock> new_heartbeat_timeout(std::chrono::time_point<std::chrono::steady_clock> clock_now) const;
 
@@ -555,25 +672,14 @@ namespace raft {
     void send_heartbeats(std::chrono::time_point<std::chrono::steady_clock> clock_now);
     void send_checkpoint_chunk(std::chrono::time_point<std::chrono::steady_clock> clock_now, uint64_t peer_id);
 
-    bool has_quorum() const {
-      // Majority quorum logic
-      std::size_t num_votes(0);
-      for(auto & p : cluster_) {
-	if(p.peer_id == cluster_idx_ || p.vote_) {
-	  num_votes += 1;
-	}
-      }
-      return num_votes > (cluster_.size()/2);
-    }
-
     // Based on log sync and/or append_response try to advance the commit point.
     void try_to_commit();
 
     // Append Entry processing
-    void internal_append_entry(const append_entry & req);
+    void internal_append_entry(const append_entry_type & req);
 
     // Append Checkpoint Chunk processing
-    void internal_append_checkpoint_chunk(const append_checkpoint_chunk & req);
+    void internal_append_checkpoint_chunk(const append_checkpoint_chunk_type & req);
     void internal_append_checkpoint_chunk_sync(std::size_t leader_id, const append_checkpoint_chunk_response & resp);
     void load_checkpoint();
 
@@ -587,7 +693,7 @@ namespace raft {
     void become_candidate();
     void become_leader();
   public:
-    server(test_communicator & comm, client & c, std::size_t cluster_idx, const std::vector<peer>& peers);
+    server(communicator_type & comm, client & c, log_type & l, configuration_manager_type & config_manager);
     ~server();
 
     // Events
@@ -595,9 +701,9 @@ namespace raft {
     void on_client_request(const client_request & req);
     void on_request_vote(const request_vote & req);
     void on_vote_response(const vote_response & resp);
-    void on_append_entry(const append_entry & req);
+    void on_append_entry(const append_entry_type & req);
     void on_append_response(const append_response & req);
-    void on_append_checkpoint_chunk(const append_checkpoint_chunk & req);
+    void on_append_checkpoint_chunk(const append_checkpoint_chunk_type & req);
     void on_append_checkpoint_chunk_response(const append_checkpoint_chunk_response & resp);
     // Append to log flushed to disk
     void on_log_sync(uint64_t index);
@@ -617,10 +723,13 @@ namespace raft {
 
     // This avoids having consensus constrain how the client takes and writes a checkpoint, but eventually
     // have to let consensus know when a checkpoint is complete so that it can be sent to a peer (for example).
-    std::shared_ptr<checkpoint_data> begin_checkpoint(uint64_t last_index_in_checkpoint) const;
-    bool complete_checkpoint(uint64_t last_index_in_checkpoint, std::shared_ptr<checkpoint_data> i_dont_like_this);
+    checkpoint_data_ptr begin_checkpoint(uint64_t last_index_in_checkpoint) const;
+    bool complete_checkpoint(uint64_t last_index_in_checkpoint, checkpoint_data_ptr i_dont_like_this);
 
     // Observers for testing
+    const peer_type & get_peer_from_id(uint64_t peer_id) const {
+      return configuration().get_peer_from_id(peer_id);
+    }
     uint64_t current_term() const {
       return current_term_;
     }
@@ -630,16 +739,10 @@ namespace raft {
     state get_state() const {
       return state_;
     }
-    const peer & get_peer_from_id(uint64_t peer_id) const {
-      return cluster_.at(peer_id);
-    }
     bool log_header_sync_required() const {
       return log_header_sync_required_;
     }
-    in_memory_log & log() {
-      return log_;
-    }
-    server_checkpoint & checkpoint() {
+    server_checkpoint_type & checkpoint() {
       return checkpoint_;
     }
   };

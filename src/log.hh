@@ -4,22 +4,33 @@
 #include <deque>
 
 namespace raft {
+
+  template<typename _Description>
   struct log_entry
   {
   public:
-    enum entry_type { COMMAND, CHECKPOINT, CONFIGURATION };
+    typedef _Description configuration_description_type;
+    enum entry_type { COMMAND, CHECKPOINT, CONFIGURATION, NOOP };
     entry_type type;
     uint64_t term;
+    // TODO: Investigate use of boost::variant, boost::any, etc to handle
+    // union
+    // Populated if type==COMMAND
     std::string data;
+    // Populated if type==CONFIGURATION
+    configuration_description_type configuration;
   };
   
+  template<typename _Description>
   class in_memory_log
   {
   public:
     typedef uint64_t index_type;
+    typedef _Description configuration_description_type;
+    typedef log_entry<_Description> entry_type;
   private:
     index_type start_index_;
-    std::deque<log_entry> entries_;
+    std::deque<entry_type> entries_;
     uint64_t current_term_;
     uint64_t voted_for_;
     
@@ -35,7 +46,7 @@ namespace raft {
     /**
      * Returns index range [begin,end) that was appended
      */
-    std::pair<index_type, index_type> append(const std::vector<log_entry>& entries)
+    std::pair<index_type, index_type> append(const std::vector<entry_type>& entries)
     {
       index_type start_added = last_index();
       index_type last_added = start_added + entries.size();
@@ -64,12 +75,12 @@ namespace raft {
       // TODO: Implement
     }
 
-    const log_entry & entry(index_type i) const
+    const entry_type & entry(index_type i) const
     {
       return entries_.at(i - start_index());
     }
 
-    const log_entry & last_entry() const
+    const entry_type & last_entry() const
     {
       return entries_.back();
     }
@@ -102,7 +113,7 @@ namespace raft {
     void truncate_prefix(index_type idx)
     {
       index_type i = start_index_;
-      while(i++ < idx) {
+      while(i++ < idx && !entries_.empty()) {
 	entries_.pop_front();
       }
       start_index_ = idx;
@@ -114,7 +125,7 @@ namespace raft {
     void truncate_suffix(index_type idx)
     {
       index_type last = last_index();
-      while (idx++ < last) {
+      while (idx++ < last && !entries_.empty()) {
 	entries_.pop_back();
       }
     }
