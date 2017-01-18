@@ -7,6 +7,8 @@
 #include <vector>
 
 #include "boost/assert.hpp"
+#include "boost/iterator/filter_iterator.hpp"
+#include "boost/iterator/transform_iterator.hpp"
 #include "boost/log/trivial.hpp"
 
 namespace raft {
@@ -78,14 +80,20 @@ namespace raft {
     std::chrono::time_point<std::chrono::steady_clock> current_catch_up_iteration_start_;
     uint64_t current_catch_up_iteration_goal_;
     int64_t last_catch_up_iteration_millis_;
+    std::size_t cluster_idx_;
+    uint64_t peer_id_;
   public:
     // We start out with an unattainable goal but this will get fixed up in the next interval.
-    peer_configuration_change(std::chrono::time_point<std::chrono::steady_clock> clock_now)
+    peer_configuration_change(std::size_t cluster_idx,
+			      uint64_t peer_id,
+			      std::chrono::time_point<std::chrono::steady_clock> clock_now)
       :
       is_caught_up_(false),
       current_catch_up_iteration_start_(clock_now),
-      current_catch_up_iteration_goal_(std::numeric_limits<uint64_t>::max()),
-      last_catch_up_iteration_millis_(std::numeric_limits<uint64_t>::max())
+      current_catch_up_iteration_goal_(0),
+      last_catch_up_iteration_millis_(std::numeric_limits<int64_t>::max()),
+      cluster_idx_(cluster_idx),
+      peer_id_(peer_id)
     {
     }
     
@@ -98,7 +106,12 @@ namespace raft {
 	int64_t millis = (int64_t) std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
 	if (std::labs(millis - last_catch_up_iteration_millis_) < ELECTION_TIMEOUT) {
 	  is_caught_up_ = true;
+	  BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") peer " << peer_id_ << " is caught up at match_index " <<
+	    match_index;
 	} else {
+	  BOOST_LOG_TRIVIAL(info) << "Server(" << cluster_idx_ << ") peer " << peer_id_ << " achieved previous goal " <<
+	    current_catch_up_iteration_goal_ << " in " << millis << " milliseconds but has not yet caught up. New match index goal " <<
+	    last_log_index;
 	  last_catch_up_iteration_millis_ = millis;
 	  current_catch_up_iteration_start_ = clock_now;
 	  current_catch_up_iteration_goal_ = last_log_index;
@@ -126,10 +139,12 @@ namespace raft {
 
     bool includes(std::size_t myself) const
     {
-      if (myself >= peers_.size()) {
-	return false;
+      for(auto & p : peers_) {
+	if (p->peer_id == myself) {
+	  return true;
+	}
       }
-      return !!peers_[myself];
+      return false;
     }
 
     bool has_majority_vote(std::size_t myself) const
@@ -171,12 +186,33 @@ namespace raft {
     std::vector<std::shared_ptr<_Peer> > peers_;
   };
 
+  // Implements Ongaro's Joint Consensus configuration algorithm.  See Section 4.3 of Ongaro's thesis and
+  // the "In search of understandable consensus algorithm" paper.
   template <typename _Peer, typename _Description>
   class configuration
   {
+  private:
+    struct is_not_null
+    {
+      bool operator() (std::shared_ptr<_Peer> p) const { return !!p; }
+    };
+    
+    struct deref
+    {
+      _Peer & operator() (std::shared_ptr<_Peer> & elt) const
+      {
+	return *elt.get();
+      }
+    };
+    
+    typedef boost::filter_iterator<is_not_null, typename std::vector<std::shared_ptr<_Peer> >::iterator> peer_filter_iterator;
+
   public:
     typedef typename _Description::server_type server_description_type;
     typedef _Peer peer_type;
+    typedef simple_configuration<peer_type> simple_description_type;
+    typedef boost::transform_iterator<deref, peer_filter_iterator> peer_iterator;
+
   private:
     // The cluster = all known peers which may not be in a configuration yet
     std::vector<std::shared_ptr<_Peer> > cluster_;
@@ -194,23 +230,34 @@ namespace raft {
     // STABLE - Configuration is currently functional and agreed on
     // STAGING - On a leader we have requested a new configuration, we are propagating
     // entries to any new peers and are waiting for them to catchup.
-    // TRANSITIONAL - On a leader a new configuration has caught up
+    // TRANSITIONAL - On a leader, a new configuration has caught up and been added to a
+    // transitional configuration in which we require a majority from both the old set of
+    // servers and a new set of servers.  Once transitional is committed (in both old and new set)
+    // then the old configuration may be shut down.
     enum State { EMPTY, STABLE, STAGING, TRANSITIONAL };
     State state_;
 
-    // TODO: Are old_peers_ and new_peers_ necessarily disjoint?  I suspect not.
+    // These are the peers in the "current" configuration
     simple_configuration<_Peer> old_peers_;
 
     // If STAGING then these servers get log entries but do not participate in
-    // elections (TODO: What does that mean? simply that they do not vote for leader?)
-    // If TRANSITIONAL then we need a majority of these for a quorum (in leader election?)
+    // quorums for voting or commitment decisions.
+    // If TRANSITIONAL then we need a majority of these for a quorum (in leader election and committing)
+    // as well as needing a majority of old_peers_.
+    // It not STAGING or TRANSITIONAL then this should be empty.
     simple_configuration<_Peer> new_peers_;
 
     // Description = is for serializing to log/checkpoint and for initializing
     _Description description_;
 
+    // Remember if a transitional configuration was created by staging in this instance (as opposed
+    // to being received in a log).  This is synonymous with being the LEADER where the config change
+    // was initiated.  The reason we have to remember this is that by the time the config is committed
+    // we may have lost leadership.
+    bool initiated_new_configuration_;
+
     // Sync up the server description address with the peer type.
-    std::shared_ptr<_Peer> get_or_create_peer(const server_description_type & s)
+    std::shared_ptr<_Peer> get_or_create_peer(const server_description_type & s, bool is_staging)
     {
       if (cluster_.size() <= s.id) {
 	cluster_.resize(s.id+1);
@@ -218,8 +265,10 @@ namespace raft {
       if (!cluster_[s.id]) {
 	cluster_[s.id].reset(new _Peer());
 	cluster_[s.id]->peer_id = s.id;
-	// TODO: Do I create this if I am a FOLLOWER and I get a new configuration???
-	cluster_[s.id]->configuration_change_.reset(new peer_configuration_change(std::chrono::steady_clock::now()));
+	// Only staging servers need to be monitored for catchup.
+	if (is_staging) {
+	  cluster_[s.id]->configuration_change_.reset(new peer_configuration_change(my_cluster_id(), s.id, std::chrono::steady_clock::now()));
+	}
 	++num_known_peers_;
 	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") creating new peer with id " << s.id;
       }
@@ -227,20 +276,30 @@ namespace raft {
       cluster_[s.id]->address = s.address;
       return cluster_[s.id];
     }
-
   public:
     configuration(uint64_t self)
       :
       num_known_peers_(0),
       cluster_idx_(self),
       configuration_id_(std::numeric_limits<uint64_t>::max()),
-      state_(EMPTY)
+      state_(EMPTY),
+      initiated_new_configuration_(false)
     {
     }
     
     std::size_t num_known_peers() const
     {
       return num_known_peers_;
+    }
+
+    peer_iterator begin_peers()
+    {
+      return boost::make_transform_iterator(boost::make_filter_iterator<is_not_null>(cluster_.begin(), cluster_.end()), deref());
+    }
+
+    peer_iterator end_peers()
+    {
+      return boost::make_transform_iterator(boost::make_filter_iterator<is_not_null>(cluster_.end(), cluster_.end()), deref());
     }
 
     std::size_t my_cluster_id() const
@@ -281,10 +340,18 @@ namespace raft {
       }
       return ret;
     }
+
+    // TODO: LogCabin has support for using a quorum to track versions of clients/state machines
+    // in order to do consistent upgrades.
     
     uint64_t configuration_id() const
     {
       return configuration_id_;
+    }
+
+    bool is_valid() const
+    {
+      return configuration_id_ != std::numeric_limits<uint64_t>::max();
     }
 
     void set_configuration(uint64_t configuration_id, const _Description & desc)
@@ -293,16 +360,22 @@ namespace raft {
       configuration_id_ = configuration_id;
       description_ = desc;
 
+      // The in-progress config change is done (either we've rolled back to previous STABLE
+      // or committed the new STABLE).
+      if (state_ == STABLE) {
+	initiated_new_configuration_ = false;
+      }
+
       old_peers_.clear();
       new_peers_.clear();
 
       std::set<uint64_t> new_known_peers;
       for(auto & s : description_.from.servers) {
-	old_peers_.peers_.push_back(get_or_create_peer(s));
+	old_peers_.peers_.push_back(get_or_create_peer(s, false));
 	new_known_peers.insert(old_peers_.peers_.back()->peer_id);
       }
       for(auto & s : description_.to.servers) {
-	new_peers_.peers_.push_back(get_or_create_peer(s));
+	new_peers_.peers_.push_back(get_or_create_peer(s, false));
 	new_known_peers.insert(new_peers_.peers_.back()->peer_id);
       }
 
@@ -321,9 +394,10 @@ namespace raft {
     {
       BOOST_ASSERT(state_ == STABLE);
       state_ = STAGING;
+      initiated_new_configuration_ = true;
       for(auto & s : desc.servers) {
 	// This may update address of any existing peer
-	new_peers_.peers_.push_back(get_or_create_peer(s));
+	new_peers_.peers_.push_back(get_or_create_peer(s, true));
       }
     }
 
@@ -333,12 +407,48 @@ namespace raft {
 	// Cancel the STAGING and also restore any addresses that may have been
 	// updated by the staging...
 	set_configuration(configuration_id_, description_);
+	BOOST_ASSERT(initiated_new_configuration_ == false);
       }
     }
 
+    bool staging_servers_caught_up() const
+    {
+      if (state_ != STAGING) {
+	return true;
+      }
+      
+      for(auto & p : new_peers_.peers_) {
+	if (!!p->configuration_change_ && !p->configuration_change_->is_caught_up()) {
+	  return false;
+	}
+      }
+      return true;
+    }
+
+    bool staging_servers_making_progress(typename _Description::simple_type & desc) const
+    {
+      if (state_ != STAGING) {
+	return true;
+      }
+
+      // TODO: Implement
+      return true;
+    }
+
+    void get_transitional_configuration(_Description & desc)
+    {
+      desc.from = description_.from;
+      for(auto & p : new_peers_.peers_) {
+	desc.to.servers.push_back(typename _Description::server_type());
+	desc.to.servers.back().id = p->peer_id;
+	desc.to.servers.back().address = p->address;
+      }
+    }
+    
     void reset()
     {
       state_ = EMPTY;
+      initiated_new_configuration_ = false;
       configuration_id_ = std::numeric_limits<uint64_t>::max();
       description_ = _Description();
       old_peers_.clear();
@@ -365,6 +475,18 @@ namespace raft {
       return state_ == TRANSITIONAL;
     }
 
+    bool is_staging() const {
+      return state_ == STAGING;
+    }
+
+    bool is_stable() const {
+      return state_ == STABLE;
+    }
+
+    bool is_transitional_initiator() const {
+      return is_transitional() && initiated_new_configuration_;
+    }
+
     const _Description description() const {
       return description_;
     }
@@ -384,8 +506,8 @@ namespace raft {
   {
   public:
     typedef _Description description_type;
-    typedef _Peer peer_type;
-    typedef configuration<_Peer, _Description> configuration_type;
+    typedef typename _Peer::template apply<peer_configuration_change>::type peer_type;
+    typedef configuration<peer_type, _Description> configuration_type;
     typedef typename description_type::checkpoint_type checkpoint_type;
   private:
 
@@ -399,6 +521,8 @@ namespace raft {
     std::map<uint64_t, description_type> logged_descriptions_;
 
     // Valid if and only if checkpoint_description_.first != std::numeric_limits<uint64_t>::max()
+    // Not sure I need to track this separately from logged descriptions as I am storing the checkpointed
+    // description in server_checkpoint::last_checkpoint_configuration_ (or I can get rid of that and use this).
     checkpoint_type checkpoint_description_;
 
     void on_update()
@@ -466,6 +590,11 @@ namespace raft {
 	checkpoint_description_ = ckpt;
 	on_update();
       }
+    }
+
+    const checkpoint_type & get_checkpoint() const
+    {
+      return checkpoint_description_;
     }
 
     // Remove entries with index < idx

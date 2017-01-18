@@ -20,7 +20,8 @@ namespace raft {
     // Populated if type==CONFIGURATION
     configuration_description_type configuration;
   };
-  
+
+  // Probably template out the Raft log header stuff (current_term_ and voted_for_).
   template<typename _Description>
   class in_memory_log
   {
@@ -35,11 +36,12 @@ namespace raft {
     uint64_t voted_for_;
     
   public:
+    // TODO: voted_for_ initialization should use raft::server::INVALID_PEER_ID.
     in_memory_log()
       :
       start_index_(0),
       current_term_(0),
-      voted_for_(0)
+      voted_for_(std::numeric_limits<uint64_t>::max())
     {
     }
 

@@ -23,19 +23,31 @@ struct init_logging
 
 init_logging il;
 
-struct test_peer
+template<typename _T>
+struct test_peer_T
 {
   uint64_t peer_id;
   uint64_t match_index;
   boost::logic::tribool vote_;
   bool exited_;
   raft::server_description::address_type address;
-  std::shared_ptr<raft::peer_configuration_change> configuration_change_;  
+  std::shared_ptr<_T> configuration_change_;  
   void exit()
   {
     exited_ = true;
   }
 };
+
+struct test_peer_metafunction
+{
+  template<typename _T>
+  struct apply
+  {
+    typedef test_peer_T<_T> type;
+  };
+};
+
+struct test_peer : public test_peer_T<raft::peer_configuration_change> {};
 
 class RaftSimpleConfigurationTestFixture
 {
@@ -43,6 +55,7 @@ public:
   raft::simple_configuration<test_peer> c;
 
   void make_configuration(std::size_t sz);
+  void make_configuration_with_holes(std::size_t sz);
 };
 
 void RaftSimpleConfigurationTestFixture::make_configuration(std::size_t sz)
@@ -55,6 +68,15 @@ void RaftSimpleConfigurationTestFixture::make_configuration(std::size_t sz)
   }
 }
 
+void RaftSimpleConfigurationTestFixture::make_configuration_with_holes(std::size_t sz)
+{
+  for (std::size_t i=0; i<sz; ++i) {
+    c.peers_.push_back(std::shared_ptr<test_peer>(new test_peer()));
+    c.peers_.back()->peer_id=2*i;
+    c.peers_.back()->match_index=0;
+    c.peers_.back()->exited_=false;
+  }
+}
 BOOST_FIXTURE_TEST_CASE(MajorityVoteOdd, RaftSimpleConfigurationTestFixture)
 {
   make_configuration(5);
@@ -127,9 +149,20 @@ BOOST_FIXTURE_TEST_CASE(MajorityVoteEven, RaftSimpleConfigurationTestFixture)
 
 // TODO: Unit tests for match index quorum
 
+BOOST_FIXTURE_TEST_CASE(IncludesTest, RaftSimpleConfigurationTestFixture)
+{
+  make_configuration_with_holes(4);
+  for(std::size_t i=0; i<4; ++i) {
+    BOOST_CHECK(c.includes(2*i));
+  }
+  for(std::size_t i=0; i<=4; ++i) {
+    BOOST_CHECK(!c.includes(2*i+1));
+  }
+}
+
 BOOST_AUTO_TEST_CASE(BasicConfigurationManagerTests)
 {
-  raft::configuration_manager<test_peer, raft::configuration_description> mgr(0);
+  raft::configuration_manager<test_peer_metafunction, raft::configuration_description> mgr(0);
   for(uint64_t i=0; i<20; ++i) {
     BOOST_CHECK(!mgr.has_configuration_at(i));
   }
@@ -168,8 +201,8 @@ BOOST_AUTO_TEST_CASE(BasicConfigurationManagerTests)
 
 BOOST_AUTO_TEST_CASE(ConfigurationManagerSetCheckpointTests)
 {
-  raft::server::configuration_manager_type cm(0);
-  raft::server::configuration_manager_type::checkpoint_type ckpt;
+  raft::configuration_manager<test_peer_metafunction, raft::configuration_description> cm(0);
+  raft::configuration_manager<test_peer_metafunction, raft::configuration_description>::checkpoint_type ckpt;
   BOOST_CHECK(!ckpt.is_valid());
   ckpt.index = 0;
   ckpt.description.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"},  {4, "192.168.1.5"}};
@@ -179,19 +212,18 @@ BOOST_AUTO_TEST_CASE(ConfigurationManagerSetCheckpointTests)
   BOOST_CHECK_EQUAL(0U, cm.configuration().my_cluster_id());
   BOOST_CHECK_EQUAL(5U, cm.configuration().num_known_peers());
   BOOST_CHECK(cm.configuration().includes_self());
+  BOOST_CHECK(cm.has_configuration_at(0));
 }
 
 BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
 {
-  std::size_t cluster_size(5);
-  std::vector<raft::server::peer_type> peers(cluster_size);
-  for(std::size_t i=0; i<cluster_size; ++i) {
-    peers[i].peer_id = i;
-  }
-  raft::server::communicator_type comm;
-  raft::client c;
-  raft::server::log_type l;
+  // std::size_t cluster_size(5);
+  // std::vector<raft::server::peer_type> peers(cluster_size);
+  // for(std::size_t i=0; i<cluster_size; ++i) {
+  //   peers[i].peer_id = i;
+  // }
   // raft::server::configuration_manager_type cm(0, peers);
+
   raft::server::configuration_manager_type cm(0);
   raft::server::configuration_manager_type::checkpoint_type ckpt;
   ckpt.index = 0;
@@ -200,7 +232,14 @@ BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
   BOOST_CHECK_EQUAL(0U, cm.configuration().configuration_id());
   BOOST_CHECK_EQUAL(5U, cm.configuration().num_known_peers());
   BOOST_CHECK(cm.configuration().includes_self());
-  raft::server s(comm, c, l, cm);
+  std::size_t cluster_size = cm.configuration().num_known_peers();
+
+  raft::server::communicator_type comm;
+  raft::server::client_type c;
+  raft::server::log_type l;
+  raft::server::checkpoint_data_store_type store;
+ 
+  raft::server s(comm, c, l, store, cm);
   BOOST_CHECK_EQUAL(0U, s.current_term());
   BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s.get_state());
   BOOST_CHECK_EQUAL(0U, comm.q.size());
@@ -526,8 +565,9 @@ class RaftTestFixture
 public:
   std::size_t cluster_size;
   raft::server::communicator_type comm;
-  raft::client c;
+  raft::server::client_type c;
   raft::server::log_type l;
+  raft::server::checkpoint_data_store_type store;
   std::shared_ptr<raft::server::configuration_manager_type> cm;
   std::shared_ptr<raft::server> s;
 
@@ -541,16 +581,18 @@ public:
   void become_follower_with_vote_request(uint64_t term);
   void send_client_request_and_commit(uint64_t term, const char * cmd, uint64_t client_index);
   void send_client_request(uint64_t term, const char * cmd, uint64_t client_index, const boost::dynamic_bitset<> & send_responses_from);
+  std::size_t num_known_peers() { return cm->configuration().num_known_peers(); }
 };
 
 RaftTestFixture::RaftTestFixture()
   :
   cluster_size(5)
 {
-  std::vector<raft::server::peer_type> peers(cluster_size);
-  for(std::size_t i=0; i<cluster_size; ++i) {
-    peers[i].peer_id = i;
-  }
+  // std::vector<raft::server::peer_type> peers(cluster_size);
+  // for(std::size_t i=0; i<cluster_size; ++i) {
+  //   peers[i].peer_id = i;
+  // }
+  // cm.reset(new raft::server::configuration_manager_type(0, peers));
   cm.reset(new raft::server::configuration_manager_type(0));
   raft::server::configuration_manager_type::checkpoint_type ckpt;
   ckpt.index = 0;
@@ -561,8 +603,7 @@ RaftTestFixture::RaftTestFixture()
   BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
   BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
   BOOST_CHECK(cm->configuration().includes_self());
-  // cm.reset(new raft::server::configuration_manager_type(0, peers));
-  s.reset(new raft::server(comm, c, l, *cm.get()));
+  s.reset(new raft::server(comm, c, l, store, *cm.get()));
   BOOST_CHECK_EQUAL(0U, s->current_term());
   BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s->get_state());
   BOOST_CHECK_EQUAL(0U, comm.q.size());
@@ -577,13 +618,13 @@ void RaftTestFixture::make_leader(uint64_t term)
   BOOST_CHECK(s->log_header_sync_required());
   s->on_log_header_sync();
   BOOST_CHECK(!s->log_header_sync_required());
-  BOOST_CHECK_EQUAL(cluster_size-1, comm.q.size());
+  BOOST_CHECK_EQUAL(num_known_peers()-1, comm.q.size());
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(0U, comm.q.back().which());
     comm.q.pop_back();
   }
   raft::vote_response vote_response_msg;
-  for(uint64_t p=1; p!=cluster_size; ++p) {
+  for(uint64_t p=1; p!=num_known_peers(); ++p) {
     vote_response_msg.peer_id = p;
     vote_response_msg.term_number = term;
     vote_response_msg.request_term_number = term;
@@ -664,7 +705,7 @@ void RaftTestFixture::become_follower_with_vote_request(uint64_t term)
 void RaftTestFixture::send_client_request_and_commit(uint64_t term, const char * cmd, uint64_t client_index)
 {
   boost::dynamic_bitset<> responses;
-  responses.resize(cluster_size, 1);
+  responses.resize(num_known_peers(), 1);
   send_client_request(term, cmd, client_index, responses);
   BOOST_CHECK_EQUAL(client_index+1, s->commit_index());
 }
@@ -686,7 +727,7 @@ void RaftTestFixture::send_client_request(uint64_t term, const char * cmd, uint6
   s->on_timer();
   BOOST_CHECK_EQUAL(term, s->current_term());
   BOOST_CHECK_EQUAL(raft::server::LEADER, s->get_state());
-  BOOST_CHECK_EQUAL(cluster_size-1, comm.q.size());
+  BOOST_CHECK_EQUAL(num_known_peers()-1, comm.q.size());
   std::size_t expected = 1;
   std::size_t num_responses = 0;
   while(comm.q.size() > 0) {
@@ -937,7 +978,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesNegativeResponse, RaftTestFixture)
     s->on_timer();
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(raft::server::LEADER, s->get_state());
-    BOOST_CHECK_EQUAL(cluster_size-1, comm.q.size());
+    BOOST_CHECK_EQUAL(num_known_peers()-1, comm.q.size());
     uint64_t expected = 1;
     while(comm.q.size() > 0) {
       BOOST_CHECK_EQUAL(2U, comm.q.back().which());
@@ -1524,7 +1565,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpoint, RaftTestFixture)
   // Send success response from all peers except 1.  This will commit entry
   // so that it can be checkpointed.
   boost::dynamic_bitset<> responses;
-  responses.resize(cluster_size, true);
+  responses.resize(num_known_peers(), true);
   responses.flip(1);
   send_client_request(term, cmd, client_index++, responses);
   BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
@@ -1605,7 +1646,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpointAbandon, RaftTestFixture)
   // Send success response from all peers except 1.  This will commit entry
   // so that it can be checkpointed.
   boost::dynamic_bitset<> responses;
-  responses.resize(cluster_size, true);
+  responses.resize(num_known_peers(), true);
   responses.flip(1);
   send_client_request(term, cmd, client_index++, responses);
   BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
@@ -1657,9 +1698,141 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpointAbandon, RaftTestFixture)
   s->on_append_checkpoint_chunk_response(resp);  
 }
 
+BOOST_FIXTURE_TEST_CASE(JointConsensusAddServer, RaftTestFixture)
+{
+  uint64_t term=1;
+  make_leader(term);
+  uint64_t client_index=0;
+  send_client_request_and_commit(term, "1", client_index++);  
+
+  BOOST_CHECK_EQUAL(5U, num_known_peers());
+  raft::server::set_configuration_request_type req;
+  req.old_id = 0;
+  req.new_configuration.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"},  {4, "192.168.1.5"},  {5, "192.168.1.6"}};
+  s->on_set_configuration(req);
+  BOOST_CHECK_EQUAL(6U, num_known_peers());
+  
+  // Run timer then we should get append_entries for the newly added server
+  s->on_timer();
+  BOOST_CHECK_EQUAL(1U, comm.q.size());
+  while(comm.q.size() > 0) {
+    BOOST_CHECK_EQUAL(2U, comm.q.back().which());
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry.size());
+    raft::append_response resp;
+    resp.recipient_id = 5;
+    resp.term_number = 1;
+    resp.request_term_number = 1;
+    resp.begin_index = 0;
+    resp.last_index = 1;
+    resp.success = true;
+    s->on_append_response(resp);
+    comm.q.pop_back();
+  }
+  BOOST_CHECK(!cm->configuration().staging_servers_caught_up());
+  BOOST_CHECK(cm->configuration().is_staging());
+
+  // This should catch up newly added server.  Based on this we should
+  // move to transitional
+  send_client_request_and_commit(term, "2", client_index++);
+  BOOST_CHECK(cm->configuration().staging_servers_caught_up());
+  // TODO: Should I really have to do this on_timer call to trigger the transitional entry????
+  s->on_timer();
+  BOOST_CHECK(cm->configuration().is_transitional());
+  uint64_t expected=1;
+  BOOST_CHECK_EQUAL(num_known_peers() - 1U, comm.q.size());
+  while(comm.q.size() > 0) {
+    BOOST_CHECK_EQUAL(2U, comm.q.back().which());
+    BOOST_CHECK_EQUAL(expected, boost::get<raft::server::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::server::append_entry_type>(comm.q.back()).entry.size());
+    raft::append_response resp;
+    resp.recipient_id = expected;
+    resp.term_number = 1;
+    resp.request_term_number = 1;
+    resp.begin_index = 2;
+    resp.last_index = 3;
+    resp.success = true;
+    s->on_append_response(resp);
+    comm.q.pop_back();
+
+    // We need quorum from both the old set of 5 servers and the new set of 6
+    if(expected < 4) {
+      BOOST_CHECK_EQUAL(2U, s->commit_index());
+    } else {
+      BOOST_CHECK_EQUAL(3U, s->commit_index());
+    }
+    if(expected != 4) {
+      BOOST_CHECK_EQUAL(0U, c.configuration_responses.size());
+    } else {
+      BOOST_CHECK_EQUAL(1U, c.configuration_responses.size());
+      BOOST_CHECK_EQUAL(raft::SUCCESS, c.configuration_responses.front().result);
+      BOOST_CHECK_EQUAL(0U, c.configuration_responses.front().bad_servers.servers.size());
+      c.configuration_responses.pop_back();
+    }
+    expected += 1;
+  }  
+}
+
+BOOST_AUTO_TEST_CASE(InitializeFromNonEmptyLog)
+{
+  // Valid initialization must either be completely empty or there must be a configuration
+  // somewhere (log or checkpoint).
+  raft::server::communicator_type comm;
+  raft::server::client_type c;
+  raft::server::log_type l;
+  raft::server::checkpoint_data_store_type store;
+
+  std::vector<raft::server::log_entry_type> entries;
+  raft::server::configuration_description_server_type server_desc = { 2, "192.168.1.1" };
+  entries.emplace_back(raft::server::get_bootstrap_log_entry(server_desc));
+  l.append(entries);
+  l.update_header(entries.back().term, raft::server::INVALID_PEER_ID);
+ 
+  raft::server::configuration_manager_type cm(2);
+  raft::server s(comm, c, l, store, cm);
+  BOOST_CHECK_EQUAL(entries.back().term, s.current_term());
+  BOOST_CHECK_EQUAL(raft::server::FOLLOWER, s.get_state());
+  BOOST_CHECK(cm.has_configuration_at(0));
+  BOOST_CHECK_EQUAL(1U, cm.configuration().num_known_peers());
+  BOOST_CHECK(cm.configuration().includes_self());
+  BOOST_CHECK_EQUAL(2U, cm.configuration().self().peer_id);
+  BOOST_CHECK_EQUAL(0U, comm.q.size());
+
+  // Run timer then we should become leader of a single node cluster
+  std::this_thread::sleep_for (std::chrono::milliseconds(500));
+  s.on_timer();
+  BOOST_CHECK_EQUAL(entries.back().term+1U, s.current_term());
+  BOOST_CHECK_EQUAL(raft::server::CANDIDATE, s.get_state());
+  BOOST_CHECK(s.log_header_sync_required());
+  s.on_log_header_sync();
+  BOOST_CHECK(!s.log_header_sync_required());
+  BOOST_CHECK_EQUAL(raft::server::LEADER, s.get_state());
+}
+
 // TODO: Leader creates some log entries but fails to replicate them and crashes.  While crashed the rest of the cluster picks up
 // and moves forward on a new term (or many new terms) and successfully replicate entries.  Once the former leader rejoins the cluster
-// and the new leader figures out the last index in the former leaders log that doesn't cause a gap, we'll detect a term mismatch on
+// and the new leader figures out the last index in the former leader's log that doesn't cause a gap, we'll detect a term mismatch on
 // the tail of the old leaders log and eventually make our way back to the point at which the logs agree.
-// TODO: Test starting from a non-empty log
 // TODO: What happens if a peer dies while we are sending a checkpoint and then restarts needing us to start sending from scratch
+// TODO: client sends request to leader, leader sends out append entries and log sync.  A quorum of peers commit the request.  A rogue peers starts an
+// election and the leader loses leadership (prior to receiving append entry responses).  The client request is committed but how does the client
+// learn that this is true?  It doesn't.  See Section 6.3 ("Implementing linearizable semantics") of Ongaro's thesis; upshot is that the consensus protocol
+// gives at least once guarantees and that state machines have to add in the the at most once guarantee through use of duplicate command detection (using
+// unique (clientid,id) request ids and memoized responses).
+// TODO: Submit config change to a leader then get that leader to append the transitional log.  At that point lose leadership.  Eventually the new leader will
+// decide whether the transitional configuration gets kept or not (in the latter case the transitional log entry will get removed in the former leader and
+// it will go back to the previous stable configuration).
+// TODO: Test edge case in which a transition config gets logged on LEADER and then another COMMAND.  Suppose that the new leader doesn't have the COMMAND but
+// does have the transitional config.  The config should get committed.
+// TODO: Test edge case in which a transition config gets logged on LEADER then the lose leadership.  Suppose that we get a checkpoint from a new leader that
+// contains the new config.  We can tell the client.  Conversely we can learn from the checkpoint that the config DIDN'T get committed.  Perhaps it is easier to
+// just take the logcabin approach and say that a leader with a transitional config tells the client that it failed immediately upon losing leadership.

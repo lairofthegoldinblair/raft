@@ -34,6 +34,22 @@ namespace raft {
     std::size_t leader_id;
   };
 
+  template<typename simple_configuration_description_type>
+  class set_configuration_request
+  {
+  public:
+    uint64_t old_id;
+    simple_configuration_description_type new_configuration;
+  };
+
+  template<typename simple_configuration_description_type>
+  class set_configuration_response
+  {
+  public:
+    client_result result;
+    simple_configuration_description_type bad_servers;
+  };
+
   class request_vote
   {
   public:
@@ -216,7 +232,7 @@ namespace raft {
   };
 
   // A peer encapsulates what a server knows about other servers in the cluster
-  template<typename checkpoint_data_store_type>
+  template<typename checkpoint_data_store_type, typename configuration_change_type>
   class peer
   {
   public:
@@ -245,7 +261,7 @@ namespace raft {
     std::shared_ptr<peer_checkpoint<checkpoint_data_store_type> > checkpoint_;
     // State for tracking whether a peer that is newly added to a configuration tracking
     // log appends
-    std::shared_ptr<peer_configuration_change> configuration_change_;
+    std::shared_ptr<configuration_change_type> configuration_change_;
 
     void exit()
     {
@@ -279,13 +295,35 @@ namespace raft {
   };
 
   // A test client
+  // TODO: What is the model for how replicated entries get propagated to a client?
+  // For example, when we are a FOLLOWER, entries get committed via append_entries and
+  // then should be applied to client.  Presumably we should support both a push model and
+  // a pull model.  LogCabin uses a pull model.  Note that we should make a distinction between
+  // a client and a state_machine.
+  template<typename simple_configuration_description_type>
   class client
   {
   public:
+    typedef set_configuration_response<simple_configuration_description_type> configuration_response;
+    // TODO: How to determine applied?  Note that this should probably be part of the client state
+    // (and is probably only needed in a push model).
+    uint64_t last_applied_index_;
     std::deque<client_response> responses;
+    std::deque<configuration_response> configuration_responses;
     void on_client_response(const client_response & resp)
     {
       responses.push_front(resp);
+    }
+
+    void on_configuration_response(const configuration_response & resp)
+    {
+      configuration_responses.push_front(resp);
+    }
+    
+    client()
+      :
+      last_applied_index_(0)
+    {
     }
   };
 
@@ -326,21 +364,18 @@ namespace raft {
   {
   public:
     typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
-    typedef typename checkpoint_data_store_type::configuration_type configuration_type;
   public:
     // One after last log entry checkpointed.
     uint64_t last_checkpoint_index_;
     // Term of last checkpoint
     uint64_t last_checkpoint_term_;
-    // Configuration description at last checkpoint
-    configuration_type last_checkpoint_configuration_;
     // continuations depending on checkpoint sync events
     std::vector<std::pair<std::size_t, append_checkpoint_chunk_response> > checkpoint_chunk_response_sync_continuations_;
     // Object to manage receiving a new checkpoint from a leader and writing it to a reliable
     // location
     std::shared_ptr<in_progress_checkpoint<checkpoint_data_store_type> > current_checkpoint_;
     // Checkpoints live here
-    checkpoint_data_store_type store_;
+    checkpoint_data_store_type & store_;
 
     uint64_t last_checkpoint_index() const {
       return last_checkpoint_index_;
@@ -365,10 +400,11 @@ namespace raft {
       return store_.last_checkpoint();
     }
 
-    server_checkpoint()
+    server_checkpoint(checkpoint_data_store_type & store)
       :
       last_checkpoint_index_(0),
-      last_checkpoint_term_(0)    
+      last_checkpoint_term_(0),
+      store_(store)
     {
     }
   };
@@ -376,6 +412,8 @@ namespace raft {
   template<typename peer_type, typename configuration_description_type>
   class test_configuration
   {
+  public:
+    typedef typename std::vector<peer_type>::iterator peer_iterator;
   private:
     // The cluster
     std::vector<peer_type> cluster_;
@@ -398,6 +436,16 @@ namespace raft {
     std::size_t num_known_peers() const
     {
       return cluster_.size();
+    }
+
+    peer_iterator begin_peers()
+    {
+      return cluster_.begin();
+    }
+
+    peer_iterator end_peers()
+    {
+      return cluster_.end();
     }
 
     std::size_t my_cluster_id() const
@@ -461,15 +509,37 @@ namespace raft {
     }
   };
 
-  template<typename peer_type, typename configuration_description_type>
+  class test_configuration_change
+  {
+  public:
+    // We start out with an unattainable goal but this will get fixed up in the next interval.
+    test_configuration_change(std::chrono::time_point<std::chrono::steady_clock> clock_now)
+    {
+    }
+    
+    void on_append_response(std::chrono::time_point<std::chrono::steady_clock> clock_now,
+			    uint64_t match_index,
+			    uint64_t last_log_index)
+    {
+    }
+
+    bool is_caught_up() const
+    {
+      return true;
+    }
+  };
+
+  template<typename _Peer, typename configuration_description_type>
   class test_configuration_manager
   {
   public:
+    typedef typename _Peer::template apply<peer_configuration_change>::type peer_type;
     typedef test_configuration<peer_type, configuration_description_type> configuration_type;
     typedef configuration_description description_type;
     typedef typename configuration_description_type::checkpoint_type checkpoint_type;
   private:
     configuration_type configuration_;
+    checkpoint_type default_;
   public:
     test_configuration_manager(std::size_t cluster_idx, const std::vector<peer_type>& peers)
       :
@@ -502,6 +572,11 @@ namespace raft {
       // TODO: Validate that config is same
     }
     
+    const checkpoint_type &  get_checkpoint()
+    {
+      return default_;
+    }
+    
     void get_checkpoint_state(uint64_t log_index, checkpoint_type & ck) const
     {
     }
@@ -519,14 +594,24 @@ namespace raft {
   class server
   {
   public:
+    // Config description types
+    typedef configuration_description::server_type configuration_description_server_type;
+    
     // Checkpoint types
     typedef checkpoint_data_store<configuration_description::checkpoint_type> checkpoint_data_store_type;
     typedef checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
     typedef checkpoint_data_store_type::header_type checkpoint_header_type;
     typedef peer_checkpoint<checkpoint_data_store_type> peer_checkpoint_type;
     typedef server_checkpoint<checkpoint_data_store_type> server_checkpoint_type;
-
-    typedef peer<checkpoint_data_store_type> peer_type;
+    // A peer with this checkpoint data store
+    struct peer_metafunction
+    {
+      template <typename configuration_change_type>
+      struct apply
+      {
+	typedef peer<checkpoint_data_store_type, configuration_change_type> type;
+      };
+    };
 
     // Log types
     typedef in_memory_log<configuration_description> log_type;
@@ -536,22 +621,33 @@ namespace raft {
     // Message types
     typedef append_checkpoint_chunk<checkpoint_data_store_type> append_checkpoint_chunk_type;
     typedef append_entry<log_entry_type> append_entry_type;
+    typedef set_configuration_request<configuration_description::simple_type> set_configuration_request_type;
+    typedef set_configuration_response<configuration_description::simple_type> set_configuration_response_type;
 
     typedef test_communicator<append_checkpoint_chunk_type, append_entry_type> communicator_type;
 
     // Configuration types
-    typedef configuration_manager<peer_type, configuration_description> configuration_manager_type;
-    // typedef test_configuration_manager<peer_type, configuration_description> configuration_manager_type;
+    typedef configuration_manager<peer_metafunction, configuration_description> configuration_manager_type;
+    // typedef test_configuration_manager<peer_metafunction, configuration_description> configuration_manager_type;
     typedef configuration_manager_type::configuration_type configuration_type;
+    typedef configuration_manager_type::checkpoint_type configuration_checkpoint_type;
     typedef configuration_description configuration_description_type;
-    
+    typedef configuration_description_type::simple_type simple_configuration_description_type;
+
+    // The complete peer type which includes info about both per-peer checkpoint and configuration state.
+    typedef configuration_manager_type::peer_type peer_type;
+
+    typedef client<configuration_description::simple_type> client_type;
+
     enum state { LEADER, FOLLOWER, CANDIDATE };
-  private:
+
     static const std::size_t INVALID_PEER_ID = std::numeric_limits<std::size_t>::max();
+
+  private:
     
     communicator_type & comm_;
 
-    client & client_;
+    client_type & client_;
 
     // This is the main state as per the Raft description but given our full blown state
     // machine approach there are some other subordinate states to consider mostly related to
@@ -576,9 +672,6 @@ namespace raft {
     // the peer that got my vote (could be myself)
     peer_type * voted_for_;
 
-    // Common log state
-    log_type & log_;
-
     // We can learn of the commit from a
     // checkpoint or from a majority of peers acknowledging a log entry.
     // last_committed_index_ represents the last point in the log that we KNOW
@@ -587,12 +680,18 @@ namespace raft {
     // will later be learned (e.g. when a leader tries to append again and ???).
     // TODO: Does this point to the actual last index committed or one past????
     uint64_t last_committed_index_;
-    // TODO: How to determine applied
-    uint64_t last_applied_index_;
+
+    // One past the last log entry sync'd to disk.  A FOLLOWER needs to sync
+    // before telling the LEADER that a log entry is accepted.  A leader lazily waits
+    // for a log entry to sync and uses the sync state to determine whether it accepts a
+    // log entry.  When a majority accept the entry, it is committed.
     uint64_t last_synced_index_;
 
     // State related to checkpoint processing
     server_checkpoint_type checkpoint_;
+
+    // Common log state
+    log_type & log_;
 
     // State related to configuration management
     configuration_manager_type & configuration_;
@@ -674,6 +773,8 @@ namespace raft {
 
     // Based on log sync and/or append_response try to advance the commit point.
     void try_to_commit();
+    // Actually update the commit point and execute any necessary actions
+    void update_last_committed_index(uint64_t committed);
 
     // Append Entry processing
     void internal_append_entry(const append_entry_type & req);
@@ -691,20 +792,25 @@ namespace raft {
     // State Transitions
     void become_follower(uint64_t term);
     void become_candidate();
+    void become_candidate_on_log_header_sync();
     void become_leader();
   public:
-    server(communicator_type & comm, client & c, log_type & l, configuration_manager_type & config_manager);
+    server(communicator_type & comm, client_type & c, log_type & l,
+	   checkpoint_data_store_type & store,
+	   configuration_manager_type & config_manager);
     ~server();
 
     // Events
     void on_timer();
     void on_client_request(const client_request & req);
+    void on_set_configuration(const set_configuration_request_type & req);
     void on_request_vote(const request_vote & req);
     void on_vote_response(const vote_response & resp);
     void on_append_entry(const append_entry_type & req);
     void on_append_response(const append_response & req);
     void on_append_checkpoint_chunk(const append_checkpoint_chunk_type & req);
     void on_append_checkpoint_chunk_response(const append_checkpoint_chunk_response & resp);
+
     // Append to log flushed to disk
     void on_log_sync(uint64_t index);
     // Update of log header (current_term_, voted_for_) flushed to disk
@@ -725,6 +831,17 @@ namespace raft {
     // have to let consensus know when a checkpoint is complete so that it can be sent to a peer (for example).
     checkpoint_data_ptr begin_checkpoint(uint64_t last_index_in_checkpoint) const;
     bool complete_checkpoint(uint64_t last_index_in_checkpoint, checkpoint_data_ptr i_dont_like_this);
+
+    // Create a seed configuration record with a single server configuration for a log.
+    // This should be run exactly once on a single server in a cluster.
+    static log_entry_type get_bootstrap_log_entry(const configuration_description_server_type & s)
+    {
+      log_entry_type le;
+      le.type = log_entry_type::CONFIGURATION;
+      le.term = 0;
+      le.configuration.from.servers.push_back(s);
+      return le;
+    }
 
     // Observers for testing
     const peer_type & get_peer_from_id(uint64_t peer_id) const {
