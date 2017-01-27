@@ -678,13 +678,15 @@ namespace raft {
     // is replicated and therefore safe to apply to a state machine.  It may
     // be an underestimate of last successfully replicated log entry but that fact
     // will later be learned (e.g. when a leader tries to append again and ???).
-    // TODO: Does this point to the actual last index committed or one past????
+    // N.B. This points one past the last committed entry of the log (in particular
+    // if last_committed_index_==0 then there is nothing committed in the log).
     uint64_t last_committed_index_;
 
     // One past the last log entry sync'd to disk.  A FOLLOWER needs to sync
     // before telling the LEADER that a log entry is accepted.  A leader lazily waits
     // for a log entry to sync and uses the sync state to determine whether it accepts a
     // log entry.  When a majority accept the entry, it is committed.
+    // N.B.  This points one past the last synced entry in the log.
     uint64_t last_synced_index_;
 
     // State related to checkpoint processing

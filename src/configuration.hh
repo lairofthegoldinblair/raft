@@ -335,8 +335,11 @@ namespace raft {
 
     uint64_t get_committed(uint64_t last_synced_index) const {
       uint64_t ret = old_peers_.get_committed(cluster_idx_, last_synced_index);
-      if (ret && state_ == TRANSITIONAL) {
-	ret = (std::min)(ret, new_peers_.get_committed(cluster_idx_, last_synced_index));
+      if (state_ == TRANSITIONAL) {
+	uint64_t new_committed_index = new_peers_.get_committed(cluster_idx_, last_synced_index);
+	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") with transitional config has old commit index " << ret <<
+	  " new commit index " << new_committed_index;
+	ret = (std::min)(ret, new_committed_index);
       }
       return ret;
     }

@@ -21,6 +21,7 @@ namespace raft {
     state_(FOLLOWER),
     election_timeout_max_(300),
     election_timeout_min_(150),
+    leader_id_(INVALID_PEER_ID),
     current_term_(0),
     voted_for_(nullptr),
     log_(l),
@@ -49,7 +50,7 @@ namespace raft {
     }
     current_term_ = log_.current_term();	
 
-    // TODO: Read any checkpoint
+    // Read any checkpoint
     load_checkpoint();
   }
 
@@ -377,20 +378,19 @@ namespace raft {
       }
     }
 
-    // TODO: Do we really do this or is this equivalent to sending the NOOP log entry?
-    send_heartbeats(clock_now);
-
-    // Append a new log entry in order to get the committed index updated.  TODO: Do we need to flush the log????
+    // Append a new log entry in order to get the committed index updated. 
     // The empty log entry will also trigger append_entry messages to the peers to let them know we have
     // become leader.  The latter could also be achieved with heartbeats, but would it get the commit index advanced?
-    // The rationale for getting commit index advanced has to do with the protocol for doing non-stale reads (that uses
+    // The main reason for the NOOP instead of heartbeat is that we need an entry from the new term to commit any entries from previous terms
+    // (see Section 3.6.2 from Ongaro's thesis).
+    // Another rationale for getting commit index advanced has to do with the protocol for doing non-stale reads (that uses
     // RaftConsensus::getLastCommitIndex in logcabin); I need to understand this protocol.
-    // std::vector<log_entry_type> v(1);
-    // v.back().type = log_entry_type::NOOP;
-    // v.back().term = current_term_;
-    // log_.append(v);
+    std::vector<log_entry_type> v(1);
+    v.back().type = log_entry_type::NOOP;
+    v.back().term = current_term_;
+    log_.append(v);    
+    send_append_entries(clock_now);
     
-
     // TODO: As an optimization cancel any outstanding request_vote since they are not needed
     // we've already got quorum
   }
@@ -770,7 +770,7 @@ namespace raft {
     uint64_t entry_index = req.previous_log_index;
     // Scan through entries in message to find where to start appending from
     for(; it!=entry_end; ++it, ++entry_index) {
-      // TODO: should this be entry_index <= log_start_index()?
+      // TODO: log_start_index() isn't valid if log is empty, I think we need to check for that here
       if (entry_index < log_start_index()) {
 	// This might happen if a leader sends us an entry we've already checkpointed
 	continue;
@@ -782,12 +782,13 @@ namespace raft {
 	}
 	// We've got some uncommitted cruft in our log.  Truncate it and then start appending with
 	// this entry.
-	BOOST_ASSERT(last_committed_index_ < entry_index);
 	// At this point we know that the leader log differs from what we've got so get rid of things
 	// from here to the end
 	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " truncating uncommitted log entries [" << entry_index <<
-	  "," << last_log_entry_index() << ") starting at term " << log_.entry(entry_index).term;
+	  "," << last_log_entry_index() << ") starting at term " << log_.entry(entry_index).term <<
+	  ".  Committed portion of log is [0," << last_committed_index_ << ")";
+	BOOST_ASSERT(last_committed_index_ <= entry_index);
 	log_.truncate_suffix(entry_index);
 	// If we are truncating a transitional configuration then we have learned that an attempt to set
 	// configuration has failed.  We need to tell the client this and reset to the prior stable configuration.
@@ -811,6 +812,9 @@ namespace raft {
       BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" appending log entries [" << entry_index <<
 	"," << (entry_index + std::distance(it,entry_end)) << ") starting at term " << it->term;
+    } else {
+      BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+	" received append_entry message from " << req.leader_id << " but already had all log entries";
     }
 
     // Append to the log
@@ -820,10 +824,13 @@ namespace raft {
       to_append.push_back(*it);
     }
     std::pair<log_index_type, log_index_type> range = log_.append(to_append);
+    BOOST_ASSERT(range.first == entry_index);
 
     // Make sure any configuration entries added are reflected in the configuration manager.
     for(std::size_t i=0; i<to_append.size(); ++i) {
       if (to_append[i].type == log_entry_type::CONFIGURATION) {
+	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+	  " received new configuration at index " << range.first + i;
 	configuration_.add_logged_description(range.first + i, to_append[i].configuration);
       }
     }
@@ -922,7 +929,10 @@ namespace raft {
     BOOST_ASSERT(committed > log_start_index());
 
     if (log_.entry(committed-1).term != current_term_) {
-      // TODO: What is going on here?
+      // See section 3.6.2 of Ongaro's thesis for why we cannot yet conclude that these entries are committed.
+      BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+	" has majority vote on last log entry at index " << (committed-1) <<
+	" and term " << log_.entry(committed-1).term << " but cannot directly commit log entry from previous term";
       return;
     }
 
@@ -1310,8 +1320,8 @@ namespace raft {
 
     if (last_index_in_checkpoint > last_committed_index_) {
       BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	" got request for checkpoint at index " << last_index_in_checkpoint << " but current committed index is " <<
-	last_committed_index_;
+	" got request to checkpoint the log range [0," << last_index_in_checkpoint << ") but current committed log is [0," <<
+	last_committed_index_ << ")";
       return checkpoint_data_ptr();
     }
 
