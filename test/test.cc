@@ -2193,7 +2193,8 @@ BOOST_AUTO_TEST_CASE(RaftAsioTest)
   boost::asio::io_service ios;
   raft::server::simple_configuration_description_type config;
   config.servers = {{0, "127.0.0.1:9133"}, {1, "127.0.0.1:9134"}, {2, "127.0.0.1:9135"}, {3, "127.0.0.1:9136"},  {4, "127.0.0.1:9137"}};
-  raft::asio::tcp_server s(ios, 0, config);
+  boost::asio::ip::tcp::endpoint ep(boost::asio::ip::tcp::v4(), 9133);
+  raft::asio::tcp_server s(ios, 0, ep, config);
   for(std::size_t i=0; i<10; ++i) {
     boost::system::error_code ec;
     ios.run_one(ec);
