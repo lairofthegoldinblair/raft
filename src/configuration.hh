@@ -63,6 +63,24 @@ namespace raft {
     simple_type to;
   };
 
+  template<typename _Description>
+  struct configuration_simple_type
+  {
+    typedef typename _Description::simple_type type;
+  };
+
+  template<typename _Description>
+  struct configuration_server_type
+  {
+    typedef typename _Description::server_type type;
+  };
+
+  template<typename _Description>
+  struct configuration_checkpoint_type
+  {
+    typedef typename _Description::checkpoint_type type;
+  };
+
   // Track how far behind a newly added peer is.  The idea is that we don't want to transition the peer
   // from staging until it is pretty close to having all the state it needs (e.g. it could take some time
   // to load a checkpoint).  This is a fuzzy concept and is heurisitc.  The logic here is from logcabin and
@@ -208,7 +226,8 @@ namespace raft {
     typedef boost::filter_iterator<is_not_null, typename std::vector<std::shared_ptr<_Peer> >::iterator> peer_filter_iterator;
 
   public:
-    typedef typename _Description::server_type server_description_type;
+    typedef typename configuration_server_type<_Description>::type server_description_type;
+    typedef typename configuration_simple_type<_Description>::type simple_configuration_description_type;
     typedef _Peer peer_type;
     typedef simple_configuration<peer_type> simple_description_type;
     typedef boost::transform_iterator<deref, peer_filter_iterator> peer_iterator;
@@ -393,7 +412,7 @@ namespace raft {
       }
     }
 
-    void set_staging_configuration(const typename _Description::simple_type & desc)
+    void set_staging_configuration(const simple_configuration_description_type & desc)
     {
       BOOST_ASSERT(state_ == STABLE);
       state_ = STAGING;
@@ -428,7 +447,7 @@ namespace raft {
       return true;
     }
 
-    bool staging_servers_making_progress(typename _Description::simple_type & desc) const
+    bool staging_servers_making_progress(simple_configuration_description_type & desc) const
     {
       if (state_ != STAGING) {
 	return true;
@@ -442,7 +461,7 @@ namespace raft {
     {
       desc.from = description_.from;
       for(auto & p : new_peers_.peers_) {
-	desc.to.servers.push_back(typename _Description::server_type());
+	desc.to.servers.push_back(server_description_type());
 	desc.to.servers.back().id = p->peer_id;
 	desc.to.servers.back().address = p->address;
       }

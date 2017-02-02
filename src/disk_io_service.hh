@@ -10,6 +10,9 @@
 #include <boost/asio/detail/handler_invoke_helpers.hpp>
 #include <boost/asio/detail/operation.hpp>
 
+// TODO: Should we add a strand here to prevent out of order IO ops on a file?
+// If we have multiple threads in the thread pool we'd need that to be true I think (i.e.
+// it would be invalid for multiple threads to be working concurrently on IOs to a single file.
 struct file_ops
 {
   typedef int file_type;
@@ -114,6 +117,9 @@ public:
       boost::asio::detail::buffer_sequence_adapter<boost::asio::mutable_buffer,
 						   MutableBufferSequence> bufs(op->buffers_);
       op->bytes_transferred_ = file_ops::read(op->file_, bufs.buffers(), bufs.count(), op->ec_);
+      // The point of post_deferred_completion instead of post_immediate_completion
+      // is that this operation already is accounted for as a work item on the main service
+      // via an direct call to work_started() in start_operation so we don't want to double count it.
       op->io_service_impl_.post_deferred_completion(op);
     } else {
       // Make a copy of the handler so that the memory can be deallocated before                                                                                        
@@ -291,6 +297,11 @@ namespace detail {
     {
       start_worker_threads();
       // ????  What is this about ????
+      // I think this is a bit of a hack to let the main service know that there is outstanding work without
+      // actually enqueuing anything (work_started() is usually called as part of post_immediate_completion()).
+      // Later on when we are ready to have the main service call the handler we will use post_deferred_completion()
+      // which assumes that work_started() has been called.  Without work_started() having been called, any run call
+      // on the main service will simply return immediately.
       main_service_impl_.work_started();
       // I think point here is that the operation doesn't need to wait for any condition
       // to be processed, just get it assigned to a thread

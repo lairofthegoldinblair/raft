@@ -5,6 +5,11 @@
 #include "basic_file_object.hh"
 #include "disk_io_service.hh"
 
+// TODO: A different model is one that doesn't use buffers at all rather accepts iovecs (ConstBufferSequences)
+// and always writes immediately to ASIO (then flush is a noop).  I should implement that too and see which performs
+// better (will depend on the smallest size of writes I suppose).  Such a model will require more finesse around memory management.
+// TODO: Use a strand to keep file IOs from getting out of order or should this be part of
+// the service for the file?
 namespace raft {
   namespace asio {
     class writable_file
@@ -47,10 +52,16 @@ namespace raft {
 	  len -= to_copy;
 
 	  if (block_ptr_ == block_end_) {
-	    // Can this fail?
-	    file_.async_write(boost::asio::buffer(block_begin_, std::distance(block_begin_, block_ptr_)),
-			      [=] (boost::system::error_code ec, std::size_t bytes_transferred) {
-				delete [] block_begin_;
+	    // Can this fail?  Right now we are assuming this is atomic(not a composed operation) 
+	    // and that we can have multiple async_writes outstanding.  This is true but it is worth pointing out.
+	    auto buf = boost::asio::buffer(block_begin_, std::distance(block_begin_, block_ptr_));
+	    file_.async_write(buf,
+			      [this,buf] (boost::system::error_code ec, std::size_t bytes_transferred) {
+				if (ec) {
+				  // TODO: Error handling
+				  return;
+				}
+				delete [] boost::asio::buffer_cast<const uint8_t *>(buf);
 			      });
 	    block_begin_ = block_ptr_ = block_end_ = nullptr;
 	  }
@@ -61,11 +72,43 @@ namespace raft {
       void flush()
       {
 	  if (block_ptr_ != block_begin_) {
-	    file_.async_write(boost::asio::buffer(block_begin_, std::distance(block_begin_, block_ptr_)),
-			      [=] (boost::system::error_code ec, std::size_t bytes_transferred) {
-				delete [] block_begin_;
+	    auto buf = boost::asio::buffer(block_begin_, std::distance(block_begin_, block_ptr_));
+	    file_.async_write(buf,
+			      [this,buf] (boost::system::error_code ec, std::size_t bytes_transferred) {
+				if (ec) {
+				  // TODO: Error handling
+				  return;
+				}
+				delete [] boost::asio::buffer_cast<const uint8_t *>(buf);
 			      });
 	    block_begin_ = block_ptr_ = block_end_ = nullptr;
+	  }
+      }
+
+      template<typename FileOpHandler>
+      void sync(FileOpHandler && handler)
+      {
+	file_.async_sync(handler);
+      }
+
+      template<typename FileOpHandler>
+      void flush_and_sync(FileOpHandler && handler)
+      {
+	  if (block_ptr_ != block_begin_) {
+	    auto buf = boost::asio::buffer(block_begin_, std::distance(block_begin_, block_ptr_));
+	    file_.async_write(buf,
+			      [this,buf,handler] (boost::system::error_code ec, std::size_t bytes_transferred) {
+				if (ec) {
+				  // TODO: Error handling?
+				  handler(ec);
+				  return;
+				}
+				delete [] boost::asio::buffer_cast<const uint8_t *>(buf);
+				this->file_.async_sync(handler);
+			      });
+	    block_begin_ = block_ptr_ = block_end_ = nullptr;
+	  } else {
+	    this->file_.async_sync(handler);
 	  }
       }
     };

@@ -7,10 +7,6 @@
 
 #include "boost/logic/tribool.hpp"
 
-// For test_communicator: I think I'll templatize and eventually move this code out of here
-#include <deque>
-#include "boost/variant.hpp"
-
 #include "checkpoint.hh"
 #include "configuration.hh"
 #include "log.hh"
@@ -21,14 +17,12 @@ namespace raft {
   class client_request
   {
   public:
-    uint64_t id;
     std::string command;
   };
 
   class client_response
   {
   public:
-    uint64_t id;
     client_result result;
     uint64_t index;
     std::size_t leader_id;
@@ -148,20 +142,24 @@ namespace raft {
     uint64_t bytes_stored;
   };
 
-  template<typename append_checkpoint_chunk_type, typename append_entry_type>
-  class test_communicator
+  
+  class messages
   {
   public:
-    typedef size_t endpoint;
-    template<typename _T>
-    void send(endpoint ep, const _T & msg)
-    {
-      q.push_front(msg);
-    }
+    typedef client_request client_request_type;
+    typedef client_response client_response_type;
+    typedef request_vote request_vote_type;
+    typedef vote_response vote_response_type;
+    typedef append_checkpoint_chunk<checkpoint_data_store<configuration_description::checkpoint_type> > append_checkpoint_chunk_type;
+    typedef append_checkpoint_chunk_response append_checkpoint_chunk_response_type;
+    typedef append_entry<log_entry<configuration_description>> append_entry_type;
+    typedef append_response append_entry_response_type;
+    typedef set_configuration_request<configuration_description::simple_type> set_configuration_request_type;
+    typedef set_configuration_response<configuration_description::simple_type> set_configuration_response_type;
 
-    typedef boost::variant<request_vote, vote_response, append_entry_type, append_response,
-			   append_checkpoint_chunk_type, append_checkpoint_chunk_response> any_msg_type;
-    std::deque<any_msg_type> q;
+    typedef configuration_description configuration_description_type;
+    typedef configuration_description_type::server_type configuration_description_server_type;
+    typedef configuration_description_type::simple_type simple_configuration_description_type;
   };
 
   // Raft only really cares about the fact that a checkpoint maintains the index and term
@@ -269,29 +267,24 @@ namespace raft {
     }
   };
 
-  class client_response_continuation
-  {
-  public:
-    uint64_t client_request_id;
-    // The log index we need flushed
-    uint64_t index;
-    // The term that the client request was part of
-    uint64_t term;
-    // TODO: Do we want/need this?  Time when the client request should simply timeout.
-  };
-
   class append_entry_continuation
   {
   public:
     // Leader that sent the append entry request we are responding to.
     uint64_t leader_id;
-    // The log index we need flushed
+    // The log index we need flushed in order to respond request
     uint64_t begin_index;
     uint64_t end_index;
     // The term that the client request was part of
     uint64_t term;
-    // Commit point associated with the append_entry request
-    uint64_t commit_index;
+  };
+
+  // TODO: Develop some usable code for a state_machine
+  // This consumes the Raft log (and applies commands in the log) and also
+  // consumes checkpoint data (though most likely not directly from the protocol
+  // rather though a disk file that the protocol writes).
+  class state_machine
+  {
   };
 
   // A test client
@@ -305,9 +298,6 @@ namespace raft {
   {
   public:
     typedef set_configuration_response<simple_configuration_description_type> configuration_response;
-    // TODO: How to determine applied?  Note that this should probably be part of the client state
-    // (and is probably only needed in a push model).
-    uint64_t last_applied_index_;
     std::deque<client_response> responses;
     std::deque<configuration_response> configuration_responses;
     void on_client_response(const client_response & resp)
@@ -321,8 +311,6 @@ namespace raft {
     }
     
     client()
-      :
-      last_applied_index_(0)
     {
     }
   };
@@ -588,282 +576,6 @@ namespace raft {
     void truncate_suffix(uint64_t )
     {
     }    
-  };
-
-  // A server encapsulates what a participant in the consensus protocol knows about itself
-  class server
-  {
-  public:
-    // Config description types
-    typedef configuration_description::server_type configuration_description_server_type;
-    
-    // Checkpoint types
-    typedef checkpoint_data_store<configuration_description::checkpoint_type> checkpoint_data_store_type;
-    typedef checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
-    typedef checkpoint_data_store_type::header_type checkpoint_header_type;
-    typedef peer_checkpoint<checkpoint_data_store_type> peer_checkpoint_type;
-    typedef server_checkpoint<checkpoint_data_store_type> server_checkpoint_type;
-    // A peer with this checkpoint data store
-    struct peer_metafunction
-    {
-      template <typename configuration_change_type>
-      struct apply
-      {
-	typedef peer<checkpoint_data_store_type, configuration_change_type> type;
-      };
-    };
-
-    // Log types
-    typedef in_memory_log<configuration_description> log_type;
-    typedef log_type::entry_type log_entry_type;
-    typedef log_type::index_type log_index_type;
-
-    // Message types
-    typedef append_checkpoint_chunk<checkpoint_data_store_type> append_checkpoint_chunk_type;
-    typedef append_entry<log_entry_type> append_entry_type;
-    typedef set_configuration_request<configuration_description::simple_type> set_configuration_request_type;
-    typedef set_configuration_response<configuration_description::simple_type> set_configuration_response_type;
-
-    typedef test_communicator<append_checkpoint_chunk_type, append_entry_type> communicator_type;
-
-    // Configuration types
-    typedef configuration_manager<peer_metafunction, configuration_description> configuration_manager_type;
-    // typedef test_configuration_manager<peer_metafunction, configuration_description> configuration_manager_type;
-    typedef configuration_manager_type::configuration_type configuration_type;
-    typedef configuration_manager_type::checkpoint_type configuration_checkpoint_type;
-    typedef configuration_description configuration_description_type;
-    typedef configuration_description_type::simple_type simple_configuration_description_type;
-
-    // The complete peer type which includes info about both per-peer checkpoint and configuration state.
-    typedef configuration_manager_type::peer_type peer_type;
-
-    typedef client<configuration_description::simple_type> client_type;
-
-    enum state { LEADER, FOLLOWER, CANDIDATE };
-
-    static const std::size_t INVALID_PEER_ID = std::numeric_limits<std::size_t>::max();
-
-  private:
-    
-    communicator_type & comm_;
-
-    client_type & client_;
-
-    // This is the main state as per the Raft description but given our full blown state
-    // machine approach there are some other subordinate states to consider mostly related to
-    // asynchronous interactions with the log and client.
-    state state_;
-
-    // To prevent multiple votes per-term and invalid log truncations (TODO: describe these) we must
-    // persist any changes of current_term_ or voted_for_ before proceeding with the protocol.
-    // This flag indicates that a change has been made to either of the above two members
-    bool log_header_sync_required_;
-    
-    // Algorithm config parameters
-    std::chrono::milliseconds election_timeout_max_;
-    std::chrono::milliseconds election_timeout_min_;
-
-    // Leader id if I know it (learned from append_entry and append_checkpoint_chunk messages)
-    std::size_t leader_id_;
-
-    // My current term number
-    uint64_t current_term_;
-
-    // the peer that got my vote (could be myself)
-    peer_type * voted_for_;
-
-    // We can learn of the commit from a
-    // checkpoint or from a majority of peers acknowledging a log entry.
-    // last_committed_index_ represents the last point in the log that we KNOW
-    // is replicated and therefore safe to apply to a state machine.  It may
-    // be an underestimate of last successfully replicated log entry but that fact
-    // will later be learned (e.g. when a leader tries to append again and ???).
-    // N.B. This points one past the last committed entry of the log (in particular
-    // if last_committed_index_==0 then there is nothing committed in the log).
-    uint64_t last_committed_index_;
-
-    // One past the last log entry sync'd to disk.  A FOLLOWER needs to sync
-    // before telling the LEADER that a log entry is accepted.  A leader lazily waits
-    // for a log entry to sync and uses the sync state to determine whether it accepts a
-    // log entry.  When a majority accept the entry, it is committed.
-    // N.B.  This points one past the last synced entry in the log.
-    uint64_t last_synced_index_;
-
-    // State related to checkpoint processing
-    server_checkpoint_type checkpoint_;
-
-    // Common log state
-    log_type & log_;
-
-    // State related to configuration management
-    configuration_manager_type & configuration_;
-    
-    const configuration_type & configuration() const
-    {
-      return configuration_.configuration();
-    }
-
-    configuration_type & configuration()
-    {
-      return configuration_.configuration();
-    }
-
-    peer_type & self() {
-      return configuration().self();
-    }
-
-    peer_type & peer_from_id(uint64_t peer_id) {
-      return configuration().peer_from_id(peer_id);
-    }
-
-    std::size_t num_known_peers() const
-    {
-      return configuration().num_known_peers();
-    }
-
-    std::size_t my_cluster_id() const
-    {
-      return configuration().my_cluster_id();
-    }
-
-    bool has_quorum() const {
-      return configuration().has_quorum();
-    }
-
-    // continuations depending on log sync events
-    std::multimap<uint64_t, client_response_continuation> client_response_continuations_;
-    std::multimap<uint64_t, append_entry_continuation> append_entry_continuations_;
-    // continuations depending on log header sync events
-    std::vector<append_entry_type> append_entry_header_sync_continuations_;
-    std::vector<append_checkpoint_chunk_type> append_checkpoint_chunk_header_sync_continuations_;
-    std::vector<std::pair<uint64_t, vote_response> > vote_response_header_sync_continuations_;
-    // This flag is essentially another log header sync continuation that indicates vote requests 
-    // should be sent out after log header sync (which is the case when we transition to CANDIDATE
-    // but not when we transition to FOLLOWER).
-    bool send_vote_requests_;
-
-
-    bool no_log_header_sync_continuations_exist() const {
-      return !send_vote_requests_ && 0 == vote_response_header_sync_continuations_.size() &&
-	0 == append_entry_header_sync_continuations_.size();
-    }
-    
-    uint64_t last_log_entry_term() const {
-      // Something subtle with snapshots/checkpoints occurs here.  
-      // After a checkpoint we may have no log entries so the term has to be recorded at the time
-      // of the checkpoint.
-      return log_.empty() ? checkpoint_.last_checkpoint_term_ : log_.last_entry().term;
-    }
-    uint64_t last_log_entry_index() const {
-      return log_.last_index();
-    }        
-    uint64_t log_start_index() const {
-      return log_.start_index();
-    }
-    
-    // Used by FOLLOWER and CANDIDATE to decide when to initiate a new election.
-    std::chrono::time_point<std::chrono::steady_clock> election_timeout_;
-
-    std::chrono::time_point<std::chrono::steady_clock> new_election_timeout() const;
-    std::chrono::time_point<std::chrono::steady_clock> new_heartbeat_timeout(std::chrono::time_point<std::chrono::steady_clock> clock_now) const;
-
-    void send_vote_requests();
-    void send_vote_response(const vote_response & resp);
-    void send_append_entries(std::chrono::time_point<std::chrono::steady_clock> clock_now);
-    void send_heartbeats(std::chrono::time_point<std::chrono::steady_clock> clock_now);
-    void send_checkpoint_chunk(std::chrono::time_point<std::chrono::steady_clock> clock_now, uint64_t peer_id);
-
-    // Based on log sync and/or append_response try to advance the commit point.
-    void try_to_commit();
-    // Actually update the commit point and execute any necessary actions
-    void update_last_committed_index(uint64_t committed);
-
-    // Append Entry processing
-    void internal_append_entry(const append_entry_type & req);
-
-    // Append Checkpoint Chunk processing
-    void internal_append_checkpoint_chunk(const append_checkpoint_chunk_type & req);
-    void internal_append_checkpoint_chunk_sync(std::size_t leader_id, const append_checkpoint_chunk_response & resp);
-    void load_checkpoint();
-
-    // Guards for state transitions.  Most of the cases in which I can't make a transition
-    // it is because the transition requires a disk write of the header and such a write is already in
-    // progress.  If we have a sufficiently slow disk we are essentially dead!
-    bool can_become_follower_at_term(uint64_t term);
-
-    // State Transitions
-    void become_follower(uint64_t term);
-    void become_candidate();
-    void become_candidate_on_log_header_sync();
-    void become_leader();
-  public:
-    server(communicator_type & comm, client_type & c, log_type & l,
-	   checkpoint_data_store_type & store,
-	   configuration_manager_type & config_manager);
-    ~server();
-
-    // Events
-    void on_timer();
-    void on_client_request(const client_request & req);
-    void on_set_configuration(const set_configuration_request_type & req);
-    void on_request_vote(const request_vote & req);
-    void on_vote_response(const vote_response & resp);
-    void on_append_entry(const append_entry_type & req);
-    void on_append_response(const append_response & req);
-    void on_append_checkpoint_chunk(const append_checkpoint_chunk_type & req);
-    void on_append_checkpoint_chunk_response(const append_checkpoint_chunk_response & resp);
-
-    // Append to log flushed to disk
-    void on_log_sync(uint64_t index);
-    // Update of log header (current_term_, voted_for_) flushed to disk
-    void on_log_header_sync();
-    // Update of checkpoint file
-    void on_checkpoint_sync();
-
-    // Checkpoint stuff
-    // TODO: I don't really have a handle on how this should be structured.  Questions:
-    // 1. Who initiates periodic checkpoints (doesn't seem like it should be the consensus box; should be client/state machine)
-    // 2. How to support mixing of client checkpoint state and consensus checkpoint state (e.g.
-    // one could have consensus enforce that client checkpoint state includes consensus state via
-    // a subclass)
-    // 3. Interface between consensus and existing checkpoint state (which must be read both to restore
-    // from a checkpoint and to send checkpoint data from a leader to the peer).
-
-    // This avoids having consensus constrain how the client takes and writes a checkpoint, but eventually
-    // have to let consensus know when a checkpoint is complete so that it can be sent to a peer (for example).
-    checkpoint_data_ptr begin_checkpoint(uint64_t last_index_in_checkpoint) const;
-    bool complete_checkpoint(uint64_t last_index_in_checkpoint, checkpoint_data_ptr i_dont_like_this);
-
-    // Create a seed configuration record with a single server configuration for a log.
-    // This should be run exactly once on a single server in a cluster.
-    static log_entry_type get_bootstrap_log_entry(const configuration_description_server_type & s)
-    {
-      log_entry_type le;
-      le.type = log_entry_type::CONFIGURATION;
-      le.term = 0;
-      le.configuration.from.servers.push_back(s);
-      return le;
-    }
-
-    // Observers for testing
-    const peer_type & get_peer_from_id(uint64_t peer_id) const {
-      return configuration().get_peer_from_id(peer_id);
-    }
-    uint64_t current_term() const {
-      return current_term_;
-    }
-    uint64_t commit_index() const {
-      return last_committed_index_;
-    }
-    state get_state() const {
-      return state_;
-    }
-    bool log_header_sync_required() const {
-      return log_header_sync_required_;
-    }
-    server_checkpoint_type & checkpoint() {
-      return checkpoint_;
-    }
   };
 }
 #endif

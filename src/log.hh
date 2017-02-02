@@ -10,7 +10,7 @@ namespace raft {
   {
   public:
     typedef _Description configuration_description_type;
-    enum entry_type { COMMAND, CHECKPOINT, CONFIGURATION, NOOP };
+    enum entry_type { COMMAND, CONFIGURATION, NOOP };
     entry_type type;
     uint64_t term;
     // TODO: Investigate use of boost::variant, boost::any, etc to handle
@@ -21,19 +21,27 @@ namespace raft {
     configuration_description_type configuration;
   };
 
+  // TODO: FIX
+  class log_header_write
+  {
+  public:
+    virtual ~log_header_write() {};
+    virtual void async_write_log_header(uint64_t current_term, uint64_t voted_for) =0;
+  };
+
   // Probably template out the Raft log header stuff (current_term_ and voted_for_).
-  template<typename _Description>
+  template<typename _LogEntry>
   class in_memory_log
   {
   public:
     typedef uint64_t index_type;
-    typedef _Description configuration_description_type;
-    typedef log_entry<_Description> entry_type;
+    typedef _LogEntry entry_type;
   private:
     index_type start_index_;
     std::deque<entry_type> entries_;
     uint64_t current_term_;
     uint64_t voted_for_;
+    log_header_write * writer_;
     
   public:
     // TODO: voted_for_ initialization should use raft::server::INVALID_PEER_ID.
@@ -41,8 +49,15 @@ namespace raft {
       :
       start_index_(0),
       current_term_(0),
-      voted_for_(std::numeric_limits<uint64_t>::max())
+      voted_for_(std::numeric_limits<uint64_t>::max()),
+      writer_(nullptr)
     {
+    }
+
+    // TODO: Fix
+    void set_log_header_writer(log_header_write * writer)
+    {
+      writer_ = writer;
     }
 
     /**
@@ -74,7 +89,9 @@ namespace raft {
 
     void sync_header()
     {
-      // TODO: Implement
+      if (writer_ != nullptr) {
+	writer_->async_write_log_header(current_term_, voted_for_);
+      }
     }
 
     const entry_type & entry(index_type i) const
