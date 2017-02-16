@@ -10,8 +10,8 @@
 #include "asio/basic_file_object.hh"
 #include "asio/disk_io_service.hh"
 #include "leveldb_log.hh"
+#include "messages.hh"
 #include "protocol.hh"
-#include "server.hh"
 
 namespace raft {
   namespace asio {
@@ -128,7 +128,7 @@ namespace raft {
       };
     };
 
-    typedef raft::server<asio_tcp_communicator_metafunction, raft::messages> raft_protocol_type;
+    typedef raft::protocol<asio_tcp_communicator_metafunction, raft::messages> raft_protocol_type;
     
     class raft_receiver
     {

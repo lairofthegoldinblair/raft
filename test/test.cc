@@ -2,7 +2,7 @@
 #include <chrono>
 #include <thread>
 
-#include "server.hh"
+#include "messages.hh"
 #include "protocol.hh"
 #include "slice.hh"
 
@@ -19,6 +19,187 @@
 
 #define BOOST_TEST_MODULE RaftTests
 #include <boost/test/unit_test.hpp>
+
+template<typename peer_type, typename configuration_description_type>
+class test_configuration
+{
+public:
+  typedef typename std::vector<peer_type>::iterator peer_iterator;
+private:
+  // The cluster
+  std::vector<peer_type> cluster_;
+  // My cluster id/index
+  std::size_t cluster_idx_;
+  // ????
+  configuration_description_type default_;
+public:
+  test_configuration(std::size_t cluster_idx, const std::vector<peer_type>& peers)
+    :
+    cluster_(peers),
+    cluster_idx_(cluster_idx)
+  {
+  }
+
+  peer_type & self() {
+    return cluster_[cluster_idx_];
+  }
+
+  std::size_t num_known_peers() const
+  {
+    return cluster_.size();
+  }
+
+  peer_iterator begin_peers()
+  {
+    return cluster_.begin();
+  }
+
+  peer_iterator end_peers()
+  {
+    return cluster_.end();
+  }
+
+  std::size_t my_cluster_id() const
+  {
+    return cluster_idx_;
+  }
+
+  peer_type & peer_from_id(uint64_t peer_id) {
+    return cluster_[peer_id];
+  }
+
+  const peer_type & get_peer_from_id(uint64_t peer_id) const {
+    return cluster_.at(peer_id);
+  }
+
+  bool has_quorum() const {
+    // Majority quorum logic
+    std::size_t num_votes(0);
+    for(auto & p : cluster_) {
+      if(p.peer_id == cluster_idx_ || p.vote_) {
+	num_votes += 1;
+      }
+    }
+    return num_votes > (cluster_.size()/2);
+  }
+
+  uint64_t get_committed(uint64_t last_synced_index) const {
+    // Figure out the minimum over a quorum.
+    std::vector<uint64_t> acked;
+    // For a leader, syncing to a log is "acking"
+    acked.push_back(last_synced_index);
+    // For peers we need an append response to get an ack
+    for(std::size_t i=0; i<num_known_peers(); ++i) {
+      if (i != my_cluster_id()) {
+	acked.push_back(get_peer_from_id(i).match_index_);
+      }
+    }
+    std::sort(acked.begin(), acked.end());
+    return acked[(acked.size()-1)/2];
+  }
+
+  void reset_staging_servers()
+  {
+    // Noop
+  }
+
+  uint64_t configuration_id() const {
+    return 0;
+  }
+
+  bool includes_self() const {
+    return true;
+  }
+
+  bool is_transitional() const {
+    return false;
+  }
+
+  const configuration_description_type & description() const {
+    return default_;
+  }
+};
+
+class test_configuration_change
+{
+public:
+  // We start out with an unattainable goal but this will get fixed up in the next interval.
+  test_configuration_change(std::chrono::time_point<std::chrono::steady_clock> clock_now)
+  {
+  }
+    
+  void on_append_response(std::chrono::time_point<std::chrono::steady_clock> clock_now,
+			  uint64_t match_index,
+			  uint64_t last_log_index)
+  {
+  }
+
+  bool is_caught_up() const
+  {
+    return true;
+  }
+};
+
+template<typename _Peer, typename configuration_description_type>
+class test_configuration_manager
+{
+public:
+  typedef typename _Peer::template apply<raft::peer_configuration_change>::type peer_type;
+  typedef test_configuration<peer_type, configuration_description_type> configuration_type;
+  typedef configuration_description_type description_type;
+  typedef typename configuration_description_type::checkpoint_type checkpoint_type;
+private:
+  configuration_type configuration_;
+  checkpoint_type default_;
+public:
+  test_configuration_manager(std::size_t cluster_idx, const std::vector<peer_type>& peers)
+    :
+    configuration_(cluster_idx, peers)
+  {
+  }
+    
+  const configuration_type & configuration() const
+  {
+    return configuration_;
+  }
+
+  configuration_type & configuration()
+  {
+    return configuration_;
+  }
+
+  bool has_configuration_at(uint64_t log_index) const
+  {
+    return false;
+  }
+
+  void add_logged_description(uint64_t log_index, const description_type & description)
+  {
+    // Not supported
+  }
+
+  void set_checkpoint(const checkpoint_type & description)
+  {
+    // TODO: Validate that config is same
+  }
+    
+  const checkpoint_type &  get_checkpoint()
+  {
+    return default_;
+  }
+    
+  void get_checkpoint_state(uint64_t log_index, checkpoint_type & ck) const
+  {
+  }
+
+  void truncate_prefix(uint64_t )
+  {
+  }
+
+  void truncate_suffix(uint64_t )
+  {
+  }    
+};
 
 template<typename _Messages>
 class test_communicator
@@ -57,7 +238,7 @@ struct communicator_metafunction
   };
 };
 
-typedef raft::server<communicator_metafunction, raft::messages> test_raft_type;
+typedef raft::protocol<communicator_metafunction, raft::messages> test_raft_type;
 
 struct init_logging
 {

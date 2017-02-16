@@ -3,7 +3,8 @@
 
 #include "boost/asio/buffer.hpp"
 #include "boost/endian/arithmetic.hpp"
-#include "server.hh"
+#include "log.hh"
+#include "messages.hh"
 
 namespace raft {
   namespace asio {

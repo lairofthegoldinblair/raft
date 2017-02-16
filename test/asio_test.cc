@@ -13,9 +13,9 @@
 #include "asio/asio_server.hh"
 #include "asio/asio_block_device.hh"
 #include "leveldb_log.hh"
+#include "messages.hh"
 #include "posix_file.hh"
 #include "protocol.hh"
-#include "server.hh"
 
 #define BOOST_TEST_MODULE RaftTests
 #include <boost/test/unit_test.hpp>

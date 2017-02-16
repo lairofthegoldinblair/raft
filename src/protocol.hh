@@ -6,16 +6,80 @@
 #include "configuration.hh"
 #include "checkpoint.hh"
 #include "log.hh"
-#include "server.hh"
+#include "messages.hh"
+#include "peer.hh"
 
 // General TODO:
 // log_entry_type::entry should probably be async since we shouldn't assume the entire log can fit into memory.
 
 namespace raft {
 
+  class append_entry_continuation
+  {
+  public:
+    // Leader that sent the append entry request we are responding to.
+    uint64_t leader_id;
+    // The log index we need flushed in order to respond request
+    uint64_t begin_index;
+    uint64_t end_index;
+    // The term that the client request was part of
+    uint64_t term;
+  };
+
+  // Per-server state related to checkpoints
+  template <typename checkpoint_data_store_type>
+  class server_checkpoint
+  {
+  public:
+    typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
+  public:
+    // One after last log entry checkpointed.
+    uint64_t last_checkpoint_index_;
+    // Term of last checkpoint
+    uint64_t last_checkpoint_term_;
+    // continuations depending on checkpoint sync events
+    std::vector<std::pair<std::size_t, append_checkpoint_chunk_response> > checkpoint_chunk_response_sync_continuations_;
+    // Object to manage receiving a new checkpoint from a leader and writing it to a reliable
+    // location
+    std::shared_ptr<in_progress_checkpoint<checkpoint_data_store_type> > current_checkpoint_;
+    // Checkpoints live here
+    checkpoint_data_store_type & store_;
+
+    uint64_t last_checkpoint_index() const {
+      return last_checkpoint_index_;
+    }
+    
+    uint64_t last_checkpoint_term() const {
+      return last_checkpoint_term_;
+    }
+    
+    void sync(std::size_t leader_id, const append_checkpoint_chunk_response & resp) {
+      checkpoint_chunk_response_sync_continuations_.push_back(std::make_pair(leader_id,resp));
+    }
+
+    void abandon() {
+      if (!!current_checkpoint_) {
+	store_.discard(current_checkpoint_->file_);
+	current_checkpoint_.reset();
+      }
+    }
+
+    checkpoint_data_ptr last_checkpoint() {
+      return store_.last_checkpoint();
+    }
+
+    server_checkpoint(checkpoint_data_store_type & store)
+      :
+      last_checkpoint_index_(0),
+      last_checkpoint_term_(0),
+      store_(store)
+    {
+    }
+  };
+
   // A server encapsulates what a participant in the consensus protocol knows about itself
   template<typename _Communicator, typename _Messages>
-  class server
+  class protocol
   {
   public:
     // Communicator types
@@ -1038,9 +1102,9 @@ namespace raft {
     }
 
   public:
-    server(communicator_type & comm, log_type & l,
-	   checkpoint_data_store_type & store,
-	   configuration_manager_type & config_manager)
+    protocol(communicator_type & comm, log_type & l,
+	     checkpoint_data_store_type & store,
+	     configuration_manager_type & config_manager)
       :
       comm_(comm),
       config_change_client_(nullptr),
@@ -1080,7 +1144,7 @@ namespace raft {
       load_checkpoint();
     }
 
-    ~server()
+    ~protocol()
     {
     }
 
