@@ -2,8 +2,8 @@
 #define ASIO_BLOCK_DEVICE_HH
 
 #include <algorithm>
-#include "basic_file_object.hh"
-#include "disk_io_service.hh"
+#include "asio/basic_file_object.hh"
+#include "asio/disk_io_service.hh"
 
 // TODO: A different model is one that doesn't use buffers at all rather accepts iovecs (ConstBufferSequences)
 // and always writes immediately to ASIO (then flush is a noop).  I should implement that too and see which performs
@@ -53,7 +53,8 @@ namespace raft {
 
 	  if (block_ptr_ == block_end_) {
 	    // Can this fail?  Right now we are assuming this is atomic(not a composed operation) 
-	    // and that we can have multiple async_writes outstanding.  This is true but it is worth pointing out.
+	    // and that we can have multiple async_writes outstanding.  In fact this is an atomic operation
+	    // but it is worth pointing out the assumption
 	    auto buf = boost::asio::buffer(block_begin_, std::distance(block_begin_, block_ptr_));
 	    file_.async_write(buf,
 			      [this,buf] (boost::system::error_code ec, std::size_t bytes_transferred) {

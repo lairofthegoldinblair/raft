@@ -58,4 +58,5 @@ add_subdirectory ( test )
 ######################################################
 enable_testing()
 add_test(raft-unit-test ${CMAKE_CURRENT_BINARY_DIR}/test/raft-unit-test)
+add_test(raft-asio-unit-test ${CMAKE_CURRENT_BINARY_DIR}/test/raft-asio-unit-test)
 

@@ -3,6 +3,8 @@
 
 #include <deque>
 
+#include "slice.hh"
+
 namespace raft {
 
   template<typename _Description>
@@ -13,8 +15,6 @@ namespace raft {
     enum entry_type { COMMAND, CONFIGURATION, NOOP };
     entry_type type;
     uint64_t term;
-    // TODO: Investigate use of boost::variant, boost::any, etc to handle
-    // union
     // Populated if type==COMMAND
     std::string data;
     // Populated if type==CONFIGURATION
@@ -54,7 +54,7 @@ namespace raft {
     {
     }
 
-    // TODO: Fix
+    // TODO: Fix.  I don't like this way of doing things.
     void set_log_header_writer(log_header_write * writer)
     {
       writer_ = writer;
@@ -63,16 +63,68 @@ namespace raft {
     /**
      * Returns index range [begin,end) that was appended
      */
-    std::pair<index_type, index_type> append(const std::vector<entry_type>& entries)
+    // std::pair<index_type, index_type> append(const std::vector<entry_type>& entries)
+    // {
+    //   index_type start_added = last_index();
+    //   index_type last_added = start_added + entries.size();
+    //   for(auto & e : entries) {
+    // 	entries_.push_back(e);
+    //   }
+    //   return std::make_pair(start_added, last_added);
+    // }
+
+    /**
+     * Returns index range [begin,end) that was appended
+     */
+    std::pair<index_type, index_type> append_command(uint64_t term, slice s)
     {
       index_type start_added = last_index();
-      index_type last_added = start_added + entries.size();
-      for(auto & e : entries) {
-	entries_.push_back(e);
+      entry_type e;
+      e.type = entry_type::COMMAND;
+      e.term = term;
+      e.data.assign(slice::buffer_cast<const char *>(s), slice::buffer_size(s));
+      entries_.push_back(std::move(e));
+      return std::make_pair(start_added, start_added+1);
+    }
+
+    std::pair<index_type, index_type> append_noop(uint64_t term)
+    {
+      index_type start_added = last_index();
+      entry_type e;
+      e.type = entry_type::NOOP;
+      e.term = term;
+      entries_.push_back(std::move(e));
+      return std::make_pair(start_added, start_added+1);
+    }
+
+    template<typename InputIterator>
+    std::pair<index_type, index_type> append_configuration(uint64_t term, InputIterator begin, InputIterator end)
+    {
+      index_type start_added = last_index();
+      entry_type e;
+      e.type = entry_type::CONFIGURATION;
+      e.term = term;
+      for(; begin != end; ++begin) {
+	e.configuration.from.push_back(*begin);
+      }
+      entries_.push_back(std::move(e));
+      return std::make_pair(start_added, start_added+1);
+    }
+
+    template<typename InputIterator>
+    std::pair<index_type, index_type> append(InputIterator begin, InputIterator end)
+    {
+      index_type start_added = last_index();
+      index_type last_added = start_added + std::distance(begin, end);
+      for(; begin != end; ++begin) {
+	entries_.push_back(*begin);
       }
       return std::make_pair(start_added, last_added);
     }
 
+    /**
+     * Log header stuff.  
+     */
     void update_header(uint64_t current_term, uint64_t voted_for)
     {
       current_term_ = current_term;
@@ -94,14 +146,34 @@ namespace raft {
       }
     }
 
+    /*
+     * A FOLLOWER doesn't actually need access to full entries but does need
+     * to examine terms in order to enforce the Log Matching Property.  We provide methods
+     *  to access terms without assuming that a full entry is available.  This opens the door to
+     * optimizations of the in-memory cache on a follower.
+     */
+    uint64_t term(index_type i) const
+    {
+      return entries_.at(i - start_index()).term;
+    }
+
+    /**
+     * Only call if !empty().  Returns term(last_index()-1)
+     */
+    uint64_t last_entry_term() const
+    {
+      return entries_.back().term;
+    }
+
+    /**
+     * A LEADER needs sequential access to it log in order to append entries
+     * to FOLLOWERs.  Each FOLLOWER is at a different point in the log and that point may
+     * move forward or backward (a FOLLOWER may tell a LEADER that it is missing entries that
+     * the LEADER assumes it has).
+     */
     const entry_type & entry(index_type i) const
     {
       return entries_.at(i - start_index());
-    }
-
-    const entry_type & last_entry() const
-    {
-      return entries_.back();
     }
 
     /**
@@ -121,6 +193,9 @@ namespace raft {
       return start_index_ + entries_.size();
     }
 
+    /** 
+     * Is the log empty.  It will be immediately after a checkpoint.
+     */
     bool empty() const
     {
       return entries_.size() == 0;

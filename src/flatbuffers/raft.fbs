@@ -1,0 +1,166 @@
+// IDL file for Raft messages.
+
+namespace raft.fbs;
+
+table server_description
+{
+  id:ulong;
+  address:string;
+}
+
+table simple_configuration_description
+{
+  servers:[server_description];
+}
+
+table configuration_description
+{
+  from:simple_configuration_description;
+  to:simple_configuration_description;
+}
+
+table request_vote
+{
+  recipient_id:ulong;
+  term_number:ulong;
+  candidate_id:ulong;
+  last_log_index:ulong;
+  last_log_term:ulong;
+}
+
+table vote_response
+{
+  peer_id:ulong;
+  term_number:ulong;
+  request_term_number:ulong;
+  granted:bool;
+}
+
+enum log_entry_type:byte { COMMAND=0, CONFIGURATION=1, NOOP=2 }
+
+table log_entry
+{
+    type:log_entry_type;
+    term:ulong;
+    // TODO: Should we use a union here?
+    // Populated if type==COMMAND
+    data:string;
+    // Populated if type==CONFIGURATION
+    configuration:configuration_description;
+}
+
+table append_entry
+{
+  recipient_id:ulong;
+  term_number:ulong;
+  leader_id:ulong;
+  // Basic point of Raft is the Log Matching Property which comprises:
+  // 1) Index and Term of a log entry uniquely define the content
+  // 2) If two logs have entries at the same index with the same term then all preceeding entries
+  // also agree
+  //
+  // Part 1) of the property arises by having a leader be the only one that proposes entries and guaranteeing
+  // that a leader never modifies a log entry with a given (index,term) once created.  Part 2) is guaranteed
+  // by ensuring that a peer never appends to its log from a leader unless the content of the last entry is correct; by
+  // Part 1) the content of that last entry may be specified by sending the (index,term) from the leader on every append request.
+  // One after the last log entry sent.  If no log entries sent yet then 0.
+  previous_log_index:ulong;
+  // The last term sent (only valid if previous_log_index > 0).
+  previous_log_term:ulong;
+  // Last log entry in message that is committed on leader
+  leader_commit_index:ulong;
+  entry:[log_entry];
+}
+
+table append_response
+{
+  recipient_id:ulong;
+  term_number:ulong;
+  request_term_number:ulong;
+  // Beginning of range of entries appended
+  begin_index:ulong;
+  // One after the last log entry appended
+  last_index:ulong;
+  success:bool;
+}
+
+table configuration_checkpoint
+{
+  index:ulong;
+  description:configuration_description;
+}
+
+// TODO: Why do we assume that the checkpoint term is in the checkpoint_header in the
+// data and not in the chunk message?  Well, Ongaro assumes that but as you'll notice
+// I've decided to put it in.
+table append_checkpoint_chunk
+{
+  recipient_id:ulong;
+  term_number:ulong;
+  leader_id:ulong;
+  // Only needed on a chunk if checkpoint_done==true; a client can know
+  // whether the checkpoint is up to date without looking at the data itself
+  // (which is is assumed to carry a checkpoint_header that also has the index).
+  last_checkpoint_index:ulong;
+  // Ongaro's logcabin does not put the term in the message but assumes that it is
+  // serialized as part of the data (the actual checkpoint file).
+  // I'm not sure I like that model so I am putting it in the chunk message as well;
+  // we'll see how that goes for me :-)  I am only look at this value in the first chunk
+  // of a checkpoint.
+  last_checkpoint_term:ulong;
+  // Ongaro's logcabin does not put the configuration in the message but assumes that it is
+  // serialized as part of the data (the actual checkpoint file).
+  // I'm not sure I like that model so I am putting it in the chunk message as well;
+  // we'll see how that goes for me :-)  I only look at this value in the first chunk
+  // of a checkpoint.
+  last_checkpoint_configuration:configuration_checkpoint;
+  checkpoint_begin:ulong;
+  checkpoint_end:ulong;
+  checkpoint_done:bool;
+  data:[ubyte];
+}
+
+table append_checkpoint_chunk_response
+{
+  recipient_id:ulong;
+  term_number:ulong;
+  request_term_number:ulong;
+  bytes_stored:ulong;
+}
+
+enum client_result:byte { SUCCESS=0, FAIL=1, RETRY=2, NOT_LEADER=3 }
+
+table client_request
+{
+  id:ulong;
+  command:string;
+}
+
+table client_response
+{
+  id:ulong;
+  result:client_result;
+  index:ulong;
+  leader_id:ulong;
+}
+
+table set_configuration_request
+{
+  old_id:ulong;
+  new_configuration:simple_configuration_description;
+}
+
+table set_configuration_response
+{
+  result:client_result;
+  bad_servers:simple_configuration_description;
+}
+
+union any_message { request_vote, vote_response, append_entry, append_response }
+
+table raft_message
+{
+  message:any_message;
+}
+
+root_type raft_message;
