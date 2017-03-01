@@ -7,6 +7,7 @@
 #include "boost/logic/tribool.hpp"
 
 #include "messages.hh"
+#include "slice.hh"
 
 namespace raft {
   // Raft only really cares about the fact that a checkpoint maintains the log index, term and configuration
@@ -51,29 +52,29 @@ namespace raft {
     {
     }
 
-    bool prepare_checkpoint_chunk(append_checkpoint_chunk_type & msg)
-    {
-      if (awaiting_ack_) {
-	return false;
-      }
+    // bool prepare_checkpoint_chunk(append_checkpoint_chunk_type & msg)
+    // {
+    //   if (awaiting_ack_) {
+    // 	return false;
+    //   }
 
-      if (data_->is_final(last_block_sent_)) {
-	return false;
-      }
+    //   if (data_->is_final(last_block_sent_)) {
+    // 	return false;
+    //   }
 
-      last_block_sent_ = data_->block_at_offset(checkpoint_next_byte_);
+    //   last_block_sent_ = data_->block_at_offset(checkpoint_next_byte_);
 
-      msg.last_checkpoint_index = checkpoint_last_log_entry_index_;
-      msg.last_checkpoint_term = checkpoint_last_log_entry_term_;
-      msg.last_checkpoint_configuration = checkpoint_last_configuration_;
-      msg.checkpoint_begin = data_->block_begin(last_block_sent_);
-      msg.checkpoint_end = data_->block_end(last_block_sent_);
-      msg.checkpoint_done = data_->is_final(last_block_sent_);
-      msg.data.assign(last_block_sent_.block_data_,
-		      last_block_sent_.block_data_+last_block_sent_.block_length_);
-      awaiting_ack_ = true;
-      return true;
-    }
+    //   msg.last_checkpoint_index = checkpoint_last_log_entry_index_;
+    //   msg.last_checkpoint_term = checkpoint_last_log_entry_term_;
+    //   msg.last_checkpoint_configuration = checkpoint_last_configuration_;
+    //   msg.checkpoint_begin = data_->block_begin(last_block_sent_);
+    //   msg.checkpoint_end = data_->block_end(last_block_sent_);
+    //   msg.checkpoint_done = data_->is_final(last_block_sent_);
+    //   msg.data.assign(last_block_sent_.block_data_,
+    // 		      last_block_sent_.block_data_+last_block_sent_.block_length_);
+    //   awaiting_ack_ = true;
+    //   return true;
+    // }
   };
 
   // A peer encapsulates what a server knows about other servers in the cluster
@@ -134,6 +135,13 @@ namespace raft {
       // TODO: Support async here
       file_->write(&data[0], data.size());
       end_ += data.size();
+    }
+
+    void write(slice && data)
+    {
+      // TODO: Support async here
+      file_->write(slice::buffer_cast<const uint8_t *>(data), slice::buffer_size(data));
+      end_ += slice::buffer_size(data);
     }
 
     in_progress_checkpoint(checkpoint_data_store_type & store,

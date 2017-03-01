@@ -56,27 +56,6 @@ namespace raft {
     uint64_t last_log_index_;
     uint64_t last_log_term_;
 
-    uint64_t recipient_id() const
-    {
-      return recipient_id_;
-    }
-    uint64_t term_number() const
-    {
-      return term_number_;
-    }
-    uint64_t candidate_id() const
-    {
-      return candidate_id_;
-    }
-    uint64_t last_log_index() const
-    {
-      return last_log_index_;
-    }
-    uint64_t last_log_term() const
-    {
-      return last_log_term_;
-    }
-
     void set_recipient_id(uint64_t value)
     {
       recipient_id_ = value;
@@ -99,57 +78,30 @@ namespace raft {
     }
   };
 
-  // Possible abstractions: A communicator built from : types, serialization, transport
-  // vs.
-  // A communicator built from : pre-serialized types (e.g. flatbuffers), transport
-  //
-  // This assumes that we are using type serialization
-  template<typename _Communicator>
-  class vote_request_sender
+  struct request_vote_traits
   {
-  private:
-    _Communicator & comm_;
-    typename _Communicator::endpoint ep_;
-    std::string address_;
-    request_vote msg_;
-	
-  public:
-    vote_request_sender(_Communicator & comm, typename _Communicator::endpoint ep, const std::string & addr)
-      :
-      comm_(comm),
-      ep_(ep),
-      address_(addr)
-    {
-    }
+    typedef request_vote value_type;
+    typedef const request_vote & const_arg_type;
 
-    void add_recipient_id(uint64_t i)
+    static uint64_t recipient_id(const_arg_type msg)
     {
-      msg_.set_recipient_id(i);
+      return msg.recipient_id_;
     }
-
-    void add_term_number(uint64_t current_term)
+    static uint64_t term_number(const_arg_type msg)
     {
-      msg_.set_term_number(current_term);
+      return msg.term_number_;
     }
-
-    void add_candidate_id(uint64_t candidate)
+    static uint64_t candidate_id(const_arg_type msg)
     {
-      msg_.set_candidate_id(candidate);
+      return msg.candidate_id_;
     }
-
-    void add_last_log_index(uint64_t idx)
+    static uint64_t last_log_index(const_arg_type msg)
     {
-      msg_.set_last_log_index(idx);
+      return msg.last_log_index_;
     }
-
-    void add_last_log_term(uint64_t term)
+    static uint64_t last_log_term(const_arg_type msg)
     {
-      msg_.set_last_log_term(term);
-    }
-
-    void send()
-    {
-      comm_.send(ep_, address_, msg_);
+      return msg.last_log_term_;
     }
   };
 
@@ -160,6 +112,29 @@ namespace raft {
     uint64_t term_number;
     uint64_t request_term_number;
     bool granted;
+  };
+
+  struct vote_response_traits
+  {
+    typedef vote_response value_type;
+    typedef const vote_response & const_arg_type;
+
+    static uint64_t peer_id(const_arg_type msg)
+    {
+      return msg.peer_id;
+    }
+    static uint64_t term_number(const_arg_type msg)
+    {
+      return msg.term_number;
+    }
+    static uint64_t request_term_number(const_arg_type msg)
+    {
+      return msg.request_term_number;
+    }
+    static bool granted(const_arg_type msg)
+    {
+      return msg.granted;
+    }
   };
 
   template<typename _LogEntry>
@@ -309,58 +284,6 @@ namespace raft {
     }
   };
 
-  // Possible abstractions: A communicator built from : types, serialization, transport
-  // vs.
-  // A communicator built from : pre-serialized types (e.g. flatbuffers), transport
-  //
-  // This assumes that we are using type serialization
-  //
-  // Another nasty issue is that message builders may want to consume data in different
-  // orders (e.g flatbuffers is very strict about building data structures bottom up).  I'm
-  // trying to avoid baking in such an assumption therefore I am passing all of the data in a
-  // somewhat functional manner to avoid control flow issues.  Presumably there are high brow ways of handling
-  // this such as expression templates.
-  template<typename _Communicator, typename _LogEntry>
-  class append_entry_sender
-  {
-  private:
-    _Communicator & comm_;
-    typename _Communicator::endpoint ep_;
-    std::string address_;
-    append_entry<_LogEntry> msg_;
-	
-  public:
-    append_entry_sender(_Communicator & comm, typename _Communicator::endpoint ep, const std::string & addr)
-      :
-      comm_(comm),
-      ep_(ep),
-      address_(addr)
-    {
-    }
-
-    template<typename EntryProvider>
-    void send(uint64_t recipient_id,
-	      uint64_t term_number,
-	      uint64_t leader_id,
-	      uint64_t previous_log_index,
-	      uint64_t previous_log_term,
-	      uint64_t leader_commit_index,
-	      uint64_t num_entries,
-	      EntryProvider entries)
-    {
-      msg_.set_recipient_id(recipient_id);
-      msg_.set_term_number(term_number);
-      msg_.set_leader_id(leader_id);
-      msg_.set_previous_log_index(previous_log_index);
-      msg_.set_previous_log_term(previous_log_term);
-      msg_.set_leader_commit_index(leader_commit_index);
-      for(uint64_t i=0; i<num_entries; ++i) {
-	msg_.add_entry(entries(i));
-      }
-      comm_.send(ep_, address_, msg_);
-    }
-  };
-
   class append_response
   {
   public:
@@ -372,6 +295,41 @@ namespace raft {
     // One after the last log entry appended
     uint64_t last_index;
     bool success;
+  };
+
+  class append_entry_response_traits
+  {
+  public:
+    typedef append_response value_type;
+    typedef const value_type & const_arg_type;
+    
+    
+    static uint64_t recipient_id(const_arg_type ae)
+    {
+      return ae.recipient_id;
+    }
+    static uint64_t term_number(const_arg_type ae)
+    {
+      return ae.term_number;
+    }
+    static uint64_t request_term_number(const_arg_type ae)
+    {
+      return ae.request_term_number;
+    }
+    // Beginning of range of entries appended
+    static uint64_t begin_index(const_arg_type ae)
+    {
+      return ae.begin_index;
+    }
+    // One after the last log entry appended
+    static uint64_t last_index(const_arg_type ae)
+    {
+      return ae.last_index;
+    }
+    static bool success(const_arg_type ae)
+    {
+      return ae.success;
+    }
   };
 
   template<typename checkpoint_data_store_type>
@@ -403,6 +361,94 @@ namespace raft {
     std::vector<uint8_t> data;
   };
 
+  template<typename checkpoint_data_store_type>
+  class append_checkpoint_chunk_traits
+  {
+  public:
+    typedef append_checkpoint_chunk<checkpoint_data_store_type> value_type;
+    typedef const value_type & const_arg_type;
+    typedef value_type pinned_type;
+    typedef typename std::vector<server_description>::const_iterator iterator_type;
+    
+    
+    static uint64_t recipient_id(const_arg_type ae)
+    {
+      return ae.recipient_id;
+    }
+    static uint64_t term_number(const_arg_type ae)
+    {
+      return ae.term_number;
+    }
+    static uint64_t leader_id(const_arg_type ae)
+    {
+      return ae.leader_id;
+    }
+    static uint64_t last_checkpoint_index(const_arg_type ae)
+    {
+      return ae.last_checkpoint_index;
+    }
+    static uint64_t last_checkpoint_term(const_arg_type ae)
+    {
+      return ae.last_checkpoint_term;
+    }
+    // Ongaro's logcabin does not put the configuration in the message but assumes that it is
+    // serialized as part of the data (the actual checkpoint file).
+    // I'm not sure I like that model so I am putting it in the chunk message as well;
+    // we'll see how that goes for me :-)  I am only looking at this value in the first chunk
+    // of a checkpoint.
+    static uint64_t checkpoint_configuration_index(const_arg_type ae)
+    {
+      return ae.last_checkpoint_configuration.index;
+    }
+    static uint64_t checkpoint_configuration_from_size(const_arg_type ae)
+    {
+      return ae.last_checkpoint_configuration.description.from.servers.size();
+    }
+    static iterator_type checkpoint_configuration_from_begin(const_arg_type ae)
+    {
+      return ae.last_checkpoint_configuration.description.from.servers.begin();
+    }
+    static iterator_type checkpoint_configuration_from_end(const_arg_type ae)
+    {
+      return ae.last_checkpoint_configuration.description.from.servers.end();
+    }
+    static uint64_t checkpoint_configuration_to_size(const_arg_type ae)
+    {
+      return ae.last_checkpoint_configuration.description.to.servers.size();
+    }
+    static iterator_type checkpoint_configuration_to_begin(const_arg_type ae)
+    {
+      return ae.last_checkpoint_configuration.description.to.servers.begin();
+    }
+    static iterator_type checkpoint_configuration_to_end(const_arg_type ae)
+    {
+      return ae.last_checkpoint_configuration.description.to.servers.end();
+    }
+    static uint64_t checkpoint_begin(const_arg_type ae)
+    {
+      return ae.checkpoint_begin;
+    }
+    static uint64_t checkpoint_end(const_arg_type ae)
+    {
+      return ae.checkpoint_end;
+    }
+    static bool checkpoint_done(const_arg_type ae)
+    {
+      return ae.checkpoint_done;
+    }
+    static slice data(const_arg_type ae)
+    {
+      return ae.data.size()>0 ? slice(&ae.data[0], ae.data.size()) : slice(nullptr, 0U);
+    }
+    static void release(const_arg_type ae)
+    {
+    }
+    static pinned_type pin(const_arg_type ae)
+    {
+      return pinned_type(ae);
+    }
+  };
+
   class append_checkpoint_chunk_response
   {
   public:
@@ -412,19 +458,47 @@ namespace raft {
     uint64_t bytes_stored;
   };
 
+  class append_checkpoint_chunk_response_traits
+  {
+  public:
+    typedef append_checkpoint_chunk_response value_type;
+    typedef const value_type & const_arg_type;
+    static uint64_t recipient_id(const_arg_type ae)
+    {
+      return ae.recipient_id;
+    }
+    static uint64_t term_number(const_arg_type ae)
+    {
+      return ae.term_number;
+    }
+    static uint64_t request_term_number(const_arg_type ae)
+    {
+      return ae.request_term_number;
+    }
+    static uint64_t bytes_stored(const_arg_type ae)
+    {
+      return ae.bytes_stored;
+    }
+  };
   
   class messages
   {
   public:
     typedef client_request client_request_type;
     typedef client_response client_response_type;
-    typedef request_vote request_vote_type;
-    typedef vote_response vote_response_type;
-    typedef append_checkpoint_chunk<checkpoint_data_store<configuration_description::checkpoint_type> > append_checkpoint_chunk_type;
+    typedef request_vote_traits request_vote_traits_type;
+    typedef request_vote_traits::value_type request_vote_type;
+    typedef vote_response_traits::value_type vote_response_type;
+    typedef vote_response_traits vote_response_traits_type;
+    typedef append_checkpoint_chunk_traits<checkpoint_data_store<configuration_description::checkpoint_type> > append_checkpoint_chunk_traits_type;
+    typedef append_checkpoint_chunk_traits_type::const_arg_type append_checkpoint_chunk_arg_type;
+    typedef append_checkpoint_chunk_traits_type::value_type append_checkpoint_chunk_type;
+    typedef append_checkpoint_chunk_response_traits append_checkpoint_chunk_response_traits_type;
     typedef append_checkpoint_chunk_response append_checkpoint_chunk_response_type;
     typedef append_entry<log_entry<configuration_description>> append_entry_type;
     typedef append_entry_traits<log_entry<configuration_description>> append_entry_traits_type;
-    typedef append_response append_entry_response_type;
+    typedef append_entry_response_traits append_entry_response_traits_type;
+    typedef append_entry_response_traits::value_type append_entry_response_type;
     typedef set_configuration_request<configuration_description::simple_type> set_configuration_request_type;
     typedef set_configuration_response<configuration_description::simple_type> set_configuration_response_type;
 

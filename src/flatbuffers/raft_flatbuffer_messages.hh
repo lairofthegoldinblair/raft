@@ -3,8 +3,40 @@
 
 #include "raft_generated.h"
 
+#include "../slice.hh"
+
 namespace raft {
   namespace fbs {
+
+    // A moveable but not copyable container for a FlatBufferBuilder
+    struct flatbuffer_builder_adapter
+    {
+      // Non-copyable only moveable
+      flatbuffer_builder_adapter(const flatbuffer_builder_adapter & s) = delete;
+      const flatbuffer_builder_adapter & operator=(const flatbuffer_builder_adapter & s) = delete;
+      
+      std::unique_ptr<flatbuffers::FlatBufferBuilder> fbb_;
+      flatbuffer_builder_adapter()
+	:
+	fbb_(new flatbuffers::FlatBufferBuilder())
+      {
+      }
+
+      flatbuffers::FlatBufferBuilder & operator* ()
+      {
+	return *fbb_.get();
+      }
+
+      flatbuffers::FlatBufferBuilder * operator->()
+      {
+	return fbb_.get();
+      }
+
+      operator slice ()
+      {
+	return slice(fbb_->GetBufferPointer(), fbb_->GetSize());
+      }
+    };
     
     struct append_entry_traits
     {
@@ -74,8 +106,7 @@ namespace raft {
     private:
       _Communicator & comm_;
       typename _Communicator::endpoint ep_;
-      std::string address_;
-      
+      std::string address_;      
 	
     public:
       append_entry_sender(_Communicator & comm, typename _Communicator::endpoint ep, const std::string & addr)
@@ -96,15 +127,15 @@ namespace raft {
 		uint64_t num_entries,
 		EntryProvider entries)
       {
-	flatbuffers::FlatBufferBuilder fbb;
+	flatbuffer_builder_adapter fbb;
 	std::vector<flatbuffers::Offset<raft::fbs::log_entry>> entries;
 	for(uint64_t i=0; i<num_entries; ++i) {
 	  msg_.add_entry(entries(i));
 	}
 
-	auto e = fbb.CreateVector(entries);  
+	auto e = fbb->CreateVector(entries);  
 	
-	raft::fbs::append_entryBuilder aeb(fbb);
+	raft::fbs::append_entryBuilder aeb(*fbb);
 	aeb.add_recipient_id(recipient_id);
 	aeb.add_term_number(term_number);
 	aeb.add_leader_id(leader_id);
@@ -114,12 +145,44 @@ namespace raft {
 	aeb.add_entry(e);
 	auto ae = aeb.Finish();
 	// Create the surrounding raft_message
-	auto m = raft::fbs::Createraft_message(fbb, raft::fbs::any_message_append_entry, ae.Union());
+	auto m = raft::fbs::Createraft_message(*fbb, raft::fbs::any_message_append_entry, ae.Union());
 	// Finish and get buffer
-	fbb.Finish(m);
+	fbb->Finish(m);
 
-	fbb.GetBufferPointer();
-	comm_.send(ep_, address_, msg_);
+	comm_.send(ep_, address_, std::move(fbb));
+      }
+    };
+
+    struct request_vote_traits
+    {
+      typedef const raft_message * const_arg_type;
+      typedef const raft_message * pinned_type;
+      typedef flatbuffers::Vector<flatbuffers::Offset<log_entry>>::const_iterator iterator_type;
+
+      static raft::fbs::request_vote * rv(const_arg_type msg)
+      {
+	return static_cast<const raft::fbs::request_vote * >(msg->message());
+      }
+
+      static uint64_t recipient_id(const_arg_type msg)
+      {
+	return rv(msg)->recipient_id();
+      }
+      static uint64_t term_number(const_arg_type msg)
+      {
+	return rv(msg)->term_number();
+      }
+      static uint64_t candidate_id(const_arg_type msg)
+      {
+	return rv(msg)->candidate_id();
+      }
+      static uint64_t last_log_index(const_arg_type msg)
+      {
+	return rv(msg)->last_log_index();
+      }
+      static uint64_t last_log_term(const_arg_type msg)
+      {
+	return rv(msg)->last_log_term();
       }
     };
 
@@ -129,6 +192,7 @@ namespace raft {
       typedef client_request client_request_type;
       typedef client_response client_response_type;
       typedef request_vote request_vote_type;
+      typedef request_vote_traits request_vote_traits_type;
       typedef vote_response vote_response_type;
       typedef append_checkpoint_chunk append_checkpoint_chunk_type;
       typedef append_checkpoint_chunk_response append_checkpoint_chunk_response_type;

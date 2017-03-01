@@ -212,15 +212,117 @@ public:
     q.push_front(msg);
   }
   
-  raft::vote_request_sender<test_communicator<_Messages>> vote_request(endpoint ep, const std::string & addr)
+  void vote_request(endpoint ep, const std::string & address,
+		    uint64_t recipient_id,
+		    uint64_t term_number,
+		    uint64_t candidate_id,
+		    uint64_t last_log_index,
+		    uint64_t last_log_term)
   {
-    return raft::vote_request_sender<test_communicator<_Messages>>(*this, ep, addr);
+    typename _Messages::request_vote_type msg;
+    msg.recipient_id_=recipient_id;
+    msg.term_number_=term_number;
+    msg.candidate_id_=candidate_id;
+    msg.last_log_index_=last_log_index;
+    msg.last_log_term_=last_log_term;
+    send(ep, address, msg);	
   }
 
-  raft::append_entry_sender<test_communicator<_Messages>, raft::messages::append_entry_type::log_entry_type>
-  append_entry(endpoint ep, const std::string & addr)
+  template<typename EntryProvider>
+  void append_entry(endpoint ep, const std::string& address,
+	    uint64_t recipient_id,
+	    uint64_t term_number,
+	    uint64_t leader_id,
+	    uint64_t previous_log_index,
+	    uint64_t previous_log_term,
+	    uint64_t leader_commit_index,
+	    uint64_t num_entries,
+	    EntryProvider entries)
   {
-    return raft::append_entry_sender<test_communicator<_Messages>, raft::messages::append_entry_type::log_entry_type>(*this, ep, addr);
+    typename _Messages::append_entry_type msg;
+    msg.set_recipient_id(recipient_id);
+    msg.set_term_number(term_number);
+    msg.set_leader_id(leader_id);
+    msg.set_previous_log_index(previous_log_index);
+    msg.set_previous_log_term(previous_log_term);
+    msg.set_leader_commit_index(leader_commit_index);
+    for(uint64_t i=0; i<num_entries; ++i) {
+      msg.add_entry(entries(i));
+    }
+    q.push_front(msg);
+  }
+	
+  void append_entry_response(endpoint ep, const std::string& address,
+			     uint64_t recipient_id,
+			     uint64_t term_number,
+			     uint64_t request_term_number,
+			     uint64_t begin_index,
+			     uint64_t last_index,
+			     bool success)
+  {
+    typename _Messages::append_entry_response_type msg;
+    msg.recipient_id = recipient_id;
+    msg.term_number = term_number;
+    msg.request_term_number = request_term_number;
+    msg.begin_index = begin_index;
+    msg.last_index = last_index;
+    msg.success = success;
+    q.push_front(msg);
+  }
+
+  void vote_response(endpoint ep, const std::string& address,
+		     uint64_t peer_id,
+		     uint64_t term_number,
+		     uint64_t request_term_number,
+		     bool granted)
+  {
+    typename _Messages::vote_response_type msg;
+    msg.peer_id = peer_id;
+    msg.term_number = term_number;
+    msg.request_term_number = request_term_number;
+    msg.granted = granted;
+    q.push_front(msg);
+  }
+
+  void append_checkpoint_chunk(endpoint ep, const std::string& address,
+			       uint64_t recipient_id,
+			       uint64_t term_number,
+			       uint64_t leader_id,
+			       uint64_t last_checkpoint_index,
+			       uint64_t last_checkpoint_term,
+			       raft::configuration_checkpoint<raft::configuration_description> last_checkpoint_configuration,
+			       uint64_t checkpoint_begin,
+			       uint64_t checkpoint_end,
+			       bool checkpoint_done,
+			       raft::slice data)
+  {
+    typename _Messages::append_checkpoint_chunk_type msg;
+    msg.recipient_id=recipient_id;
+    msg.term_number=term_number;
+    msg.leader_id=leader_id;
+    msg.last_checkpoint_index=last_checkpoint_index;
+    msg.last_checkpoint_term=last_checkpoint_term;
+    msg.last_checkpoint_configuration=last_checkpoint_configuration;
+    msg.checkpoint_begin=checkpoint_begin;
+    msg.checkpoint_end=checkpoint_end;
+    msg.checkpoint_done=checkpoint_done;
+    msg.data.assign(raft::slice::buffer_cast<const uint8_t *>(data),
+		    raft::slice::buffer_cast<const uint8_t *>(data) + raft::slice::buffer_size(data));
+    q.push_front(msg);
+  }		       
+  
+  void append_checkpoint_chunk_response(endpoint ep, const std::string& address,
+					uint64_t recipient_id,
+					uint64_t term_number,
+					uint64_t request_term_number,
+					uint64_t bytes_stored)
+  {
+    typename _Messages::append_checkpoint_chunk_response_type msg;    
+    msg.recipient_id = recipient_id;
+    msg.term_number = term_number;
+    msg.request_term_number = request_term_number;
+    msg.bytes_stored = bytes_stored;
+    q.push_front(msg);
   }
 
   typedef boost::variant<typename _Messages::request_vote_type, typename _Messages::vote_response_type,
@@ -484,9 +586,9 @@ BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
   std::size_t expected = 1;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(0U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<raft::request_vote>(comm.q.back()).recipient_id());
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::request_vote>(comm.q.back()).candidate_id());
-    BOOST_CHECK_EQUAL(1U, boost::get<raft::request_vote>(comm.q.back()).term_number());
+    BOOST_CHECK_EQUAL(expected, boost::get<raft::request_vote>(comm.q.back()).recipient_id_);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::request_vote>(comm.q.back()).candidate_id_);
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::request_vote>(comm.q.back()).term_number_);
     expected += 1;
     comm.q.pop_back();
   }
@@ -506,9 +608,9 @@ BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
   expected = 1;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(0U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<raft::request_vote>(comm.q.back()).recipient_id());
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::request_vote>(comm.q.back()).candidate_id());
-    BOOST_CHECK_EQUAL(2U, boost::get<raft::request_vote>(comm.q.back()).term_number());
+    BOOST_CHECK_EQUAL(expected, boost::get<raft::request_vote>(comm.q.back()).recipient_id_);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::request_vote>(comm.q.back()).candidate_id_);
+    BOOST_CHECK_EQUAL(2U, boost::get<raft::request_vote>(comm.q.back()).term_number_);
     expected += 1;
     comm.q.pop_back();
   }
@@ -558,14 +660,14 @@ BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
   expected = 1;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::append_entry_type>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_id);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_index);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_commit_index);
-    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry.size());
-    BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::NOOP, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[0].type);
+    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry.size());
+    BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::NOOP, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[0].type);
     raft::append_response resp;
     resp.recipient_id = expected;
     resp.term_number = 2;
@@ -599,20 +701,20 @@ BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
   expected = 1;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::append_entry_type>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_id);
     // TODO: What about the next 3 values ????
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_index);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_commit_index);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry.size());
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry.size());
     expected += 1;
     comm.q.pop_back();
   }
 
   // Old append_entry should elicit a response with updated term
-  test_raft_type::append_entry_type ae_msg;
+  test_raft_type::messages_type::append_entry_type ae_msg;
   ae_msg.recipient_id = 0;
   ae_msg.term_number = 1;
   ae_msg.leader_id = 0;
@@ -646,16 +748,16 @@ BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
   expected = 1;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::append_entry_type>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_id);
-    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_index);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_commit_index);
-    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry.size());
-    BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::COMMAND, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[0].type);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[0].term);
-    BOOST_CHECK_EQUAL(0, ::strcmp("1", boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[0].data.c_str()));
+    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry.size());
+    BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::COMMAND, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[0].type);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[0].term);
+    BOOST_CHECK_EQUAL(0, ::strcmp("1", boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[0].data.c_str()));
     raft::append_response resp;
     resp.recipient_id = expected;
     resp.term_number = 2;
@@ -702,19 +804,19 @@ BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
   expected = 1;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::append_entry_type>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_id);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_index);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_commit_index);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry.size());
-    BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::COMMAND, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[0].type);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[0].term);
-    BOOST_CHECK_EQUAL(0, ::strcmp("2", boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[0].data.c_str()));
-    BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::COMMAND, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[1].type);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[1].term);
-    BOOST_CHECK_EQUAL(0, ::strcmp("3", boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[1].data.c_str()));
+    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry.size());
+    BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::COMMAND, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[0].type);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[0].term);
+    BOOST_CHECK_EQUAL(0, ::strcmp("2", boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[0].data.c_str()));
+    BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::COMMAND, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[1].type);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[1].term);
+    BOOST_CHECK_EQUAL(0, ::strcmp("3", boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[1].data.c_str()));
     raft::append_response resp;
     resp.recipient_id = expected;
     resp.term_number = 2;
@@ -757,24 +859,24 @@ BOOST_AUTO_TEST_CASE(BasicStateMachineTests)
   expected = 1;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::append_entry_type>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_id);
-    BOOST_CHECK_EQUAL(expected <= 2 ? 4U : 2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_index);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(4U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(expected <= 2 ? 4U : 2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(4U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_commit_index);
     if (expected <= 2) {
-      BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry.size());
-      BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::COMMAND, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[0].type);
-      BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[0].term);
-      BOOST_CHECK_EQUAL(0, ::strcmp("4", boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[0].data.c_str()));
+      BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry.size());
+      BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::COMMAND, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[0].type);
+      BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[0].term);
+      BOOST_CHECK_EQUAL(0, ::strcmp("4", boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[0].data.c_str()));
     } else {
-      BOOST_CHECK_EQUAL(3U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry.size());
+      BOOST_CHECK_EQUAL(3U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry.size());
       for(std::size_t i=0; i<=2; ++i) {
-	BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::COMMAND, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[i].type);
-	BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[i].term);
+	BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::COMMAND, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[i].type);
+	BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[i].term);
 	BOOST_CHECK_EQUAL(0, ::strcmp((boost::format("%1%") % (i+2)).str().c_str(),
-				      boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[i].data.c_str()));
+				      boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[i].data.c_str()));
       }
     }
     raft::append_response resp;
@@ -876,12 +978,12 @@ void RaftTestFixtureBase::stage_new_server(uint64_t term, uint64_t commit_index)
   BOOST_CHECK_EQUAL(1U, comm.q.size());
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(term, boost::get<test_raft_type::append_entry_type>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(leader_id, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_id);
-    BOOST_CHECK_EQUAL(commit_index, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_commit_index);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_index);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(commit_index, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry.size());
+    BOOST_CHECK_EQUAL(term, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(leader_id, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(commit_index, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(commit_index, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry.size());
     raft::append_response resp;
     resp.recipient_id = req.new_configuration.servers.size()-1;
     resp.term_number = term;
@@ -922,14 +1024,14 @@ void RaftTestFixtureBase::make_leader(uint64_t term, bool respond_to_noop)
   BOOST_CHECK_EQUAL(num_known_peers()-1, comm.q.size());
   for(uint64_t p=1; p!=num_known_peers(); ++p) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::NOOP, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[0].type);
+    BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::NOOP, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[0].type);
     if (respond_to_noop) {
       raft::append_response resp;
       resp.recipient_id = p;
       resp.term_number = term;
       resp.request_term_number = term;
       resp.begin_index = 0;
-      resp.last_index = boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_index+1;
+      resp.last_index = boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_index+1;
       resp.success = true;
       s->on_append_response(resp);
     }
@@ -940,7 +1042,7 @@ void RaftTestFixtureBase::make_leader(uint64_t term, bool respond_to_noop)
 void RaftTestFixtureBase::make_follower_with_checkpoint(uint64_t term, uint64_t log_entry)
 {
   {
-    test_raft_type::append_checkpoint_chunk_type msg;
+    test_raft_type::messages_type::append_checkpoint_chunk_type msg;
     msg.recipient_id = 0;
     msg.term_number = term;
     msg.leader_id = 1;
@@ -1029,17 +1131,17 @@ void RaftTestFixtureBase::send_client_request(uint64_t term, const char * cmd, u
   std::size_t num_responses = 0;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::append_entry_type>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(term, boost::get<test_raft_type::append_entry_type>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_id);
-    BOOST_CHECK_EQUAL(client_index, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(term, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(client_index, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_index);
     // Can't really check this in general
-    // BOOST_CHECK_EQUAL(client_index > 0 ? term : 0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(client_index, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_commit_index);
-    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry.size());
-    BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::COMMAND, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[0].type);
-    BOOST_CHECK_EQUAL(term, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[0].term);
-    BOOST_CHECK_EQUAL(0, ::strcmp(cmd, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[0].data.c_str()));
+    // BOOST_CHECK_EQUAL(client_index > 0 ? term : 0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(client_index, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry.size());
+    BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::COMMAND, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[0].type);
+    BOOST_CHECK_EQUAL(term, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[0].term);
+    BOOST_CHECK_EQUAL(0, ::strcmp(cmd, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[0].data.c_str()));
       raft::append_response resp;
       resp.recipient_id = expected;
       resp.term_number = term;
@@ -1118,7 +1220,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
 {
   BOOST_CHECK_EQUAL(0U, comm.q.size());
   {
-    test_raft_type::append_entry_type msg;
+    test_raft_type::messages_type::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
@@ -1152,7 +1254,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
 
   // Pretend a leader from expired term sends a message, this should respond with current term
   {
-    test_raft_type::append_entry_type msg;
+    test_raft_type::messages_type::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 0;
     msg.leader_id = 2;
@@ -1179,7 +1281,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
   // Supposing the leader has committed lets go to another message
   // which creates a gap.  This should be rejected by the peer.
   {
-    test_raft_type::append_entry_type msg;
+    test_raft_type::messages_type::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
@@ -1206,7 +1308,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
 
   // Send three messages with the first one a duplicate
   {
-    test_raft_type::append_entry_type msg;
+    test_raft_type::messages_type::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
@@ -1244,7 +1346,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
   // at those indexes and is trying to append from them on the new term.  We must reject
   // so that the new leader backs up to find where its log agrees with that of the peer.
   {
-    test_raft_type::append_entry_type msg;
+    test_raft_type::messages_type::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 3;
     msg.leader_id = 2;
@@ -1274,7 +1376,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesLogSync, RaftTestFixture)
   // Let's suppose that only log entry at index 1 on term 1 got committed.  We should be able to
   // overwrite log entries starting at that point.
   {
-    test_raft_type::append_entry_type msg;
+    test_raft_type::messages_type::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 3;
     msg.leader_id = 2;
@@ -1328,16 +1430,16 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesNegativeResponse, RaftTestFixture)
     uint64_t expected = 1;
     while(comm.q.size() > 0) {
       BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-      BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::append_entry_type>(comm.q.back()).recipient_id);
-      BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).term_number);
-      BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_id);
-      BOOST_CHECK_EQUAL(attempt == 0 ? 1U : 0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_index);
-      BOOST_CHECK_EQUAL(attempt == 0 ? 1U : 0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_term);
-      BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_commit_index);
-      BOOST_CHECK_EQUAL(attempt == 0 ? 1U : 2U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry.size());
-      BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::COMMAND, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[attempt].type);
-      BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[attempt].term);
-      BOOST_CHECK_EQUAL(0, ::strcmp("1", boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry[attempt].data.c_str()));
+      BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).recipient_id);
+      BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).term_number);
+      BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_id);
+      BOOST_CHECK_EQUAL(attempt == 0 ? 1U : 0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_index);
+      BOOST_CHECK_EQUAL(attempt == 0 ? 1U : 0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_term);
+      BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_commit_index);
+      BOOST_CHECK_EQUAL(attempt == 0 ? 1U : 2U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry.size());
+      BOOST_CHECK_EQUAL(test_raft_type::log_entry_type::COMMAND, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[attempt].type);
+      BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[attempt].term);
+      BOOST_CHECK_EQUAL(0, ::strcmp("1", boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry[attempt].data.c_str()));
       raft::append_response resp;
       resp.recipient_id = expected;
       resp.term_number = 1;
@@ -1362,7 +1464,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesNegativeResponse, RaftTestFixture)
 BOOST_FIXTURE_TEST_CASE(AppendEntriesSlowHeaderSync, RaftTestFixture)
 {
   {
-    test_raft_type::append_entry_type msg;
+    test_raft_type::messages_type::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
@@ -1381,7 +1483,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesSlowHeaderSync, RaftTestFixture)
   BOOST_CHECK_EQUAL(0U, comm.q.size());
   {
     // Since a log header sync is outstanding we will ignore a new term
-    test_raft_type::append_entry_type msg;
+    test_raft_type::messages_type::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 2;
     msg.leader_id = 2;
@@ -1400,7 +1502,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesSlowHeaderSync, RaftTestFixture)
   BOOST_CHECK_EQUAL(0U, comm.q.size());
   {
     // Since a log header sync is outstanding we will ignore a new term
-    test_raft_type::append_checkpoint_chunk_type msg;
+    test_raft_type::messages_type::append_checkpoint_chunk_type msg;
     msg.recipient_id = 0;
     msg.term_number = 2;
     msg.leader_id = 2;
@@ -1425,7 +1527,7 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesSlowHeaderSync, RaftTestFixture)
   BOOST_CHECK_EQUAL(0U, comm.q.size());
   {
     // This one doesn't require a new term so it gets queued awaiting the log header sync
-    test_raft_type::append_entry_type msg;
+    test_raft_type::messages_type::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
@@ -1553,7 +1655,7 @@ BOOST_FIXTURE_TEST_CASE(OnVoteRequestSlowHeaderSyncTest, RaftTestFixture)
   // Send a couple of entries
   for(std::size_t i=1; i<=3; ++i) {
     {
-      test_raft_type::append_entry_type msg;
+      test_raft_type::messages_type::append_entry_type msg;
       msg.recipient_id = 0;
       msg.term_number = 2;
       msg.leader_id = 1;
@@ -1622,7 +1724,7 @@ BOOST_FIXTURE_TEST_CASE(OnVoteRequestSlowHeaderSyncTest, RaftTestFixture)
   // TODO: We could also get an append_entry for the current term without ever seeing
   // a request_vote from the leader.
   {
-    test_raft_type::append_entry_type msg;
+    test_raft_type::messages_type::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 3;
     msg.leader_id = 1;
@@ -1667,7 +1769,7 @@ BOOST_FIXTURE_TEST_CASE(OnVoteRequestSlowHeaderSyncTest, RaftTestFixture)
 BOOST_FIXTURE_TEST_CASE(AppendCheckpointChunk, RaftTestFixture)
 {
   {
-    test_raft_type::append_checkpoint_chunk_type msg;
+    test_raft_type::messages_type::append_checkpoint_chunk_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
@@ -1704,7 +1806,7 @@ BOOST_FIXTURE_TEST_CASE(AppendCheckpointChunk, RaftTestFixture)
 BOOST_FIXTURE_TEST_CASE(AppendCheckpointChunkSlowHeaderSync, RaftTestFixture)
 {
   {
-    test_raft_type::append_checkpoint_chunk_type msg;
+    test_raft_type::messages_type::append_checkpoint_chunk_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
@@ -1721,7 +1823,7 @@ BOOST_FIXTURE_TEST_CASE(AppendCheckpointChunkSlowHeaderSync, RaftTestFixture)
   BOOST_CHECK_EQUAL(0U, comm.q.size());
   {
     // Since a log header sync is outstanding we will ignore a new term
-    test_raft_type::append_entry_type msg;
+    test_raft_type::messages_type::append_entry_type msg;
     msg.recipient_id = 0;
     msg.term_number = 2;
     msg.leader_id = 2;
@@ -1740,7 +1842,7 @@ BOOST_FIXTURE_TEST_CASE(AppendCheckpointChunkSlowHeaderSync, RaftTestFixture)
   BOOST_CHECK_EQUAL(0U, comm.q.size());
   {
     // Since a log header sync is outstanding we will ignore a new term
-    test_raft_type::append_checkpoint_chunk_type msg;
+    test_raft_type::messages_type::append_checkpoint_chunk_type msg;
     msg.recipient_id = 0;
     msg.term_number = 2;
     msg.leader_id = 2;
@@ -1758,7 +1860,7 @@ BOOST_FIXTURE_TEST_CASE(AppendCheckpointChunkSlowHeaderSync, RaftTestFixture)
 
   {
     // This one doesn't require a new term so it gets queued awaiting the log header sync
-    test_raft_type::append_checkpoint_chunk_type msg;
+    test_raft_type::messages_type::append_checkpoint_chunk_type msg;
     msg.recipient_id = 0;
     msg.term_number = 1;
     msg.leader_id = 1;
@@ -1944,11 +2046,11 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpoint, RaftTestFixture)
   // discarded, a checkpoint will need to be sent to 1.
   s->on_timer();
   BOOST_REQUIRE_EQUAL(1U, comm.q.size());
-  BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).recipient_id);
-  BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).term_number);
-  BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).leader_id);
-  BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_begin);
-  BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_end);
+  BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).recipient_id);
+  BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).term_number);
+  BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).leader_id);
+  BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_begin);
+  BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_end);
   comm.q.pop_back();
 
   raft::append_checkpoint_chunk_response resp;
@@ -1960,11 +2062,11 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpoint, RaftTestFixture)
     resp.bytes_stored = 2U;
     s->on_append_checkpoint_chunk_response(resp);  
     BOOST_REQUIRE_EQUAL(1U, comm.q.size());
-    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).leader_id);
-    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_begin);
-    BOOST_CHECK_EQUAL(4U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_end);
+    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_begin);
+    BOOST_CHECK_EQUAL(4U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_end);
     comm.q.pop_back();
   }
 
@@ -1974,11 +2076,11 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpoint, RaftTestFixture)
   resp.bytes_stored = 4U;
   s->on_append_checkpoint_chunk_response(resp);  
   BOOST_REQUIRE_EQUAL(1U, comm.q.size());
-  BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).recipient_id);
-  BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).term_number);
-  BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).leader_id);
-  BOOST_CHECK_EQUAL(4U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_begin);
-  BOOST_CHECK_EQUAL(5U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_end);
+  BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).recipient_id);
+  BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).term_number);
+  BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).leader_id);
+  BOOST_CHECK_EQUAL(4U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_begin);
+  BOOST_CHECK_EQUAL(5U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_end);
   comm.q.pop_back();
 
   resp.recipient_id = 1;
@@ -2025,11 +2127,11 @@ BOOST_FIXTURE_TEST_CASE(AppendEntriesCheckpointAbandon, RaftTestFixture)
   // discarded, a checkpoint will need to be sent to 1.
   s->on_timer();
   BOOST_REQUIRE_EQUAL(1U, comm.q.size());
-  BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).recipient_id);
-  BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).term_number);
-  BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).leader_id);
-  BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_begin);
-  BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_end);
+  BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).recipient_id);
+  BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).term_number);
+  BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).leader_id);
+  BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_begin);
+  BOOST_CHECK_EQUAL(2U, boost::get<test_raft_type::messages_type::append_checkpoint_chunk_type>(comm.q.back()).checkpoint_end);
   comm.q.pop_back();
 
   raft::append_checkpoint_chunk_response resp;
@@ -2080,13 +2182,13 @@ BOOST_FIXTURE_TEST_CASE(JointConsensusAddServer, RaftTestFixture)
   BOOST_CHECK_EQUAL(num_known_peers() - 1U, comm.q.size());
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::append_entry_type>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_id);
-    BOOST_CHECK_EQUAL(commit_index+2, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_commit_index);
-    BOOST_CHECK_EQUAL(3U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_index);
-    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry.size());
+    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(commit_index+2, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(3U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry.size());
     raft::append_response resp;
     resp.recipient_id = expected;
     resp.term_number = 1;
@@ -2152,7 +2254,7 @@ BOOST_FIXTURE_TEST_CASE(JointConsensusAddServerLostLeadershipFailure, RaftTestFi
   // Now lose leadership by sending a log entry that conflicts with the transitional
   // configuration.  This triggers a failure in the configuration change and rollback
   // to prior configuration
-  test_raft_type::append_entry_type msg;
+  test_raft_type::messages_type::append_entry_type msg;
   msg.recipient_id = 0;
   msg.term_number = term+1;
   msg.leader_id = 1;
@@ -2197,7 +2299,7 @@ BOOST_FIXTURE_TEST_CASE(JointConsensusAddServerLostLeadershipSuccess, RaftTestFi
   // configuration and in fact tells the former leader the transitional config is committed.
   // This triggers a successful completion of the configuration change.  Since I am not the leader
   // I don't log the new stable config (the new leader does that).
-  test_raft_type::append_entry_type msg;
+  test_raft_type::messages_type::append_entry_type msg;
   msg.recipient_id = 0;
   msg.term_number = term+1;
   msg.leader_id = 1;
@@ -2269,9 +2371,9 @@ BOOST_FIXTURE_TEST_CASE(CandidateVoteRequestAtSameTerm, RaftTestFixture)
   uint32_t expected = 1;
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(0U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<raft::request_vote>(comm.q.back()).recipient_id());
-    BOOST_CHECK_EQUAL(0U, boost::get<raft::request_vote>(comm.q.back()).candidate_id());
-    BOOST_CHECK_EQUAL(1U, boost::get<raft::request_vote>(comm.q.back()).term_number());
+    BOOST_CHECK_EQUAL(expected, boost::get<raft::request_vote>(comm.q.back()).recipient_id_);
+    BOOST_CHECK_EQUAL(0U, boost::get<raft::request_vote>(comm.q.back()).candidate_id_);
+    BOOST_CHECK_EQUAL(1U, boost::get<raft::request_vote>(comm.q.back()).term_number_);
     expected += 1;
     comm.q.pop_back();
   }
@@ -2319,7 +2421,7 @@ BOOST_FIXTURE_TEST_CASE(JointConsensusAddServerNewLeaderFinishesCommit, RaftConf
   uint64_t term=0;
   uint64_t log_index=l.last_index();
   uint64_t commit_index=s->commit_index();
-  test_raft_type::append_entry_type msg;
+  test_raft_type::messages_type::append_entry_type msg;
   msg.recipient_id = 0;
   msg.term_number = term;
   msg.leader_id = 1;
@@ -2347,14 +2449,14 @@ BOOST_FIXTURE_TEST_CASE(JointConsensusAddServerNewLeaderFinishesCommit, RaftConf
   BOOST_CHECK_EQUAL(num_known_peers() - 1U, comm.q.size());
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::append_entry_type>(comm.q.back()).recipient_id);
-    BOOST_CHECK_EQUAL(term+1, boost::get<test_raft_type::append_entry_type>(comm.q.back()).term_number);
-    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_id);
-    BOOST_CHECK_EQUAL(commit_index, boost::get<test_raft_type::append_entry_type>(comm.q.back()).leader_commit_index);
+    BOOST_CHECK_EQUAL(expected, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).recipient_id);
+    BOOST_CHECK_EQUAL(term+1, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).term_number);
+    BOOST_CHECK_EQUAL(0U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_id);
+    BOOST_CHECK_EQUAL(commit_index, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).leader_commit_index);
     // Assumes peer also has the transitional config log entry
-    BOOST_CHECK_EQUAL(log_index+1U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_index);
-    BOOST_CHECK_EQUAL(term, boost::get<test_raft_type::append_entry_type>(comm.q.back()).previous_log_term);
-    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::append_entry_type>(comm.q.back()).entry.size());
+    BOOST_CHECK_EQUAL(log_index+1U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_index);
+    BOOST_CHECK_EQUAL(term, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).previous_log_term);
+    BOOST_CHECK_EQUAL(1U, boost::get<test_raft_type::messages_type::append_entry_type>(comm.q.back()).entry.size());
     raft::append_response resp;
     resp.recipient_id = expected;
     resp.term_number = term+1;

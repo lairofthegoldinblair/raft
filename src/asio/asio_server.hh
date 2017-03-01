@@ -28,6 +28,17 @@ namespace raft {
       }
     };
 
+    // Possible abstractions: A communicator built from : types, serialization, transport
+    // vs.
+    // A communicator built from : pre-serialized types (e.g. flatbuffers), transport
+    //
+    // This assumes that we are using type serialization
+    //
+    // Another nasty issue is that message builders may want to consume data in different
+    // orders (e.g flatbuffers is very strict about building data structures bottom up).  I'm
+    // trying to avoid baking in such an assumption therefore I am passing all of the data in a
+    // somewhat functional manner to avoid control flow issues.  Presumably there are high brow ways of handling
+    // this such as expression templates.
     template<typename _Messages>
     class asio_tcp_communicator
     {
@@ -46,17 +57,6 @@ namespace raft {
       {
       }
 
-      raft::vote_request_sender<asio_tcp_communicator<_Messages>> vote_request(endpoint ep, const std::string & addr)
-      {
-	return raft::vote_request_sender<asio_tcp_communicator<_Messages>>(*this, ep, addr);
-      }
-
-      append_entry_sender<asio_tcp_communicator<_Messages>, raft::messages::append_entry_type::log_entry_type>
-      append_entry(endpoint ep, const std::string & addr)
-      {
-	return append_entry_sender<asio_tcp_communicator<_Messages>, raft::messages::append_entry_type::log_entry_type>(*this, ep, addr);
-      }
-      
       template<typename _T>
       void send(endpoint ep, const std::string & addr, const _T & msg)
       {
@@ -64,7 +64,261 @@ namespace raft {
 	  auto buf = serialization::serialize(boost::asio::buffer(mem, 128*1024), msg);
 	  send_buffer(ep, addr, buf);
       }
+
+      void vote_request(endpoint ep, const std::string & address,
+			uint64_t recipient_id,
+			uint64_t term_number,
+			uint64_t candidate_id,
+			uint64_t last_log_index,
+			uint64_t last_log_term)
+      {
+	typename _Messages::request_vote_type msg;
+	msg.recipient_id_=recipient_id;
+	msg.term_number_=term_number;
+	msg.candidate_id_=candidate_id;
+	msg.last_log_index_=last_log_index;
+	msg.last_log_term_=last_log_term;
+	send(ep, address, msg);	
+      }
+
+      template<typename EntryProvider>
+      void append_entry(endpoint ep, const std::string& address,
+			uint64_t recipient_id,
+			uint64_t term_number,
+			uint64_t leader_id,
+			uint64_t previous_log_index,
+			uint64_t previous_log_term,
+			uint64_t leader_commit_index,
+			uint64_t num_entries,
+			EntryProvider entries)
+      {
+	typename _Messages::append_entry_type msg;
+	msg.set_recipient_id(recipient_id);
+	msg.set_term_number(term_number);
+	msg.set_leader_id(leader_id);
+	msg.set_previous_log_index(previous_log_index);
+	msg.set_previous_log_term(previous_log_term);
+	msg.set_leader_commit_index(leader_commit_index);
+	for(uint64_t i=0; i<num_entries; ++i) {
+	  msg.add_entry(entries(i));
+	}
+	send(ep, address, msg);
+      }
+
+      void append_entry_response(endpoint ep, const std::string& address,
+				 uint64_t recipient_id,
+				 uint64_t term_number,
+				 uint64_t request_term_number,
+				 uint64_t begin_index,
+				 uint64_t last_index,
+				 bool success)
+      {
+	typename _Messages::append_entry_response_type msg;
+	msg.recipient_id = recipient_id;
+	msg.term_number = term_number;
+	msg.request_term_number = request_term_number;
+	msg.begin_index = begin_index;
+	msg.last_index = last_index;
+	msg.success = success;
+	send(ep, address, msg);
+      }
+
+      void vote_response(endpoint ep, const std::string& address,
+			 uint64_t peer_id,
+			 uint64_t term_number,
+			 uint64_t request_term_number,
+			 bool granted)
+      {
+	typename _Messages::vote_response_type msg;
+	msg.peer_id = peer_id;
+	msg.term_number = term_number;
+	msg.request_term_number = request_term_number;
+	msg.granted = granted;
+	send(ep, address, msg);
+      }
+
+      void append_checkpoint_chunk(endpoint ep, const std::string& address,
+				   uint64_t recipient_id,
+				   uint64_t term_number,
+				   uint64_t leader_id,
+				   uint64_t last_checkpoint_index,
+				   uint64_t last_checkpoint_term,
+				   raft::configuration_checkpoint<raft::configuration_description> last_checkpoint_configuration,
+				   uint64_t checkpoint_begin,
+				   uint64_t checkpoint_end,
+				   bool checkpoint_done,
+				   raft::slice data)
+      {
+	typename _Messages::append_checkpoint_chunk_type msg;
+	msg.recipient_id=recipient_id;
+	msg.term_number=term_number;
+	msg.leader_id=leader_id;
+	msg.last_checkpoint_index=last_checkpoint_index;
+	msg.last_checkpoint_term=last_checkpoint_term;
+	msg.last_checkpoint_configuration=last_checkpoint_configuration;
+	msg.checkpoint_begin=checkpoint_begin;
+	msg.checkpoint_end=checkpoint_end;
+	msg.checkpoint_done=checkpoint_done;
+	msg.data.assign(raft::slice::buffer_cast<const uint8_t *>(data),
+			raft::slice::buffer_cast<const uint8_t *>(data) + raft::slice::buffer_size(data));
+	send(ep, address, msg);
+      }		       
+  
+      void append_checkpoint_chunk_response(endpoint ep, const std::string& address,
+					    uint64_t recipient_id,
+					    uint64_t term_number,
+					    uint64_t request_term_number,
+					    uint64_t bytes_stored)
+      {
+	typename _Messages::append_checkpoint_chunk_response_type msg;    
+	msg.recipient_id = recipient_id;
+	msg.term_number = term_number;
+	msg.request_term_number = request_term_number;
+	msg.bytes_stored = bytes_stored;
+	send(ep, address, msg);
+      }
       
+      // Don't use with boost::asio::const_buffers_1 since that doesn't have
+      // the right move semantics
+      template<typename ConstBufferSequence>
+      class owned_buffer_sequence
+      {
+      private:
+	ConstBufferSequence seq_;
+	owned_buffer_sequence(const owned_buffer_sequence& ) = delete;
+	owned_buffer_sequence & operator=(const owned_buffer_sequence &) = delete;
+      public:
+	owned_buffer_sequence(owned_buffer_sequence&& seq)
+	  :
+	  seq_(std::move(seq))
+	{
+	}
+
+	~owned_buffer_sequence()
+	{
+	  for(auto b : seq_) {
+	    delete [] boost::asio::buffer_cast<const uint8_t *>(b);
+	  }
+	}
+	
+	owned_buffer_sequence & operator=(owned_buffer_sequence && seq)
+	{
+	  seq_ = std::move(seq);
+	}
+
+	operator const ConstBufferSequence & ()
+	{
+	  return seq_;
+	}
+      };
+      
+      template<typename OwnedConstBufferSequence>
+      class write_handler
+      {
+      private:
+	asio_tcp_communicator * comm_;
+	OwnedConstBufferSequence buf_;
+      public:
+	write_handler(asio_tcp_communicator * comm,
+		      OwnedConstBufferSequence && buf)
+	  :
+	  comm_(comm),
+	  buf_(std::move(buf))
+	{
+	}
+
+	write_handler(write_handler && rhs)
+	  :
+	  comm_(rhs.comm_),
+	  buf_(std::move(rhs.buf_))
+	{
+	}
+
+	write_handler(const write_handler & rhs) = delete;
+	const write_handler & operator=(const write_handler & rhs) = delete;
+
+	~write_handler() = default;
+	
+	void operator()(boost::system::error_code ec, std::size_t bytes_transferred)
+	{
+	}
+      };
+      
+      template<typename OwnedConstBufferSequence>
+      class connect_and_write_handler
+      {
+      private:
+	asio_tcp_communicator * comm_;
+	OwnedConstBufferSequence buf_;
+	const std::string & addr_copy_;
+      public:
+	connect_and_write_handler(asio_tcp_communicator * comm,
+				  OwnedConstBufferSequence && buf,
+				  const std::string & addr_copy)
+	  :
+	  comm_(comm),
+	  buf_(std::move(buf)),
+	  addr_copy_(addr_copy)
+	{
+	}
+
+	connect_and_write_handler(connect_and_write_handler && rhs)
+	  :
+	  comm_(rhs.comm_),
+	  buf_(std::move(rhs.buf_)),
+	  addr_copy_(rhs.addr_copy_)
+	{
+	}
+
+	connect_and_write_handler(const connect_and_write_handler & rhs) = delete;
+	const connect_and_write_handler & operator=(const connect_and_write_handler & rhs) = delete;
+
+	~connect_and_write_handler() = default;
+	
+	void operator ()(boost::system::error_code ec)
+	{
+	  if (ec) {
+	    BOOST_LOG_TRIVIAL(warning) << "asio_tcp_communicator " << this->endpoint_ << " failed to connect to " << addr_copy_ <<
+	      ": " << ec;
+	    return;
+	  }
+	  BOOST_LOG_TRIVIAL(info) << "asio_tcp_communicator " << this->endpoint_ << " connected to " << addr_copy_;
+	  BOOST_LOG_TRIVIAL(debug) << "asio_tcp_communicator " << this->endpoint_ << " sending " << boost::asio::buffer_size(buf_) <<
+	    " bytes for operation " << boost::asio::buffer_cast<const rpc_header *>(buf_)->operation <<
+	    " to " << this->sockets_[addr_copy_]->peer_endpoint;
+	  boost::asio::async_write(this->sockets_[addr_copy_]->peer_socket,
+				   buf_,
+				   write_handler<OwnedConstBufferSequence>(this, buf_));
+	}
+      };
+      
+      template<typename OwnedConstBufferSequence>
+      void send_owned_buffer(endpoint ep, const std::string & addr, OwnedConstBufferSequence && buf)
+      {
+	BOOST_LOG_TRIVIAL(trace) << "Entering asio_tcp_communicator::send on " << endpoint_;
+	// TODO: Make sure at most one send outstanding on each socket?
+	auto sit = sockets_.find(addr);
+	if (sit == sockets_.end()) {
+	  // Only handling v4 addresses
+	  auto pos = addr.find_last_of(':');
+	  auto v4address = boost::asio::ip::address_v4::from_string(addr.substr(0, pos));
+	  auto port = boost::lexical_cast<unsigned short>(addr.substr(pos+1));
+	  auto ins_it = sockets_.emplace(addr, std::shared_ptr<communicator_peer>(new communicator_peer(io_service_)));
+	  const std::string & addr_copy(ins_it.first->first);
+	  ins_it.first->second->peer_endpoint.address(v4address);
+	  ins_it.first->second->peer_endpoint.port(port);	  
+	  ins_it.first->second->peer_socket.async_connect(sockets_[addr]->peer_endpoint, connect_and_write_handler<OwnedConstBufferSequence>(this, buf, addr_copy));	  
+	} else {
+	  BOOST_LOG_TRIVIAL(debug) << "asio_tcp_communicator " << endpoint_ << " sending " << boost::asio::buffer_size(buf) <<
+	    " bytes for operation " << boost::asio::buffer_cast<const rpc_header *>(buf)->operation <<
+	    " to " << sit->second->peer_endpoint;
+	  boost::asio::async_write(sit->second->peer_socket,
+				   buf,
+				   write_handler<OwnedConstBufferSequence>(this, buf));
+	}
+	BOOST_LOG_TRIVIAL(trace) << "Exiting asio_tcp_communicator::send on " << endpoint_;
+      }      
+
       template<typename ConstBufferSequence>
       void send_buffer(endpoint ep, const std::string & addr, ConstBufferSequence buf)
       {

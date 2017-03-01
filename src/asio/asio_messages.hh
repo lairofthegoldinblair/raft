@@ -236,11 +236,11 @@ namespace raft {
       header->service = 0;
       header->operation = 0;
       little_request_vote * buf = boost::asio::buffer_cast<little_request_vote *>(b+sizeof(rpc_header));
-      buf->recipient_id = msg.recipient_id();
-      buf->term_number = msg.term_number();
-      buf->candidate_id = msg.candidate_id();
-      buf->last_log_index = msg.last_log_index();
-      buf->last_log_term = msg.last_log_term();
+      buf->recipient_id = raft::messages::request_vote_traits_type::recipient_id(msg);
+      buf->term_number = raft::messages::request_vote_traits_type::term_number(msg);
+      buf->candidate_id = raft::messages::request_vote_traits_type::candidate_id(msg);
+      buf->last_log_index = raft::messages::request_vote_traits_type::last_log_index(msg);
+      buf->last_log_term = raft::messages::request_vote_traits_type::last_log_term(msg);
       return boost::asio::buffer(boost::asio::buffer_cast<const void *>(b), sz);
     }
 
