@@ -97,15 +97,18 @@ namespace raft {
       return std::make_pair(start_added, start_added+1);
     }
 
-    template<typename InputIterator>
-    std::pair<index_type, index_type> append_configuration(uint64_t term, InputIterator begin, InputIterator end)
+    template<typename Configuration>
+    std::pair<index_type, index_type> append_configuration(uint64_t term, const Configuration & config)
     {
       index_type start_added = last_index();
       entry_type e;
       e.type = entry_type::CONFIGURATION;
       e.term = term;
-      for(; begin != end; ++begin) {
-	e.configuration.from.push_back(*begin);
+      for(auto i=0; i<config.from_size(); ++i) {
+	e.configuration.from.servers.push_back({ config.from_id(i), config.from_address(i) });
+      }
+      for(auto i=0; i<config.to_size(); ++i) {
+	e.configuration.to.servers.push_back({ config.to_id(i), config.to_address(i) });
       }
       entries_.push_back(std::move(e));
       return std::make_pair(start_added, start_added+1);

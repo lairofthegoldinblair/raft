@@ -967,7 +967,7 @@ void RaftTestFixtureBase::stage_new_server(uint64_t term, uint64_t commit_index)
   // Assumes that leader is 0
   uint64_t leader_id=0;
   // Assumes that everything in leader log is committed
-  test_raft_type::set_configuration_request_type req;
+  test_raft_type::messages_type::set_configuration_request_type req;
   req.old_id = 0;
   req.new_configuration = six_servers;
   s->on_set_configuration(c, req);

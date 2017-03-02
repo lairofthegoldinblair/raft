@@ -40,6 +40,31 @@ namespace raft {
   };
 
   template<typename simple_configuration_description_type>
+  class set_configuration_request_traits
+  {
+  public:
+    typedef set_configuration_request<simple_configuration_description_type> value_type;
+    typedef const value_type& const_arg_type;
+    
+    static uint64_t old_id(const_arg_type msg)
+    {
+      return msg.old_id;
+    }
+    static std::size_t new_configuration_size(const_arg_type msg)
+    {
+      return msg.new_configuration.servers.size();
+    }
+    static uint64_t new_configuration_id(const_arg_type msg, std::size_t i)
+    {
+      return msg.new_configuration.servers[i].id;
+    }
+    static const char * new_configuration_address(const_arg_type msg, std::size_t i)
+    {
+      return msg.new_configuration.servers[i].address.c_str();
+    }
+  };
+
+  template<typename simple_configuration_description_type>
   class set_configuration_response
   {
   public:
@@ -267,6 +292,14 @@ namespace raft {
     {
       return ae.entry.size();
     }
+    static uint64_t entry_term(const_arg_type ae, std::size_t i)
+    {
+      return ae.entry[i].term;
+    }
+    static bool entry_is_configuration(const_arg_type ae, std::size_t i)
+    {
+      return _LogEntry::CONFIGURATION == ae.entry[i].type;
+    }
     static iterator_type begin_entries(const_arg_type ae)
     {
       return ae.entry.begin();
@@ -367,9 +400,7 @@ namespace raft {
   public:
     typedef append_checkpoint_chunk<checkpoint_data_store_type> value_type;
     typedef const value_type & const_arg_type;
-    typedef value_type pinned_type;
-    typedef typename std::vector<server_description>::const_iterator iterator_type;
-    
+    typedef value_type pinned_type;    
     
     static uint64_t recipient_id(const_arg_type ae)
     {
@@ -404,25 +435,25 @@ namespace raft {
     {
       return ae.last_checkpoint_configuration.description.from.servers.size();
     }
-    static iterator_type checkpoint_configuration_from_begin(const_arg_type ae)
+    static uint64_t checkpoint_configuration_from_id(const_arg_type ae, std::size_t i)
     {
-      return ae.last_checkpoint_configuration.description.from.servers.begin();
+      return ae.last_checkpoint_configuration.description.from.servers[i].id;
     }
-    static iterator_type checkpoint_configuration_from_end(const_arg_type ae)
+    static const char * checkpoint_configuration_from_address(const_arg_type ae, std::size_t i)
     {
-      return ae.last_checkpoint_configuration.description.from.servers.end();
+      return ae.last_checkpoint_configuration.description.from.servers[i].address.c_str();
     }
     static uint64_t checkpoint_configuration_to_size(const_arg_type ae)
     {
       return ae.last_checkpoint_configuration.description.to.servers.size();
     }
-    static iterator_type checkpoint_configuration_to_begin(const_arg_type ae)
+    static uint64_t checkpoint_configuration_to_id(const_arg_type ae, std::size_t i)
     {
-      return ae.last_checkpoint_configuration.description.to.servers.begin();
+      return ae.last_checkpoint_configuration.description.to.servers[i].id;
     }
-    static iterator_type checkpoint_configuration_to_end(const_arg_type ae)
+    static const char * checkpoint_configuration_to_address(const_arg_type ae, std::size_t i)
     {
-      return ae.last_checkpoint_configuration.description.to.servers.end();
+      return ae.last_checkpoint_configuration.description.to.servers[i].address.c_str();
     }
     static uint64_t checkpoint_begin(const_arg_type ae)
     {
@@ -500,6 +531,7 @@ namespace raft {
     typedef append_entry_response_traits append_entry_response_traits_type;
     typedef append_entry_response_traits::value_type append_entry_response_type;
     typedef set_configuration_request<configuration_description::simple_type> set_configuration_request_type;
+    typedef set_configuration_request_traits<configuration_description::simple_type> set_configuration_request_traits_type;
     typedef set_configuration_response<configuration_description::simple_type> set_configuration_response_type;
 
     typedef configuration_description configuration_description_type;
@@ -533,8 +565,34 @@ namespace raft {
       responses.push_front(resp);
     }
 
+    void on_client_response(client_result result,
+			    uint64_t index,
+			    std::size_t leader_id)
+    {
+      client_response resp;
+      resp.result = result;
+      resp.index = index;
+      resp.leader_id = leader_id;      
+      responses.push_front(resp);
+    }
+
     void on_configuration_response(const configuration_response & resp)
     {
+      configuration_responses.push_front(resp);
+    }
+    
+    void on_configuration_response(client_result result)
+    {
+      configuration_response resp;
+      resp.result = result;
+      configuration_responses.push_front(resp);
+    }
+    
+    void on_configuration_response(client_result result, const simple_configuration_description_type & bad_servers)
+    {
+      configuration_response resp;
+      resp.result = result;
+      resp.bad_servers = bad_servers;
       configuration_responses.push_front(resp);
     }
     

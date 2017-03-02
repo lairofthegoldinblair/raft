@@ -6,7 +6,6 @@
 
 #include "boost/logic/tribool.hpp"
 
-#include "messages.hh"
 #include "slice.hh"
 
 namespace raft {
@@ -21,7 +20,6 @@ namespace raft {
     typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
     typedef typename checkpoint_data_store_type::block_type block_type;
     typedef typename checkpoint_data_store_type::configuration_type configuration_type;
-    typedef append_checkpoint_chunk<checkpoint_data_store_type> append_checkpoint_chunk_type;
     
     // One past last byte to written in checkpoint file.
     uint64_t checkpoint_next_byte_;
@@ -51,30 +49,6 @@ namespace raft {
       awaiting_ack_(false)
     {
     }
-
-    // bool prepare_checkpoint_chunk(append_checkpoint_chunk_type & msg)
-    // {
-    //   if (awaiting_ack_) {
-    // 	return false;
-    //   }
-
-    //   if (data_->is_final(last_block_sent_)) {
-    // 	return false;
-    //   }
-
-    //   last_block_sent_ = data_->block_at_offset(checkpoint_next_byte_);
-
-    //   msg.last_checkpoint_index = checkpoint_last_log_entry_index_;
-    //   msg.last_checkpoint_term = checkpoint_last_log_entry_term_;
-    //   msg.last_checkpoint_configuration = checkpoint_last_configuration_;
-    //   msg.checkpoint_begin = data_->block_begin(last_block_sent_);
-    //   msg.checkpoint_end = data_->block_end(last_block_sent_);
-    //   msg.checkpoint_done = data_->is_final(last_block_sent_);
-    //   msg.data.assign(last_block_sent_.block_data_,
-    // 		      last_block_sent_.block_data_+last_block_sent_.block_length_);
-    //   awaiting_ack_ = true;
-    //   return true;
-    // }
   };
 
   // A peer encapsulates what a server knows about other servers in the cluster

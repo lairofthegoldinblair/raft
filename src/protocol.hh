@@ -6,7 +6,6 @@
 #include "configuration.hh"
 #include "checkpoint.hh"
 #include "log.hh"
-#include "messages.hh"
 #include "peer.hh"
 #include "slice.hh"
 
@@ -59,7 +58,7 @@ namespace raft {
     // continuations depending on checkpoint sync events
     std::vector<append_checkpoint_chunk_response_continuation > checkpoint_chunk_response_sync_continuations_;
     // Object to manage receiving a new checkpoint from a leader and writing it to a reliable
-    // location
+    // location (the data_store)
     std::shared_ptr<in_progress_checkpoint<checkpoint_data_store_type> > current_checkpoint_;
     // Checkpoints live here
     checkpoint_data_store_type & store_;
@@ -96,7 +95,7 @@ namespace raft {
     }
   };
 
-  // A server encapsulates what a participant in the consensus protocol knows about itself
+  // A protocol instance encapsulates what a participant in the Raft consensus protocol knows about itself
   template<typename _Communicator, typename _Messages>
   class protocol
   {
@@ -107,9 +106,12 @@ namespace raft {
     // typedef test_communicator<append_checkpoint_chunk_type, append_entry_type> communicator_type;
 
     // Config description types
-    typedef typename messages_type::configuration_description_type configuration_description_type;
-    typedef typename messages_type::configuration_description_server_type configuration_description_server_type;
-    typedef typename messages_type::simple_configuration_description_type simple_configuration_description_type;
+    // typedef typename messages_type::configuration_description_type configuration_description_type;
+    // typedef typename messages_type::configuration_description_server_type configuration_description_server_type;
+    // typedef typename messages_type::simple_configuration_description_type simple_configuration_description_type;
+    typedef configuration_description configuration_description_type;
+    typedef server_description configuration_description_server_type;
+    typedef simple_configuration_description simple_configuration_description_type;
     
     // Checkpoint types
     typedef checkpoint_data_store<configuration_description::checkpoint_type> checkpoint_data_store_type;
@@ -117,7 +119,8 @@ namespace raft {
     typedef checkpoint_data_store_type::header_type checkpoint_header_type;
     typedef peer_checkpoint<checkpoint_data_store_type> peer_checkpoint_type;
     typedef server_checkpoint<checkpoint_data_store_type> server_checkpoint_type;
-    // A peer with this checkpoint data store
+
+    // A peer with this checkpoint data store and whatever the configuration manager brings to the table
     struct peer_metafunction
     {
       template <typename configuration_change_type>
@@ -134,7 +137,6 @@ namespace raft {
 
     // Message types
     typedef typename messages_type::client_request_type client_request_type;
-    typedef typename messages_type::client_response_type client_response_type;
     typedef typename messages_type::request_vote_traits_type request_vote_traits_type;
     typedef typename messages_type::request_vote_traits_type::const_arg_type request_vote_arg_type;
     typedef typename messages_type::vote_response_traits_type vote_response_traits_type;
@@ -149,8 +151,8 @@ namespace raft {
     typedef typename messages_type::append_entry_traits_type::const_arg_type append_entry_arg_type;
     typedef typename messages_type::append_entry_response_traits_type append_entry_response_traits_type;
     typedef typename messages_type::append_entry_response_traits_type::const_arg_type append_entry_response_arg_type;
-    typedef typename messages_type::set_configuration_request_type set_configuration_request_type;
-    typedef typename messages_type::set_configuration_response_type set_configuration_response_type;
+    typedef typename messages_type::set_configuration_request_traits_type set_configuration_request_traits_type;
+    typedef typename messages_type::set_configuration_request_traits_type::const_arg_type set_configuration_request_arg_type;
 
     // Configuration types
     typedef configuration_manager<peer_metafunction, configuration_description_type> configuration_manager_type;
@@ -424,6 +426,62 @@ namespace raft {
 	  // msg.leader_commit_index = std::min(last_committed_index_, previous_log_index+log_entries_sent);
 	
 	  // comm_.send(p.peer_id, p.address, msg);
+
+	  class log_entry_view
+	  {
+	  public:
+	    const log_entry_type & e_;
+
+	    log_entry_view(const log_entry_type & e)
+	      :
+	      e_(e)
+	    {
+	    }
+	    bool is_command() const
+	    {
+	      return e_.type == log_entry_type::COMMAND;
+	    }
+	    bool is_configuration() const
+	    {
+	      return e_.type == log_entry_type::CONFIGURATION;
+	    }
+	    bool is_noop() const
+	    {
+	      return e_.type == log_entry_type::NOOP;
+	    }
+	    uint64_t term() const
+	    {
+	      return e_.term;
+	    }
+	    const std::string& data() const
+	    {
+	      return e_.data;
+	    }
+	    std::size_t from_size() const
+	    {
+	      return e_.configuration.from.servers.size();
+	    }
+	    std::size_t from_id(std::size_t i) const
+	    {
+	      return e_.configuration.from.servers[i].id;
+	    }
+	    const std::string & from_address(std::size_t i) const
+	    {
+	      return e_.configuration.from.servers[i].address;
+	    }
+	    std::size_t to_size() const
+	    {
+	      return e_.configuration.to.servers.size();
+	    }
+	    std::size_t to_id(std::size_t i) const
+	    {
+	      return e_.configuration.to.servers[i].id;
+	    }
+	    const std::string & to_address(std::size_t i) const
+	    {
+	      return e_.configuration.to.servers[i].address;
+	    }
+	  };
 	  uint64_t log_entries_sent = (uint64_t) (last_log_entry_index() - p.next_index_);
 	  comm_.append_entry(p.peer_id, p.address, i, current_term_, my_cluster_id(), previous_log_index, previous_log_term,
 			     std::min(last_committed_index_, previous_log_index+log_entries_sent),
@@ -465,7 +523,7 @@ namespace raft {
       // TODO: Should we arrange for abstractions that permit use of sendfile for checkpoint data?  Manual chunking
       // involves extra work and shouldn't really be necessary (though the manual chunking does send heartbeats).
       if (!p.checkpoint_) {
-	const auto & config(configuration_.get_checkpoint());
+	const configuration_checkpoint_type & config(configuration_.get_checkpoint());
 	BOOST_ASSERT(config.is_valid());
 	p.checkpoint_.reset(new peer_checkpoint_type(checkpoint_.last_checkpoint_index_, checkpoint_.last_checkpoint_term_,
 						     config, checkpoint_.last_checkpoint()));
@@ -563,18 +621,13 @@ namespace raft {
 	}
 
 	if (configuration().is_transitional()) {
-	  // Log the new configuration and get rid of old servers
-	  std::vector<log_entry_type> v(1);
-	  v.back().type = log_entry_type::CONFIGURATION;
-	  v.back().configuration.from = configuration().description().to;
-	  v.back().term = current_term_;
-	  auto indices = log_.append(v.begin(), v.end());
-	  // auto indices = log_.append_configuration(configuration().description().to.begin(), configuration().description().to.end());
+	  // Log the new stable configuration and get rid of old servers
+	  auto indices = log_.append_configuration(current_term_, configuration().get_stable_configuration());
 	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	    " committed transitional configuration at index " << configuration().configuration_id() << 
 	    ".  Logging new stable configuration at index " << indices.first;
-	  // Should move from TRANSITIONAL to STABLE
-	  configuration_.add_logged_description(indices.first, v.back().configuration);
+	  // Should will move from TRANSITIONAL to STABLE
+	  configuration_.add_stable_description(indices.first);
 	  BOOST_ASSERT(configuration().is_stable());
 	}
       }
@@ -586,17 +639,13 @@ namespace raft {
       auto e = client_response_continuations_.upper_bound(last_committed_index_);
       for(; it != e; ++it) {
 	BOOST_ASSERT(it->second.index <= last_committed_index_);
-	client_response_type resp;
-	resp.leader_id = leader_id_;
-	resp.index = it->second.index;
 	// If I lost leadership I can't guarantee that I committed.
 	// TODO: Come up with some interesting test case here (e.g. we
 	// get a quorum to ack the entry but I've lost leadership by then;
 	// is it really not successful???).  Actually the answer is that the
 	// commit of a log entry occurs when a majority of peers have written
 	// the log entry to disk.  
-	resp.result = it->second.term == current_term_ ? SUCCESS : NOT_LEADER;
-	it->second.client->on_client_response(resp);
+	it->second.client->on_client_response(it->second.term == current_term_ ? SUCCESS : NOT_LEADER, it->second.index, leader_id_);
       }
       client_response_continuations_.erase(client_response_continuations_.begin(), e);
     }
@@ -608,9 +657,7 @@ namespace raft {
       if (configuration().is_transitional_initiator() && last_committed_index_ > configuration().configuration_id()) {
 	// Respond to the client that we've succeeded
 	BOOST_ASSERT(config_change_client_ != nullptr);
-	set_configuration_response_type resp;
-	resp.result = SUCCESS;
-	config_change_client_->on_configuration_response(resp);
+	config_change_client_->on_configuration_response(SUCCESS);
 	config_change_client_ = nullptr;
       }
     }
@@ -633,7 +680,7 @@ namespace raft {
       // May be the first append_entry for this term; that's when we learn
       // who the leader actually is.
       if (leader_id_ == INVALID_PEER_ID) {
-	leader_id_ = req.leader_id;
+	leader_id_ = ae::leader_id(req);
       } else {
 	BOOST_ASSERT(leader_id_ == ae::leader_id(req));
       }
@@ -713,9 +760,7 @@ namespace raft {
 	  // FOLLOWER that go a transitional config that didn't get committed?
 	  if(configuration().is_transitional() && configuration().configuration_id() >= entry_index) {
 	    BOOST_ASSERT(config_change_client_ != nullptr);
-	    set_configuration_response_type resp;
-	    resp.result = FAIL;
-	    config_change_client_->on_configuration_response(resp);
+	    config_change_client_->on_configuration_response(FAIL);
 	    config_change_client_ = nullptr;
 	  }
 	  configuration_.truncate_suffix(entry_index);
@@ -757,22 +802,6 @@ namespace raft {
 	    configuration_.add_logged_description(idx, it->configuration);
 	  }
 	}
-	// TODO: Delete this
-	// std::vector<log_entry_type> to_append;
-	// for(; it != entry_end; ++it, ++entry_end_index) {
-	//   to_append.push_back(*it);
-	// }
-	// std::pair<log_index_type, log_index_type> range = log_.append(to_append);
-	// BOOST_ASSERT(range.first == entry_index);
-
-	// // Make sure any configuration entries added are reflected in the configuration manager.
-	// for(std::size_t i=0; i<to_append.size(); ++i) {
-	//   if (to_append[i].type == log_entry_type::CONFIGURATION) {
-	//     BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	//       " received new configuration at index " << range.first + i;
-	//     configuration_.add_logged_description(range.first + i, to_append[i].configuration);
-	//   }
-	// }
       } else {
 	// Nothing to append.  We're not returning here because we want to tell leader that we've got all
 	// the entries but we may need to wait for a log sync before doing so (e.g. an overly aggressive leader
@@ -834,9 +863,12 @@ namespace raft {
 	header.last_log_entry_index = acc::last_checkpoint_index(req);
 	header.last_log_entry_term = acc::last_checkpoint_term(req);
 	header.configuration.index = acc::checkpoint_configuration_index(req);
-	header.configuration.description.from.servers.assign(acc::checkpoint_configuration_from_begin(req), acc::checkpoint_configuration_from_begin(req));
-	header.configuration.description.to.servers.assign(acc::checkpoint_configuration_to_begin(req), acc::checkpoint_configuration_to_begin(req));
-	// header.configuration = req.last_checkpoint_configuration;
+	for(auto i=0; i<acc::checkpoint_configuration_from_size(req); ++i) {
+	  header.configuration.description.from.servers.push_back( { acc::checkpoint_configuration_from_id(req, i), acc::checkpoint_configuration_from_address(req, i) } );
+	}
+	for(auto i=0; i<acc::checkpoint_configuration_to_size(req); ++i) {
+	  header.configuration.description.to.servers.push_back( { acc::checkpoint_configuration_to_id(req, i), acc::checkpoint_configuration_to_address(req, i) } );
+	}
 	checkpoint_.current_checkpoint_.reset(new in_progress_checkpoint<checkpoint_data_store_type>(checkpoint_.store_, header));
       }
 
@@ -1105,11 +1137,6 @@ namespace raft {
       // (see Section 3.6.2 from Ongaro's thesis).
       // Another rationale for getting commit index advanced has to do with the protocol for doing non-stale reads (that uses
       // RaftConsensus::getLastCommitIndex in logcabin); I need to understand this protocol.
-      // TODO: Delete this
-      // std::vector<log_entry_type> v(1);
-      // v.back().type = log_entry_type::NOOP;
-      // v.back().term = current_term_;
-      // log_.append(v.begin(), v.end());
       log_.append_noop(current_term_);
       send_append_entries(clock_now);
     
@@ -1143,7 +1170,7 @@ namespace raft {
       // TODO: Read the log if non-empty and apply configuration entries as necessary
       // TODO: This should be async.
       for(auto idx = log_.start_index(); idx < log_.last_index(); ++idx) {
-	auto & e(log_.entry(idx));
+	const log_entry_type & e(log_.entry(idx));
 	if (log_entry_type::CONFIGURATION == e.type) {
 	  configuration_.add_logged_description(idx, e.configuration);
 	}
@@ -1192,14 +1219,13 @@ namespace raft {
 	if (configuration().is_staging()) {
 	  if (!configuration().staging_servers_caught_up()) {
 	    BOOST_ASSERT(config_change_client_ != nullptr);
-	    set_configuration_response_type resp;
-	    if (!configuration().staging_servers_making_progress(resp.bad_servers)) {
+	    simple_configuration_description_type bad_servers;
+	    if (!configuration().staging_servers_making_progress(bad_servers)) {
 	      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 		" some server in new configuration not making progress so rejecting configuration.";
 	      configuration().reset_staging_servers();
-	      BOOST_ASSERT(!resp.bad_servers.servers.empty());
-	      resp.result = FAIL;
-	      config_change_client_->on_configuration_response(resp);
+	      BOOST_ASSERT(!bad_servers.servers.empty());
+	      config_change_client_->on_configuration_response(FAIL, bad_servers);
 	      config_change_client_ = nullptr;
 	    } else {
 	      BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
@@ -1207,14 +1233,10 @@ namespace raft {
 	    }
 	  } else {
 	    // Append a transitional configuration entry to the log
-	    // and wait for it to commit.
-	    std::vector<log_entry_type> v(1);
-	    v.back().type = log_entry_type::CONFIGURATION;
-	    configuration().get_transitional_configuration(v.back().configuration);
-	    v.back().term = current_term_;
-	    auto indices = log_.append(v.begin(), v.end());
-	    // This will update the value of configuration()
-	    configuration_.add_logged_description(indices.first, v.back().configuration);
+	    // and wait for it to commit before moving to stable.
+	    auto indices = log_.append_configuration(current_term_, configuration().get_transitional_configuration());
+	    // This will update the value of configuration() with the transitional config we just logged
+	    configuration_.add_transitional_description(indices.first);
 	    BOOST_ASSERT(configuration().is_transitional());
 	    BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	      " servers in new configuration caught up. Logging transitional entry at index " << indices.first;
@@ -1234,11 +1256,7 @@ namespace raft {
       case CANDIDATE:
 	{
 	  // Not leader don't bother.
-	  client_response_type resp;
-	  resp.result = NOT_LEADER;
-	  resp.index = 0;
-	  resp.leader_id = leader_id_;
-	  client.on_client_response(resp);
+	  client.on_client_response(NOT_LEADER, 0, leader_id_);
 	  return;
 	}
       case LEADER:
@@ -1273,32 +1291,33 @@ namespace raft {
       }
     }
 
-    void on_set_configuration(client_type & client, const set_configuration_request_type & req)
+    void on_set_configuration(client_type & client, set_configuration_request_arg_type req)
     {
+      typedef set_configuration_request_traits_type scr;
       if (LEADER != state_) {
-	set_configuration_response_type resp;
-	resp.result = NOT_LEADER;
-	client.on_configuration_response(resp);
+	client.on_configuration_response(NOT_LEADER);
 	return;
       }
 
-      if (configuration().configuration_id() != req.old_id) {
-	set_configuration_response_type resp;
-	resp.result = FAIL;
-	client.on_configuration_response(resp);
+      if (configuration().configuration_id() != scr::old_id(req)) {
+	client.on_configuration_response(FAIL);
 	return;
       }
 
       if (!configuration().is_stable()) {
-	set_configuration_response_type resp;
-	resp.result = FAIL;
-	client.on_configuration_response(resp);
+	client.on_configuration_response(FAIL);
 	return;
       }
 
       BOOST_ASSERT(config_change_client_ == nullptr);
       config_change_client_ = &client;
-      configuration().set_staging_configuration(req.new_configuration);
+      // Keep the configuration object simple and just turn the request into
+      // what it wants internally.
+      simple_configuration_description_type new_configuration;
+      for(auto i=0; i<scr::new_configuration_size(req); ++i) {
+	new_configuration.servers.push_back( { scr::new_configuration_id(req, i), scr::new_configuration_address(req, i) } );
+      }
+      configuration().set_staging_configuration(new_configuration);
       BOOST_ASSERT(!configuration().is_stable());
     }
 

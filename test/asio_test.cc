@@ -97,6 +97,142 @@ BOOST_AUTO_TEST_CASE(RaftAsioSerializationTest)
 }
 
 #include "flatbuffers/raft_generated.h"
+#include "flatbuffers/raft_flatbuffer_messages.hh"
+
+class flatbuffer_test_communicator
+{
+public:
+  typedef size_t endpoint;
+
+  void send(endpoint ep, const std::string& address, raft::fbs::flatbuffer_builder_adapter && msg)
+  {
+    q.push_front(std::move(msg));
+  }
+  
+  void vote_request(endpoint ep, const std::string & address,
+		    uint64_t recipient_id,
+		    uint64_t term_number,
+		    uint64_t candidate_id,
+		    uint64_t last_log_index,
+		    uint64_t last_log_term)
+  {
+  }
+
+  template<typename EntryProvider>
+  void append_entry(endpoint ep, const std::string& address,
+	    uint64_t recipient_id,
+	    uint64_t term_number,
+	    uint64_t leader_id,
+	    uint64_t previous_log_index,
+	    uint64_t previous_log_term,
+	    uint64_t leader_commit_index,
+	    uint64_t num_entries,
+	    EntryProvider entries)
+  {
+    raft::fbs::append_entry_sender<flatbuffer_test_communicator> sender(*this, ep, address);
+    sender.send(recipient_id,
+		term_number,
+		leader_id,
+		previous_log_index,
+		previous_log_term,
+		leader_commit_index,
+		num_entries,
+		entries);
+  }
+	
+  void append_entry_response(endpoint ep, const std::string& address,
+			     uint64_t recipient_id,
+			     uint64_t term_number,
+			     uint64_t request_term_number,
+			     uint64_t begin_index,
+			     uint64_t last_index,
+			     bool success)
+  {
+  }
+
+  void vote_response(endpoint ep, const std::string& address,
+		     uint64_t peer_id,
+		     uint64_t term_number,
+		     uint64_t request_term_number,
+		     bool granted)
+  {
+  }
+
+  void append_checkpoint_chunk(endpoint ep, const std::string& address,
+			       uint64_t recipient_id,
+			       uint64_t term_number,
+			       uint64_t leader_id,
+			       uint64_t last_checkpoint_index,
+			       uint64_t last_checkpoint_term,
+			       raft::configuration_checkpoint<raft::configuration_description> last_checkpoint_configuration,
+			       uint64_t checkpoint_begin,
+			       uint64_t checkpoint_end,
+			       bool checkpoint_done,
+			       raft::slice data)
+  {
+  }		       
+  
+  void append_checkpoint_chunk_response(endpoint ep, const std::string& address,
+					uint64_t recipient_id,
+					uint64_t term_number,
+					uint64_t request_term_number,
+					uint64_t bytes_stored)
+  {
+  }
+
+  std::deque<raft::fbs::flatbuffer_builder_adapter> q;
+};
+
+struct flatbuffer_communicator_metafunction
+{
+  template <typename _Messages>
+  struct apply
+  {
+    typedef flatbuffer_test_communicator type;
+  };
+};
+
+typedef raft::protocol<flatbuffer_communicator_metafunction, raft::fbs::messages> test_raft_type;
+
+// BOOST_AUTO_TEST_CASE(RaftFlatBufferConstructProtocolTest)
+// {
+//   test_raft_type::communicator_type comm;
+//   test_raft_type::client_type c;
+//   test_raft_type::log_type l;
+//   test_raft_type::checkpoint_data_store_type store;
+
+//   raft::configuration_description five_servers;
+//   five_servers.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"},  {4, "192.168.1.5"}};
+//   test_raft_type::configuration_manager_type cm(0);
+  
+//   l.append_configuration(0, raft::configuration_description_view(five_servers));
+//   l.update_header(0, test_raft_type::INVALID_PEER_ID);
+//   test_raft_type proto(comm, l, store, cm);
+
+//   flatbuffers::FlatBufferBuilder fbb;
+//   raft::fbs::request_voteBuilder rvb(fbb);
+//   uint64_t term=1;
+//   rvb.add_recipient_id(0);
+//   rvb.add_term_number(term);
+//   rvb.add_candidate_id(1);
+//   rvb.add_last_log_index(1);
+//   rvb.add_last_log_term(0);
+//   auto rv = rvb.Finish();
+//   auto m = raft::fbs::Createraft_message(fbb, raft::fbs::any_message_request_vote, rv.Union());
+//   fbb.Finish(m);
+
+//   proto.on_request_vote(raft::fbs::Getraft_message(fbb.GetBufferPointer()));
+//   BOOST_CHECK(proto.log_header_sync_required());
+//   BOOST_CHECK_EQUAL(term, proto.current_term());
+//   BOOST_CHECK_EQUAL(test_raft_type::FOLLOWER, proto.get_state());
+//   BOOST_CHECK_EQUAL(0U, comm.q.size());
+//   proto.on_log_header_sync();
+//   BOOST_CHECK(!proto.log_header_sync_required());
+//   BOOST_CHECK_EQUAL(term, proto.current_term());
+//   BOOST_CHECK_EQUAL(test_raft_type::FOLLOWER, proto.get_state());
+//   BOOST_CHECK_EQUAL(1U, comm.q.size());
+// }
+
 BOOST_AUTO_TEST_CASE(RaftFlatBufferRequestVoteTest)
 {
   flatbuffers::FlatBufferBuilder fbb;
@@ -114,6 +250,13 @@ BOOST_AUTO_TEST_CASE(RaftFlatBufferRequestVoteTest)
   BOOST_CHECK_EQUAL(raft::fbs::any_message_request_vote, msg->message_type());
   auto rv_msg = static_cast<const raft::fbs::request_vote * >(msg->message());
   BOOST_CHECK_EQUAL(0, rv_msg->recipient_id());
+
+  typedef raft::fbs::request_vote_traits request_vote_traits;
+  BOOST_CHECK_EQUAL(0U, request_vote_traits::recipient_id(msg));
+  BOOST_CHECK_EQUAL(3U, request_vote_traits::term_number(msg));
+  BOOST_CHECK_EQUAL(1U, request_vote_traits::candidate_id(msg));
+  BOOST_CHECK_EQUAL(3U, request_vote_traits::last_log_index(msg));
+  BOOST_CHECK_EQUAL(2U, request_vote_traits::last_log_term(msg));
 }
 
 BOOST_AUTO_TEST_CASE(RaftFlatBufferAppendEntryTest)
@@ -169,69 +312,12 @@ BOOST_AUTO_TEST_CASE(RaftFlatBufferAppendEntryTest)
   BOOST_CHECK_EQUAL(0, ::memcmp(lit, ae_msg->entry()->Get(0)->data()->data(), ae_msg->entry()->Get(0)->data()->size()));
   BOOST_CHECK_EQUAL(raft::fbs::log_entry_type_CONFIGURATION, ae_msg->entry()->Get(1)->type());
   BOOST_CHECK_EQUAL(2833, ae_msg->entry()->Get(1)->term());
-  BOOST_CHECK_EQUAL(2833, ae_msg->entry()->Get(1)->term());
   BOOST_CHECK_EQUAL(2U, ae_msg->entry()->Get(1)->configuration()->from()->servers()->size());
   BOOST_CHECK_EQUAL(0, ae_msg->entry()->Get(1)->configuration()->from()->servers()->Get(0)->id());
   BOOST_CHECK_EQUAL(1, ae_msg->entry()->Get(1)->configuration()->from()->servers()->Get(1)->id());
 
-  class fbs_log_entry_adapter
-  {
-  private:
-    const raft::fbs::log_entry * entry_;
-  public:
-    explicit fbs_log_entry_adapter(const raft::fbs::log_entry * entry)
-      :
-      entry_(entry)
-    {
-    }
-    std::size_t from_servers_size() const
-    {
-      return entry_->configuration() != nullptr &&
-	entry_->configuration()->from() != nullptr &&
-	entry_->configuration()->from()->servers() != nullptr ?
-	entry_->configuration()->from()->servers()->size() :
-	0;
-    }      
-    uint64_t from_servers_id(std::size_t idx) const
-    {
-      return entry_->configuration()->from()->servers()->Get(idx)->id();
-    }      
-    const char * from_servers_address(std::size_t i) const
-    {
-      return entry_->configuration()->from()->servers()->Get(i)->address()->data();
-    }          
-    std::size_t to_servers_size() const
-    {
-      return entry_->configuration() != nullptr &&
-	entry_->configuration()->to() != nullptr &&
-	entry_->configuration()->to()->servers() != nullptr ?
-	entry_->configuration()->to()->servers()->size() :
-	0;
-    }      
-    uint64_t to_servers_id(std::size_t i) const
-    {
-      return entry_->configuration()->to()->servers()->Get(i)->id();
-    }      
-    const char * to_servers_address(std::size_t i) const
-    {
-      return entry_->configuration()->to()->servers()->Get(i)->address()->data();
-    }          
-  };
-  
-  class fbs_append_entry_adapter
-  {
-  private:
-    const raft::fbs::append_entry * msg_;    
-  public:
-    uint64_t recipient_id() const
-    {
-      return msg_->recipient_id();
-    }
-    fbs_log_entry_adapter entry(std::size_t idx) const
-    {
-      return fbs_log_entry_adapter(msg_->entry()->Get(idx));
-    }
-  };
+  typedef raft::fbs::append_entry_traits append_entry_traits;
+  BOOST_CHECK_EQUAL(10345U, append_entry_traits::recipient_id(msg));
 }
 
 BOOST_AUTO_TEST_CASE(RaftAsioTest)

@@ -204,6 +204,135 @@ namespace raft {
     std::vector<std::shared_ptr<_Peer> > peers_;
   };
 
+  class configuration_description_view
+  {
+  private:
+    const configuration_description & description_;
+  public:
+    configuration_description_view(const configuration_description & desc)
+      :
+      description_(desc)
+    {
+    }
+
+    std::size_t from_size() const
+    {
+      return description_.from.servers.size();
+    }
+
+    std::size_t from_id(std::size_t i) const
+    {
+      return description_.from.servers[i].id;
+    }
+
+    const std::string & from_address(std::size_t i) const
+    {
+      return description_.from.servers[i].address;
+    }
+
+    std::size_t to_size() const
+    {
+      return description_.to.servers.size();
+    }
+
+    std::size_t to_id(std::size_t i) const
+    {
+      return description_.to.servers[i].id;
+    }
+
+    const std::string & to_address(std::size_t i) const
+    {
+      return description_.to.servers[i].address;
+    }
+  };
+  
+  template<typename configuration_type>
+  class transitional_configuration_view
+  {
+  private:
+    const configuration_type & configuration_;
+  public:
+    transitional_configuration_view(const configuration_type & config)
+      :
+      configuration_(config)
+    {
+    }
+
+    std::size_t from_size() const
+    {
+      return configuration_.description_.from.servers.size();
+    }
+
+    std::size_t from_id(std::size_t i) const
+    {
+      return configuration_.description_.from.servers[i].id;
+    }
+
+    const std::string & from_address(std::size_t i) const
+    {
+      return configuration_.description_.from.servers[i].address;
+    }
+
+    std::size_t to_size() const
+    {
+      return configuration_.new_peers_.peers_.size();
+    }
+
+    std::size_t to_id(std::size_t i) const
+    {
+      return configuration_.new_peers_.peers_[i]->peer_id;
+    }
+
+    const std::string & to_address(std::size_t i) const
+    {
+      return configuration_.new_peers_.peers_[i]->address;
+    }
+  };
+  
+  template<typename configuration_type>
+  class stable_configuration_view
+  {
+  private:
+    const configuration_type & configuration_;
+  public:
+    stable_configuration_view(const configuration_type & config)
+      :
+      configuration_(config)
+    {
+    }
+
+    std::size_t from_size() const
+    {
+      return configuration_.description_.to.servers.size();
+    }
+
+    std::size_t from_id(std::size_t i) const
+    {
+      return configuration_.description_.to.servers[i].id;
+    }
+
+    const std::string & from_address(std::size_t i) const
+    {
+      return configuration_.description_.to.servers[i].address;
+    }
+
+    std::size_t to_size() const
+    {
+      return 0;
+    }
+
+    std::size_t to_id(std::size_t i) const
+    {
+      return 0;
+    }
+
+    const std::string & to_address(std::size_t i) const
+    {
+      static std::string empty;
+      return empty;
+    }
+  };
+  
   // Implements Ongaro's Joint Consensus configuration algorithm.  See Section 4.3 of Ongaro's thesis and
   // the "In search of understandable consensus algorithm" paper.
   template <typename _Peer, typename _Description>
@@ -226,12 +355,16 @@ namespace raft {
     typedef boost::filter_iterator<is_not_null, typename std::vector<std::shared_ptr<_Peer> >::iterator> peer_filter_iterator;
 
   public:
+    typedef transitional_configuration_view<configuration<_Peer, _Description> > transitional_configuration_type;
+    typedef stable_configuration_view<configuration<_Peer, _Description> > stable_configuration_type;
     typedef typename configuration_server_type<_Description>::type server_description_type;
     typedef typename configuration_simple_type<_Description>::type simple_configuration_description_type;
     typedef _Peer peer_type;
     typedef simple_configuration<peer_type> simple_description_type;
     typedef boost::transform_iterator<deref, peer_filter_iterator> peer_iterator;
 
+    friend transitional_configuration_type;
+    friend stable_configuration_type;
   private:
     // The cluster = all known peers which may not be in a configuration yet
     std::vector<std::shared_ptr<_Peer> > cluster_;
@@ -467,6 +600,21 @@ namespace raft {
       }
     }
     
+    transitional_configuration_type get_transitional_configuration() const
+    {
+      return transitional_configuration_type(*this);
+    }
+    
+    void get_stable_configuration(_Description & desc)
+    {
+      desc.from = description_.to;
+    }
+    
+    stable_configuration_type get_stable_configuration() const
+    {
+      return stable_configuration_type(*this);
+    }
+    
     void reset()
     {
       state_ = EMPTY;
@@ -603,6 +751,20 @@ namespace raft {
     {
       logged_descriptions_[log_index] = description;
       on_update();
+    }
+
+    void add_transitional_description(uint64_t log_index)
+    {
+      description_type description;
+      configuration_.get_transitional_configuration(description);
+      add_logged_description(log_index, description);
+    }
+
+    void add_stable_description(uint64_t log_index)
+    {
+      description_type description;
+      configuration_.get_stable_configuration(description);
+      add_logged_description(log_index, description);
     }
 
     void set_checkpoint(const checkpoint_type & ckpt)
