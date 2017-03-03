@@ -13,9 +13,9 @@ namespace raft {
     
     enum record_type { ZERO, FULL, FIRST, MIDDLE, LAST };
     static const int MAX_RECORD_TYPE = LAST;
-    static const int BLOCK_SIZE = 32768;
+    static const std::size_t BLOCK_SIZE = 32768;
     // checksum + length + type
-    static const int HEADER_SIZE = 4 + 2 + 1;
+    static const std::size_t HEADER_SIZE = 4 + 2 + 1;
 
     static const uint32_t MASK_DELTA = 0xa282ead8ul;    
     uint32_t mask_checksum(uint32_t crc)
@@ -51,7 +51,6 @@ namespace raft {
       scheduler_type & scheduler_;
       state state_;
       raft::slice slice_;
-      std::size_t offset_;
       bool eof_;
 
       const fragment_header * header() const
@@ -66,6 +65,8 @@ namespace raft {
 	  return result_code::ZERO;
 	case FULL:
 	  return result_code::FULL;
+	case FIRST:
+	  return result_code::FIRST;
 	case MIDDLE:
 	  return result_code::MIDDLE;
 	case LAST:
@@ -75,16 +76,42 @@ namespace raft {
 	}
       }
 
+      const char * header_string() const
+      {
+	switch(header()->type) {
+	case ZERO:
+	  return "ZERO";
+	case FULL:
+	  return "FULL";
+	case MIDDLE:
+	  return "MIDDLE";
+	case LAST:
+	  return "LAST";
+	default:
+	  return "BAD";
+	}
+      }
+
       std::pair<raft::slice, result_code> next_fragment()
       {
-	if (HEADER_SIZE + header()->length > raft::slice::buffer_size(slice_)) {
+	auto buffer_size = raft::slice::buffer_size(slice_);
+	BOOST_ASSERT(buffer_size >= HEADER_SIZE);
+	if (HEADER_SIZE + header()->length > buffer_size) {
+	  auto expected = (HEADER_SIZE + header()->length);
+	  const char * header_type_str = header_string();
 	  slice_.clear();
 	  if (!eof_) {
 	    // Don't give up just drop this block
 	    // Output something indicating that a block was in fact dropped.
+	    BOOST_LOG_TRIVIAL(debug) << "fragment_reader_operator::next_fragment incomplete non EOF block marked BAD: expected fragment "
+	      "of type " << header_type_str << " and size (including header) " <<
+	      expected << " available block size " << buffer_size;
 	    return std::make_pair(raft::slice(nullptr, 0), result_code::BAD);
 	  } else {
 	    // Stop processing but don't make this an error (could be unclean shutdown)
+	    BOOST_LOG_TRIVIAL(info) << "fragment_reader_operator::next_fragment incomplete EOF block: expected fragment "
+	      "of type " << header_type_str << " and size (including header) " <<
+	      expected << " available block size " << buffer_size;
 	    return std::make_pair(raft::slice(nullptr, 0), result_code::eEOF);
 	  }
 	}
@@ -94,6 +121,7 @@ namespace raft {
 	  return std::make_pair(raft::slice(nullptr, 0), result_code::BAD);
 	}
 
+	BOOST_ASSERT(header_type() != result_code::BAD);
 	auto tmp = std::make_pair(slice_.share(0, HEADER_SIZE + header()->length), header_type());
 	slice_.trim_prefix(HEADER_SIZE + header()->length);
 	return tmp;
@@ -106,7 +134,6 @@ namespace raft {
 	scheduler_(scheduler),
 	state_(BEGIN),
 	slice_(nullptr, 0),
-	offset_(0),
 	eof_(false)
       {
       }
@@ -114,7 +141,6 @@ namespace raft {
       void start()
       {
 	state_ = BEGIN;
-	offset_ = 0;
 	eof_ = false;
 	on_event();
       }
@@ -132,13 +158,17 @@ namespace raft {
 		return;
 	      case READ:
 		slice_ = scheduler_.read(*this);
-		offset_ += raft::slice::buffer_size(slice_);
 		if (raft::slice::buffer_size(slice_) != BLOCK_SIZE) {
+		  BOOST_LOG_TRIVIAL(debug) << "fragment_reader_operator::on_event received block of size "  <<
+		    raft::slice::buffer_size(slice_) << " setting EOF";
 		  eof_ = true;
 		}
 	      } else {
 		// Close up shop.  This is probably just an incomplete header written
-		// out by a crashing writer.
+		// out by a crashing writer (or it could just be an empty block indicating that the
+		// input block stream is done).
+		BOOST_LOG_TRIVIAL(info) << "fragment_reader_operator::on_event received block of size "  <<
+		  raft::slice::buffer_size(slice_) << " sending EOF";
 		slice_.clear();
 		scheduler_.request_write(*this);
 		state_ = WRITE_EOF;
@@ -199,10 +229,9 @@ namespace raft {
       {
 	switch(state_) {
 
-	case state::BEGIN:
-	    
-	  while(true) {
+	case state::BEGIN:	    
 
+	  while(true) {
 	    // Get next fragment 
 	    scheduler_.request_read(*this);
 	    state_ = state::READ;
@@ -216,21 +245,27 @@ namespace raft {
 	      state_ = state::WRITE_FULL;
 	      return;
 	    case state::WRITE_FULL:
+	      fragment_.first.trim_prefix(HEADER_SIZE);
 	      scheduler_.write(*this, std::move(fragment_.first));		
 	    } else if (result_code::MIDDLE == fragment_.second) {
 	      if (0 < record_slices_.size()) {
+		fragment_.first.trim_prefix(HEADER_SIZE);
 		record_slices_.push_back(std::move(fragment_.first));
 	      } else {
 		// TODO: Report corruption
+		BOOST_LOG_TRIVIAL(debug) << "record_reader_operator::on_event unexpected MIDDLE fragment";
 	      }
 	    } else if (result_code::FIRST == fragment_.second) {
 	      if (0 == record_slices_.size()) {
+		fragment_.first.trim_prefix(HEADER_SIZE);
 		record_slices_.push_back(std::move(fragment_.first));
 	      } else {
 		// TODO: Report corruption
+		BOOST_LOG_TRIVIAL(debug) << "record_reader_operator::on_event unexpected FIRST fragment";
 	      }
 	    } else if (result_code::LAST == fragment_.second) {
 	      if (0 < record_slices_.size()) {
+		fragment_.first.trim_prefix(HEADER_SIZE);
 		record_slices_.push_back(std::move(fragment_.first));
 		scheduler_.request_write(*this);
 		state_ = state::WRITE_LAST;
@@ -239,10 +274,12 @@ namespace raft {
 		scheduler_.write(*this, std::move(record_slices_));
 	      } else {
 		// TODO: Report corruption
+		BOOST_LOG_TRIVIAL(debug) << "record_reader_operator::on_event unexpected LAST fragment";
 	      }
 	    } else if (result_code::BAD == fragment_.second) {
 	      record_slices_.clear();
 	    } else if (result_code::eEOF == fragment_.second) {
+	      BOOST_LOG_TRIVIAL(debug) << "record_reader_operator::on_event write eof";
 	      record_slices_.clear();
 	      scheduler_.request_write(*this);
 	      state_ = state::WRITE_EOF;
@@ -253,6 +290,7 @@ namespace raft {
 	      return;
 	    } else {
 	      // TODO: Report error
+	      BOOST_LOG_TRIVIAL(error) << "record_reader_operator::on_event unexpected fragment type";
 	    }
 	  }
 	}
@@ -264,17 +302,39 @@ namespace raft {
       fragment_reader_operator<record_reader> fragment_op_;
       record_reader_operator<record_reader> record_op_;
 
-      // No buffering or read ahead configured right now
+      // These are the links/fifos that connect operators.
+      // No buffering or read ahead configured right now so these have capacity 1.
       raft::slice block_;
       typename fragment_reader_operator<record_reader>::output_type fragment_;	
       typename record_reader_operator<record_reader>::output_type record_;
 
-	
+      // Conceptually (I didn't properly model the data structures yet) each of the above
+      // fifos has an input port and output port attached to it (each port belonging to an operator).
+      // For each port (i.e. input or output of an operator) we maintain 2 booleans
+      // The first indicates whether an operator wants to access the port (requests_)
+      // The second indicates whether a port can be access (i.e. fifo corresponding to an output port is empty or 
+      // fifo corresponding to an input port is non-empty).
       boost::dynamic_bitset<> requests_;
       boost::dynamic_bitset<> buffers_;
 
       // HACK:
       enum { FRAGMENT_READ, FRAGMENT_WRITE, RECORD_READ, RECORD_WRITE, NUM_PORTS };
+
+      const char * port_name(std::size_t i)
+      {
+	switch(i) {
+	case 0:
+	  return "FRAGMENT_READ";
+	case 1:
+	  return "FRAGMENT_WRITE";
+	case 2:
+	  return "RECORD_READ";
+	case 3:
+	  return "RECORD_WRITE";
+	default:
+	  return "INVALID PORT";
+	}
+      }
 
     public:
       record_reader()
@@ -286,7 +346,8 @@ namespace raft {
 	requests_(NUM_PORTS),
 	buffers_(NUM_PORTS)
       {
-	// Writes are unblocked to start
+	// Writes are unblocked to start since the corresponding
+	// fifo is empty to begin
 	buffers_.set(FRAGMENT_WRITE);
 	buffers_.set(RECORD_WRITE);
 	// Now we can start operators
@@ -344,27 +405,49 @@ namespace raft {
 	// TODO: Invoke callback
       }
 
-      void run()
+      void write_block(raft::slice && rec)
       {
-	// Any work to do?  
-	while(true) {
+	block_ = std::move(rec);
+	buffers_.set(FRAGMENT_READ);
+      }
+
+      bool can_read_record() const
+      {
+	return !buffers_.test(RECORD_WRITE);
+      }
+
+      typename record_reader_operator<record_reader>::output_type read_record()
+      {
+	typename record_reader_operator<record_reader>::output_type tmp = std::move(record_);
+	buffers_.set(RECORD_WRITE);
+	return tmp;
+      }
+
+      void run_all_enabled()
+      {
+	// Run until all requests are blocked (it will
+	// require an external event to unblock something).
+	bool all_requests_blocked = false;
+	while(!all_requests_blocked) {
+	  all_requests_blocked = true;
 	  auto pos = requests_.find_first();
-	  if (pos == boost::dynamic_bitset<>::npos) {
-	    return;
-	  }
-	  if (buffers_.test(pos)) {
-	    requests_.reset(pos);
-	    buffers_.reset(pos);
-	    switch(pos) {
-	    case FRAGMENT_READ:
-	    case FRAGMENT_WRITE:
-	      fragment_op_.on_event();
-	      break;
-	    case RECORD_READ:
-	    case RECORD_WRITE:
-	      fragment_op_.on_event();
-	      break;
+	  while (pos != boost::dynamic_bitset<>::npos) {
+	    if (buffers_.test(pos)) {
+	      all_requests_blocked = false;
+	      requests_.reset(pos);
+	      buffers_.reset(pos);
+	      switch(pos) {
+	      case FRAGMENT_READ:
+	      case FRAGMENT_WRITE:
+		fragment_op_.on_event();
+		break;
+	      case RECORD_READ:
+	      case RECORD_WRITE:
+		record_op_.on_event();
+		break;
+	      }
 	    }
+	    pos = requests_.find_next(pos);
 	  }
 	}
       }
@@ -410,7 +493,7 @@ namespace raft {
       log_writer(writable_file_type & f)
 	:
 	file_(f),
-	offset_(0)
+	offset_(BLOCK_SIZE)
       {
 	for(int i=0; i<=MAX_RECORD_TYPE; ++i) {
 	  crc_32_c_type cksum;
@@ -446,7 +529,7 @@ namespace raft {
 	  std::size_t available_in_block = BLOCK_SIZE - offset_ - HEADER_SIZE;
 	  std::size_t fragment_sz = sz; 
 	  bool is_full_fragment = true;
-	  if (sz > available_in_block) {
+	  if (fragment_sz > available_in_block) {
 	    fragment_sz = available_in_block;
 	    is_full_fragment = false;
 	  }
@@ -472,6 +555,7 @@ namespace raft {
 	  first = false;
 	  next += fragment_sz;
 	  sz -= fragment_sz;
+	  offset_ += fragment_sz+HEADER_SIZE;
 	} while(sz > 0);
 	
 	file_.flush();

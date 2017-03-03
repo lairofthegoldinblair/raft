@@ -250,6 +250,31 @@ namespace raft {
   };
 
   template<typename _LogEntry>
+  struct log_entry_traits
+  {
+    typedef typename std::vector<_LogEntry>::const_iterator iterator_type;
+    typedef typename std::vector<_LogEntry>::const_iterator const_arg_type;
+
+    static uint64_t term(const_arg_type msg)
+    {
+      msg->term;
+    }
+    static bool is_command(const_arg_type msg)
+    {
+      return _LogEntry::COMMAND == msg->type;
+    }
+    static bool is_configuration(const_arg_type msg)
+    {
+      return _LogEntry::CONFIGURATION == msg->type;
+    }
+    static bool is_noop(const_arg_type msg)
+    {
+      return _LogEntry::NOOP == msg->type;
+    }
+    
+  };
+
+  template<typename _LogEntry>
   struct append_entry_traits
   {
     typedef append_entry<_LogEntry> value_type;

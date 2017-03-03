@@ -58,9 +58,67 @@ BOOST_AUTO_TEST_CASE(LevelDBAsioSequenceLogWriterTest)
   ::close(fd);
 }
 
-BOOST_AUTO_TEST_CASE(LevelDBReaderTest)
+// TODO: Do some templating in log writer so we don't need to do this
+
+struct stringstream_adapter
 {
-  raft::leveldb::record_reader r;
+  std::stringstream & str_;
+  stringstream_adapter(std::stringstream & str) : str_(str) {}
+  
+  void write(const uint8_t * buf, std::size_t sz)
+  {
+    str_.write(reinterpret_cast<const char *>(buf), sz);
+  }
+
+  void flush()
+  {
+    str_.flush();
+  }
+};
+
+BOOST_AUTO_TEST_CASE(LevelDBStringStreamLogReaderTest)
+{
+  std::stringstream sstr;
+  stringstream_adapter adapted(sstr);
+  raft::leveldb::log_writer<stringstream_adapter> writer(adapted);
+  for(int i=0; i<10000; ++i) {
+    std::string a((boost::format("This begins log record %1%") % i).str());
+    std::string b((boost::format("This continues the log record %1%") % i).str());
+    std::string c((boost::format("This finishes log record %1%") % i).str());
+    std::array<raft::slice, 3> slices = { raft::slice::create(a), raft::slice::create(b), raft::slice::create(c) };
+    writer.append_record(slices);
+  }
+
+  std::string log_buffer = sstr.str();
+  {
+    // Lets read all of the records
+    raft::leveldb::record_reader r;
+    int next_record = 0;
+    for(std::size_t next_block=0; next_block < log_buffer.size(); next_block += raft::leveldb::BLOCK_SIZE) {
+      std::size_t block_size = (std::min)(raft::leveldb::BLOCK_SIZE, log_buffer.size()-next_block);
+      r.write_block(raft::slice(reinterpret_cast<const uint8_t *>(&log_buffer[next_block]), block_size));
+      r.run_all_enabled();
+      while(r.can_read_record()) {
+  	auto record_buffers = r.read_record();
+  	if (0 == record_buffers.size()) {
+  	  // EOF on stream
+  	  break;
+  	}
+  	std::string expected((boost::format("This begins log record %1%"
+  					    "This continues the log record %1%"
+  					    "This finishes log record %1%") % next_record).str());
+  	BOOST_CHECK_EQUAL(expected.size(), raft::slice::total_size(record_buffers));
+  	std::string actual;
+  	for(auto & s : record_buffers) {
+  	  actual.append(raft::slice::buffer_cast<const char *>(s), raft::slice::buffer_size(s));
+  	}
+  	BOOST_CHECK(boost::algorithm::equals(actual, expected));
+  	next_record += 1;
+  	r.run_all_enabled();
+      }
+    }
+    BOOST_CHECK_EQUAL(10000, next_record);
+  }
 }
 
 BOOST_AUTO_TEST_CASE(RaftAsioSerializationTest)
