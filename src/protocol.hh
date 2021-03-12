@@ -392,7 +392,17 @@ namespace raft {
 	    // so we know what term that was
 	    previous_log_term = checkpoint_.last_checkpoint_term_;
 	  } else {
-	    // TODO: How do we get here??? Send checkpoint seems to be the right response.
+	    // How do we get here??? 
+	    // This is what we can conclude:
+	    // 1) p.next_index_ = log_start_index() (checked via 2 if statements above)
+	    // 2) log_start_index() <= checkpoint_.last_checkpoint_index_ (invariant; can't throw away log that isn't checkpointed)
+	    // 3) p.next_index_ != checkpoint_.last_checkpoint_term_
+	    // This implies p.next_index_ < checkpoint_.last_checkpoint_index_.
+	    // So the following can get us here:  checkpoint  [0,p.next_index_) then truncate the
+	    // log prefix to make log_start_index()=p.next_index_.  Without updating p.next_index_, take another checkpoint strictly past p.next_index_
+	    // and DON'T truncate the prefix (e.g. keep it around precisely to avoid having to send checkpoints :-)
+	    // In any case, sending checkpoint seems to be the right response as we can't determine the previously sent
+	    // term since the second checkpoint could be at a different term than the one that truncated up to p.next_index_.
 	    send_checkpoint_chunk(clock_now, i);
 	    return;
 	  }

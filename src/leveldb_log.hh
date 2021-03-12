@@ -51,7 +51,9 @@ namespace raft {
       scheduler_type & scheduler_;
       state state_;
       raft::slice slice_;
+      std::pair<raft::slice, result_code> output_;
       bool eof_;
+      bool syncing_;
 
       const fragment_header * header() const
       {
@@ -129,12 +131,14 @@ namespace raft {
 	
     public:
 
-      fragment_reader_operator(scheduler_type & scheduler)
+      fragment_reader_operator(scheduler_type & scheduler, bool syncing=false)
 	:
 	scheduler_(scheduler),
 	state_(BEGIN),
 	slice_(nullptr, 0),
-	eof_(false)
+	output_({raft::slice(nullptr, 0), result_code::ZERO }),
+	eof_(false),
+	syncing_(syncing)
       {
       }
 	
@@ -179,15 +183,21 @@ namespace raft {
 	      }
 	    }
 
-	    scheduler_.request_write(*this);
-	    state_ = WRITE;
-	    return;
-	  case WRITE:
-	    {
-	      auto tmp = next_fragment();
-	      scheduler_.write(*this, std::move(tmp));
-	      if (tmp.second == result_code::eEOF) {
-		break;
+	    output_ = next_fragment();
+	    if (!syncing_ || (output_.second != result_code::MIDDLE && output_.second != result_code::LAST)) {
+	      if (syncing_ && output_.second != result_code::BAD) {
+		syncing_ = false;
+	      }
+	      scheduler_.request_write(*this);
+	      state_ = WRITE;
+	      return;
+	    case WRITE:
+	      {
+		bool was_eof = output_.second == result_code::eEOF;
+		scheduler_.write(*this, std::move(output_));
+		if (was_eof) {
+		  break;
+		}
 	      }
 	    }
 	  }
@@ -202,14 +212,15 @@ namespace raft {
       typedef Scheduler scheduler_type;
       typedef std::pair<raft::slice,result_code> input_type;
       typedef std::vector<raft::slice> output_type;
+
     private:
       enum class state { BEGIN, READ, WRITE_FULL, WRITE_LAST, WRITE_EOF };
       scheduler_type & scheduler_;
       std::vector<raft::slice> record_slices_;
       state state_;
       std::pair<raft::slice, result_code> fragment_;
-    public:
 
+    public:
       record_reader_operator(scheduler_type & scheduler)
 	:
 	scheduler_(scheduler),
@@ -337,9 +348,9 @@ namespace raft {
       }
 
     public:
-      record_reader()
+      record_reader(bool syncing=false)
 	:
-	fragment_op_(*this),
+	fragment_op_(*this, syncing),
 	record_op_(*this),
 	block_(nullptr, 0),
 	fragment_({ raft::slice(nullptr, 0), result_code::BAD }),

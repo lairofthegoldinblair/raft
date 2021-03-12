@@ -119,6 +119,130 @@ BOOST_AUTO_TEST_CASE(LevelDBStringStreamLogReaderTest)
     }
     BOOST_CHECK_EQUAL(10000, next_record);
   }
+  {
+    // Lets read all of the records starting from the third block for which the
+    // first complete record is 701.
+    // Set syncing mode to suppress errors
+    raft::leveldb::record_reader r(true);
+    int next_record = 701;
+    for(std::size_t next_block=2*raft::leveldb::BLOCK_SIZE; next_block < log_buffer.size(); next_block += raft::leveldb::BLOCK_SIZE) {
+      std::size_t block_size = (std::min)(raft::leveldb::BLOCK_SIZE, log_buffer.size()-next_block);
+      r.write_block(raft::slice(reinterpret_cast<const uint8_t *>(&log_buffer[next_block]), block_size));
+      r.run_all_enabled();
+      while(r.can_read_record()) {
+  	auto record_buffers = r.read_record();
+  	if (0 == record_buffers.size()) {
+  	  // EOF on stream
+  	  break;
+  	}
+  	std::string expected((boost::format("This begins log record %1%"
+  					    "This continues the log record %1%"
+  					    "This finishes log record %1%") % next_record).str());
+  	BOOST_CHECK_EQUAL(expected.size(), raft::slice::total_size(record_buffers));
+  	std::string actual;
+  	for(auto & s : record_buffers) {
+  	  actual.append(raft::slice::buffer_cast<const char *>(s), raft::slice::buffer_size(s));
+  	}
+  	BOOST_CHECK(boost::algorithm::equals(actual, expected));
+  	next_record += 1;
+  	r.run_all_enabled();
+      }
+    }
+    BOOST_CHECK_EQUAL(10000, next_record);
+  }
+}
+
+BOOST_AUTO_TEST_CASE(LevelDBMiddleFragmentSingleSliceTest)
+{
+  std::stringstream sstr;
+  stringstream_adapter adapted(sstr);
+  raft::leveldb::log_writer<stringstream_adapter> writer(adapted);
+  std::vector<raft::slice> slices;
+  std::stringstream expected;
+  expected << "This begins the log record";
+  for(int i=0; i<3000; ++i) {
+    expected << (boost::format("This continues the log record %1%") % i).str();
+  }
+  expected << "This finishes the log record";
+  std::string rec = expected.str();  
+  slices.push_back(raft::slice::create(rec));
+  writer.append_record(slices);
+
+  std::string log_buffer = sstr.str();
+  {
+    // Lets read all of the records
+    raft::leveldb::record_reader r;
+    int next_record = 0;
+    for(std::size_t next_block=0; next_block < log_buffer.size(); next_block += raft::leveldb::BLOCK_SIZE) {
+      std::size_t block_size = (std::min)(raft::leveldb::BLOCK_SIZE, log_buffer.size()-next_block);
+      r.write_block(raft::slice(reinterpret_cast<const uint8_t *>(&log_buffer[next_block]), block_size));
+      r.run_all_enabled();
+      while(r.can_read_record()) {
+  	auto record_buffers = r.read_record();
+  	if (0 == record_buffers.size()) {
+  	  // EOF on stream
+  	  break;
+  	}
+  	std::stringstream actual;
+  	for(auto & s : record_buffers) {
+  	  actual.write(raft::slice::buffer_cast<const char *>(s), raft::slice::buffer_size(s));
+  	}
+  	BOOST_CHECK(boost::algorithm::equals(actual.str(), expected.str()));
+  	next_record += 1;
+  	r.run_all_enabled();
+      }
+    }
+    BOOST_CHECK_EQUAL(1, next_record);
+  }
+}
+
+BOOST_AUTO_TEST_CASE(LevelDBMiddleFragmentManySlicesTest)
+{
+  std::stringstream sstr;
+  stringstream_adapter adapted(sstr);
+  raft::leveldb::log_writer<stringstream_adapter> writer(adapted);
+  std::vector<std::string> strings;
+  std::vector<raft::slice> slices;
+  std::stringstream expected;
+  strings.push_back("This begins the log record");
+  expected << strings.back();
+  slices.push_back(raft::slice::create(strings.back()));
+  for(int i=0; i<3000; ++i) {
+    strings.push_back((boost::format("This continues the log record %1%") % i).str());
+    expected << strings.back();
+    slices.push_back(raft::slice::create(strings.back()));
+  }
+  strings.push_back("This finishes the log record");
+  expected << strings.back();
+  slices.push_back(raft::slice::create(strings.back()));
+  writer.append_record(slices);
+
+  std::string log_buffer = sstr.str();
+  {
+    // Lets read all of the records
+    raft::leveldb::record_reader r;
+    int next_record = 0;
+    for(std::size_t next_block=0; next_block < log_buffer.size(); next_block += raft::leveldb::BLOCK_SIZE) {
+      std::size_t block_size = (std::min)(raft::leveldb::BLOCK_SIZE, log_buffer.size()-next_block);
+      r.write_block(raft::slice(reinterpret_cast<const uint8_t *>(&log_buffer[next_block]), block_size));
+      r.run_all_enabled();
+      while(r.can_read_record()) {
+  	auto record_buffers = r.read_record();
+  	if (0 == record_buffers.size()) {
+  	  // EOF on stream
+  	  break;
+  	}
+  	std::stringstream actual;
+  	for(auto & s : record_buffers) {
+  	  actual.write(raft::slice::buffer_cast<const char *>(s), raft::slice::buffer_size(s));
+  	}
+  	BOOST_CHECK(boost::algorithm::equals(actual.str(), expected.str()));
+  	next_record += 1;
+  	r.run_all_enabled();
+      }
+    }
+    BOOST_CHECK_EQUAL(1, next_record);
+  }
 }
 
 BOOST_AUTO_TEST_CASE(RaftAsioSerializationTest)

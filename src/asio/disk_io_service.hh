@@ -3,13 +3,15 @@
 
 #include <unistd.h>
 
-#include <boost/asio/io_service.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/detail/buffer_sequence_adapter.hpp>
 #include <boost/asio/detail/fenced_block.hpp>
 #include <boost/asio/detail/handler_alloc_helpers.hpp>
 #include <boost/asio/detail/handler_invoke_helpers.hpp>
 #include <boost/asio/detail/operation.hpp>
 
+// This is an implementation of a thread (pool) based async disk service.   It is modelled on the
+// thread based resolver service in ASIO.
 // TODO: Should we add a strand here to prevent out of order IO ops on a file?
 // If we have multiple threads in the thread pool we'd need that to be true I think (i.e.
 // it would be invalid for multiple threads to be working concurrently on IOs to a single file.
@@ -86,7 +88,7 @@ class disk_read_operation : public boost::asio::detail::operation
 {
 private:
   file_ops::file_type file_;
-  boost::asio::detail::io_service_impl & io_service_impl_;
+  boost::asio::detail::io_context_impl & io_context_impl_;
   MutableBufferSequence buffers_;
   Handler handler_;
   boost::system::error_code ec_;
@@ -94,25 +96,25 @@ private:
 public:
   disk_read_operation(file_ops::file_type f,
 		      const MutableBufferSequence & buffers,
-		      boost::asio::detail::io_service_impl & io_service_impl,
+		      boost::asio::detail::io_context_impl & io_context_impl,
 		      Handler handler)
     :
     boost::asio::detail::operation(&disk_read_operation::do_complete),
     file_(f),
     buffers_(buffers),
-    io_service_impl_(io_service_impl),
+    io_context_impl_(io_context_impl),
     handler_(handler)
   {
   }
 
-  static void do_complete(boost::asio::detail::io_service_impl * owner,
-			  boost::asio::detail::operation * base,
-			  const boost::system::error_code& /*ec*/,
-			  std::size_t /*bytes_transferred*/)
+  static void do_complete(void * owner,
+  			  boost::asio::detail::operation * base,
+  			  const boost::system::error_code& /*ec*/,
+  			  std::size_t /*bytes_transferred*/)
   {
     disk_read_operation * op (static_cast<disk_read_operation *>(base));
-    if (owner && owner != &op->io_service_impl_) {
-      // In the worker io_service, so do the work and then signal main io_service
+    if (owner && owner != &op->io_context_impl_) {
+      // In the worker io_context, so do the work and then signal main io_context
       // that we are done
       boost::asio::detail::buffer_sequence_adapter<boost::asio::mutable_buffer,
 						   MutableBufferSequence> bufs(op->buffers_);
@@ -120,7 +122,7 @@ public:
       // The point of post_deferred_completion instead of post_immediate_completion
       // is that this operation already is accounted for as a work item on the main service
       // via an direct call to work_started() in start_operation so we don't want to double count it.
-      op->io_service_impl_.post_deferred_completion(op);
+      op->io_context_impl_.post_deferred_completion(op);
     } else {
       // Make a copy of the handler so that the memory can be deallocated before                                                                                        
       // the upcall is made. Even if we're not about to make an upcall, a                                                                                               
@@ -150,7 +152,7 @@ class disk_write_operation : public boost::asio::detail::operation
 {
 private:
   file_ops::file_type file_;
-  boost::asio::detail::io_service_impl & io_service_impl_;
+  boost::asio::detail::io_context_impl & io_context_impl_;
   ConstBufferSequence buffers_;
   Handler handler_;
   boost::system::error_code ec_;
@@ -158,30 +160,30 @@ private:
 public:
   disk_write_operation(file_ops::file_type f,
 		      const ConstBufferSequence & buffers,
-		      boost::asio::detail::io_service_impl & io_service_impl,
+		      boost::asio::detail::io_context_impl & io_context_impl,
 		      Handler handler)
     :
     boost::asio::detail::operation(&disk_write_operation::do_complete),
     file_(f),
     buffers_(buffers),
-    io_service_impl_(io_service_impl),
+    io_context_impl_(io_context_impl),
     handler_(handler)
   {
   }
 
-  static void do_complete(boost::asio::detail::io_service_impl * owner,
+  static void do_complete(void * owner,
 			  boost::asio::detail::operation * base,
 			  const boost::system::error_code& /*ec*/,
 			  std::size_t /*bytes_transferred*/)
   {
     disk_write_operation * op (static_cast<disk_write_operation *>(base));
-    if (owner && owner != &op->io_service_impl_) {
-      // In the worker io_service, so do the work and then signal main io_service
+    if (owner && owner != &op->io_context_impl_) {
+      // In the worker io_context, so do the work and then signal main io_context
       // that we are done
       boost::asio::detail::buffer_sequence_adapter<boost::asio::const_buffer,
 						   ConstBufferSequence> bufs(op->buffers_);
       op->bytes_transferred_ = file_ops::write(op->file_, bufs.buffers(), bufs.count(), op->ec_);
-      op->io_service_impl_.post_deferred_completion(op);
+      op->io_context_impl_.post_deferred_completion(op);
     } else {
       // Make a copy of the handler so that the memory can be deallocated before                                                                                        
       // the upcall is made. Even if we're not about to make an upcall, a                                                                                               
@@ -211,32 +213,32 @@ class disk_sync_operation : public boost::asio::detail::operation
 {
 private:
   file_ops::file_type file_;
-  boost::asio::detail::io_service_impl & io_service_impl_;
+  boost::asio::detail::io_context_impl & io_context_impl_;
   Handler handler_;
   boost::system::error_code ec_;
 public:
   disk_sync_operation(file_ops::file_type f,
-		      boost::asio::detail::io_service_impl & io_service_impl,
+		      boost::asio::detail::io_context_impl & io_context_impl,
 		      Handler handler)
     :
     boost::asio::detail::operation(&disk_sync_operation::do_complete),
     file_(f),
-    io_service_impl_(io_service_impl),
+    io_context_impl_(io_context_impl),
     handler_(handler)
   {
   }
 
-  static void do_complete(boost::asio::detail::io_service_impl * owner,
+  static void do_complete(void * owner,
 			  boost::asio::detail::operation * base,
 			  const boost::system::error_code& /*ec*/,
 			  std::size_t /*bytes_transferred*/)
   {
     disk_sync_operation * op (static_cast<disk_sync_operation *>(base));
-    if (owner && owner != &op->io_service_impl_) {
-      // In the worker io_service, so do the work and then signal main io_service
+    if (owner && owner != &op->io_context_impl_) {
+      // In the worker io_context, so do the work and then signal main io_context
       // that we are done
       file_ops::sync(op->file_, op->ec_);
-      op->io_service_impl_.post_deferred_completion(op);
+      op->io_context_impl_.post_deferred_completion(op);
     } else {
       // Make a copy of the handler so that the memory can be deallocated before                                                                                        
       // the upcall is made. Even if we're not about to make an upcall, a                                                                                               
@@ -274,14 +276,14 @@ namespace detail {
     };
 
   private:
-    boost::asio::detail::io_service_impl & main_service_impl_;
+    boost::asio::detail::io_context_impl & main_service_impl_;
 
-    // Below is the private io_service infrastructure used to manage the
+    // Below is the private io_context infrastructure used to manage the
     // disk worker thread pool.
     std::mutex mutex_;
-    std::unique_ptr<boost::asio::io_service> worker_io_service_;
-    boost::asio::detail::io_service_impl & worker_service_impl_;
-    std::unique_ptr<boost::asio::io_service::work> worker_io_service_work_;
+    std::unique_ptr<boost::asio::io_context> worker_io_context_;
+    boost::asio::detail::io_context_impl & worker_context_impl_;
+    std::unique_ptr<boost::asio::io_context::work> worker_io_context_work_;
     // TODO: Make this a thread pool
     std::unique_ptr<std::thread> worker_thread_;
 
@@ -289,7 +291,7 @@ namespace detail {
     {
       std::unique_lock<std::mutex> lk(mutex_);
       if (!worker_thread_) {
-	worker_thread_.reset(new std::thread([this]() { this->worker_io_service_->run(); }));
+	worker_thread_.reset(new std::thread([this]() { this->worker_io_context_->run(); }));
       }
     }
 
@@ -305,17 +307,17 @@ namespace detail {
       main_service_impl_.work_started();
       // I think point here is that the operation doesn't need to wait for any condition
       // to be processed, just get it assigned to a thread
-      worker_service_impl_.post_immediate_completion(op, false);
+      worker_context_impl_.post_immediate_completion(op, false);
     }
     
   public:
 
-    disk_io_service(boost::asio::io_service & ios)
+    disk_io_service(boost::asio::io_context & ios)
       :
-      main_service_impl_(boost::asio::use_service<boost::asio::detail::io_service_impl>(ios)),
-      worker_io_service_(new boost::asio::io_service()),
-      worker_service_impl_(boost::asio::use_service<boost::asio::detail::io_service_impl>(*worker_io_service_)),
-      worker_io_service_work_(new boost::asio::io_service::work(*worker_io_service_))
+      main_service_impl_(boost::asio::use_service<boost::asio::detail::io_context_impl>(ios)),
+      worker_io_context_(new boost::asio::io_context()),
+      worker_context_impl_(boost::asio::use_service<boost::asio::detail::io_context_impl>(*worker_io_context_)),
+      worker_io_context_work_(new boost::asio::io_context::work(*worker_io_context_))
     {
     }
 
@@ -326,18 +328,18 @@ namespace detail {
     
     void shutdown_service()
     {
-      worker_io_service_work_.reset();
-      if(!!worker_io_service_) {
-	worker_io_service_->stop();
+      worker_io_context_work_.reset();
+      if(!!worker_io_context_) {
+	worker_io_context_->stop();
 	if(!!worker_thread_) {
 	  worker_thread_->join();
 	  worker_thread_.reset();
 	}
-	worker_io_service_.reset();
+	worker_io_context_.reset();
       }
     }
 
-    void fork_service(boost::asio::io_service::fork_event fe)
+    void fork_service(boost::asio::io_context::fork_event fe)
     {
       // TODO:
     }
@@ -385,7 +387,7 @@ namespace detail {
       // Allocate an operation and start it.
       typedef disk_read_operation<MutableBufferSequence, ReadHandler> op_type;
       typename op_type::ptr p = { boost::asio::detail::addressof(handler),
-				  boost_asio_handler_alloc_helpers::allocate(sizeof(op_type), handler),
+				  op_type::ptr::allocate(handler),
 				  nullptr };
 
       p.p = new (p.v) op_type(impl.file_, buffers, main_service_impl_, handler);
@@ -404,7 +406,7 @@ namespace detail {
       // Allocate an operation and start it.
       typedef disk_write_operation<ConstBufferSequence, WriteHandler> op_type;
       typename op_type::ptr p = { boost::asio::detail::addressof(handler),
-				  boost_asio_handler_alloc_helpers::allocate(sizeof(op_type), handler),
+				  op_type::ptr::allocate(handler),
 				  nullptr };
 
       p.p = new (p.v) op_type(impl.file_, buffers, main_service_impl_, handler);
@@ -422,7 +424,7 @@ namespace detail {
       // Allocate an operation and start it.
       typedef disk_sync_operation<FileOpHandler> op_type;
       typename op_type::ptr p = { boost::asio::detail::addressof(handler),
-				  boost_asio_handler_alloc_helpers::allocate(sizeof(op_type), handler),
+				  op_type::ptr::allocate(handler),
 				  nullptr };
 
       p.p = new (p.v) op_type(impl.file_, main_service_impl_, handler);
@@ -446,7 +448,7 @@ public:
   typedef typename service_impl_type::implementation_type implementation_type;
   typedef typename service_impl_type::native_handle_type native_handle_type;  
   
-  explicit disk_io_service(boost::asio::io_service & ios)
+  explicit disk_io_service(boost::asio::io_context & ios)
     :
     boost::asio::detail::service_base<disk_io_service>(ios),
     service_impl_(ios)
@@ -458,7 +460,7 @@ public:
     service_impl_.shutdown_service();
   }
 
-  void fork_service(boost::asio::io_service::fork_event fe)
+  void fork_service(boost::asio::io_context::fork_event fe)
   {
     service_impl_.fork_service(fe);
   }
@@ -494,9 +496,15 @@ public:
 	       const MutableBufferSequence & buffers,
 	       BOOST_ASIO_MOVE_ARG(ReadHandler) handler)
   {
-    boost::asio::detail::async_result_init<ReadHandler, void (boost::system::error_code, std::size_t)> init(BOOST_ASIO_MOVE_CAST(ReadHandler)(handler));
-    service_impl_.async_read(impl, buffers, init.handler);
-    return init.result.get();													  
+    // boost::asio::detail::async_result_init<ReadHandler, void (boost::system::error_code, std::size_t)> init(BOOST_ASIO_MOVE_CAST(ReadHandler)(handler));
+    // service_impl_.async_read(impl, buffers, init.handler);
+    // return init.result.get();													  
+    BOOST_ASIO_READ_HANDLER_CHECK(ReadHandler, handler) type_check;
+    
+    boost::asio::async_completion<ReadHandler,
+				  void (boost::system::error_code, std::size_t)> init(handler);
+    service_impl_.async_read(impl, buffers, init.completion_handler);
+    return init.result.get();
   }
 
   template<typename ConstBufferSequence, typename WriteHandler>
@@ -505,9 +513,15 @@ public:
 		const ConstBufferSequence & buffers,
 		BOOST_ASIO_MOVE_ARG(WriteHandler) handler)
   {
-    boost::asio::detail::async_result_init<WriteHandler, void (boost::system::error_code, std::size_t)> init(BOOST_ASIO_MOVE_CAST(WriteHandler)(handler));
-    service_impl_.async_write(impl, buffers, init.handler);
-    return init.result.get();													  
+    // boost::asio::detail::async_result_init<WriteHandler, void (boost::system::error_code, std::size_t)> init(BOOST_ASIO_MOVE_CAST(WriteHandler)(handler));
+    // service_impl_.async_write(impl, buffers, init.handler);
+    // return init.result.get();													  
+    BOOST_ASIO_WRITE_HANDLER_CHECK(WriteHandler, handler) type_check;
+    
+    boost::asio::async_completion<WriteHandler,
+				  void (boost::system::error_code, std::size_t)> init(handler);
+    service_impl_.async_write(impl, buffers, init.completion_handler);
+    return init.result.get();
   }
 
   template<typename FileOpHandler>
@@ -515,9 +529,13 @@ public:
     async_sync(implementation_type & impl,
 	       BOOST_ASIO_MOVE_ARG(FileOpHandler) handler)
   {
-    boost::asio::detail::async_result_init<FileOpHandler, void (boost::system::error_code)> init(BOOST_ASIO_MOVE_CAST(FileOpHandler)(handler));
-    service_impl_.async_sync(impl, init.handler);
-    return init.result.get();													  
+    // boost::asio::detail::async_result_init<FileOpHandler, void (boost::system::error_code)> init(BOOST_ASIO_MOVE_CAST(FileOpHandler)(handler));
+    // service_impl_.async_sync(impl, init.handler);
+    // return init.result.get();													  
+    boost::asio::async_completion<FileOpHandler,
+				  void (boost::system::error_code, std::size_t)> init(handler);
+    service_impl_.async_sync(impl, init.completion_handler);
+    return init.result.get();
   }
 };
 
