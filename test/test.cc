@@ -458,7 +458,7 @@ BOOST_FIXTURE_TEST_CASE(MajorityVoteEven, RaftSimpleConfigurationTestFixture)
 
   raft::configuration_description desc;
   desc.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}};
-  raft::configuration<test_peer, raft::configuration_description> config(0);
+  raft::configuration_algorithm<test_peer, raft::configuration_description> config(0);
   BOOST_CHECK_EQUAL(0U, config.num_known_peers());
   BOOST_CHECK_EQUAL(0U, config.my_cluster_id());
   BOOST_CHECK(!config.includes_self());

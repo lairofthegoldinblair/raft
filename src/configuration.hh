@@ -336,7 +336,7 @@ namespace raft {
   // Implements Ongaro's Joint Consensus configuration algorithm.  See Section 4.3 of Ongaro's thesis and
   // the "In search of understandable consensus algorithm" paper.
   template <typename _Peer, typename _Description>
-  class configuration
+  class configuration_algorithm
   {
   private:
     struct is_not_null
@@ -355,8 +355,8 @@ namespace raft {
     typedef boost::filter_iterator<is_not_null, typename std::vector<std::shared_ptr<_Peer> >::iterator> peer_filter_iterator;
 
   public:
-    typedef transitional_configuration_view<configuration<_Peer, _Description> > transitional_configuration_type;
-    typedef stable_configuration_view<configuration<_Peer, _Description> > stable_configuration_type;
+    typedef transitional_configuration_view<configuration_algorithm<_Peer, _Description> > transitional_configuration_type;
+    typedef stable_configuration_view<configuration_algorithm<_Peer, _Description> > stable_configuration_type;
     typedef typename configuration_server_type<_Description>::type server_description_type;
     typedef typename configuration_simple_type<_Description>::type simple_configuration_description_type;
     typedef _Peer peer_type;
@@ -429,7 +429,7 @@ namespace raft {
       return cluster_[s.id];
     }
   public:
-    configuration(uint64_t self)
+    configuration_algorithm(uint64_t self)
       :
       num_known_peers_(0),
       cluster_idx_(self),
@@ -677,7 +677,7 @@ namespace raft {
   public:
     typedef _Description description_type;
     typedef typename _Peer::template apply<peer_configuration_change>::type peer_type;
-    typedef configuration<peer_type, _Description> configuration_type;
+    typedef configuration_algorithm<peer_type, _Description> configuration_type;
     typedef typename description_type::checkpoint_type checkpoint_type;
   private:
 
