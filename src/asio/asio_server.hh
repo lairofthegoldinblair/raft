@@ -382,7 +382,7 @@ namespace raft {
       };
     };
 
-    typedef raft::protocol<asio_tcp_communicator_metafunction, raft::messages> raft_protocol_type;
+    typedef raft::protocol<asio_tcp_communicator_metafunction, raft::native::messages> raft_protocol_type;
     
     class raft_receiver
     {
@@ -398,28 +398,28 @@ namespace raft {
 	switch(header.operation) {
 	case 0:
 	  {
-	    raft::request_vote req;
+	    raft::native::request_vote req;
 	    serialization::deserialize(buf, req);
 	    protocol_.on_request_vote(req);
 	    break;
 	  }
 	case 1:
 	  {
-	    raft::vote_response resp;
+	    raft::native::vote_response resp;
 	    serialization::deserialize(buf, resp);
 	    protocol_.on_vote_response(resp);
 	    break;
 	  }
 	case 2:
 	  {
-	    raft::messages::append_entry_type req;
-	    serialization::deserialize(buf, req);
-	    protocol_.on_append_entry(req);
+	    auto req = new raft::native::messages::append_entry_type();
+	    serialization::deserialize(buf, *req);
+	    protocol_.on_append_entry(req, [req]() { delete req; });
 	    break;
 	  }
 	case 3:
 	  {
-	    raft::messages::append_entry_response_type req;
+	    raft::native::messages::append_entry_response_type req;
 	    serialization::deserialize(buf, req);
 	    protocol_.on_append_response(req);
 	    break;
@@ -588,14 +588,14 @@ namespace raft {
 
 	// Set sync callback in the log (TODO: Fix this is dumb way of doing things)
 	l_.set_log_header_writer(this);
-	
-	std::vector<raft_protocol_type::log_entry_type> entries;
-	entries.push_back(raft_protocol_type::log_entry_type());
-	entries.back().type = raft_protocol_type::log_entry_type::CONFIGURATION;
-	entries.back().term = 0;
-	entries.back().configuration.from = config;
-	l_.append(entries.begin(), entries.end());
-	l_.update_header(entries.back().term, raft_protocol_type::INVALID_PEER_ID);
+
+	// TODO: Make this work with flatbuffers
+	auto entry = new raft_protocol_type::log_entry_type();
+	entry->type = raft_protocol_type::log_entry_type::CONFIGURATION;
+	entry->term = 0;
+	entry->configuration.from = config;
+	l_.append(std::pair<const raft_protocol_type::log_entry_type *, std::function<void()>>(entry, [entry]() { delete entry; }));
+	l_.update_header(0, raft_protocol_type::INVALID_PEER_ID);
 	protocol_.reset(new raft_protocol_type(comm_, l_, store_, config_manager_));
 
 	// Setup periodic timer callbacks from ASIO

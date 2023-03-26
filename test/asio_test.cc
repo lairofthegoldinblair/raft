@@ -247,20 +247,20 @@ BOOST_AUTO_TEST_CASE(LevelDBMiddleFragmentManySlicesTest)
 
 BOOST_AUTO_TEST_CASE(RaftAsioSerializationTest)
 {
-  raft::messages::append_entry_type msg;
+  raft::native::messages::append_entry_type msg;
   msg.recipient_id = 9032345;
   msg.term_number = 99234;
   msg.leader_id = 23445234;
   msg.previous_log_index = 734725345;
   msg.previous_log_term = 3492385345;
   msg.leader_commit_index = 3483458;
-  raft::messages::append_entry_type::log_entry_type e;
+  raft::native::messages::append_entry_type::log_entry_type e;
   e.term = 93443434542;
-  e.type = raft::messages::append_entry_type::log_entry_type::COMMAND;
+  e.type = raft::native::messages::append_entry_type::log_entry_type::COMMAND;
   e.data = "fjasdjfa;sldfjalsdjfldskfjsdlkfjasldfjl";
   msg.entry.push_back(std::move(e));
   e.term = 93443434534;
-  e.type = raft::messages::append_entry_type::log_entry_type::CONFIGURATION;
+  e.type = raft::native::messages::append_entry_type::log_entry_type::CONFIGURATION;
   raft::server_description s;
   s.id = 333334323;
   s.address = "127.0.0.1:7777";
@@ -272,7 +272,7 @@ BOOST_AUTO_TEST_CASE(RaftAsioSerializationTest)
   auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result);
   BOOST_CHECK_EQUAL(2U, header->operation);
   BOOST_CHECK_EQUAL(boost::asio::buffer_size(result), header->payload_length+sizeof(raft::asio::rpc_header));
-  raft::messages::append_entry_type msg1;
+  raft::native::messages::append_entry_type msg1;
   raft::asio::serialization::deserialize(result+sizeof(raft::asio::rpc_header), msg1);
   BOOST_CHECK_EQUAL(msg.recipient_id, msg1.recipient_id);
   BOOST_CHECK_EQUAL(2U, msg1.entry.size());
@@ -298,6 +298,12 @@ public:
 		    uint64_t last_log_index,
 		    uint64_t last_log_term)
   {
+    raft::fbs::request_vote_sender<flatbuffer_test_communicator> sender(*this, ep, address);
+    sender.send(recipient_id,
+		term_number,
+		candidate_id,
+		last_log_index,
+		last_log_term);
   }
 
   template<typename EntryProvider>
@@ -330,6 +336,8 @@ public:
 			     uint64_t last_index,
 			     bool success)
   {
+    raft::fbs::append_entry_response_sender<flatbuffer_test_communicator> sender(*this, ep, address);
+    sender.send(recipient_id, term_number, request_term_number, begin_index, last_index, success);
   }
 
   void vote_response(endpoint ep, const std::string& address,
@@ -338,6 +346,8 @@ public:
 		     uint64_t request_term_number,
 		     bool granted)
   {
+    raft::fbs::vote_response_sender<flatbuffer_test_communicator> sender(*this, ep, address);
+    sender.send(peer_id, term_number, request_term_number, granted);
   }
 
   void append_checkpoint_chunk(endpoint ep, const std::string& address,
@@ -360,6 +370,8 @@ public:
 					uint64_t request_term_number,
 					uint64_t bytes_stored)
   {
+    raft::fbs::append_checkpoint_chunk_response_sender<flatbuffer_test_communicator> sender(*this, ep, address);
+    sender.send(recipient_id, term_number, request_term_number, bytes_stored);
   }
 
   std::deque<raft::fbs::flatbuffer_builder_adapter> q;
@@ -376,44 +388,44 @@ struct flatbuffer_communicator_metafunction
 
 typedef raft::protocol<flatbuffer_communicator_metafunction, raft::fbs::messages> test_raft_type;
 
-// BOOST_AUTO_TEST_CASE(RaftFlatBufferConstructProtocolTest)
-// {
-//   test_raft_type::communicator_type comm;
-//   test_raft_type::client_type c;
-//   test_raft_type::log_type l;
-//   test_raft_type::checkpoint_data_store_type store;
+BOOST_AUTO_TEST_CASE(RaftFlatBufferConstructProtocolTest)
+{
+  test_raft_type::communicator_type comm;
+  test_raft_type::client_type c;
+  test_raft_type::log_type l;
+  test_raft_type::checkpoint_data_store_type store;
 
-//   raft::configuration_description five_servers;
-//   five_servers.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"},  {4, "192.168.1.5"}};
-//   test_raft_type::configuration_manager_type cm(0);
+  raft::configuration_description five_servers;
+  five_servers.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"},  {4, "192.168.1.5"}};
+  test_raft_type::configuration_manager_type cm(0);
   
-//   l.append_configuration(0, raft::configuration_description_view(five_servers));
-//   l.update_header(0, test_raft_type::INVALID_PEER_ID);
-//   test_raft_type proto(comm, l, store, cm);
+  l.append(raft::fbs::log_entry_traits::create_configuration(0, raft::configuration_description_view(five_servers)));
+  l.update_header(0, test_raft_type::INVALID_PEER_ID);
+  test_raft_type proto(comm, l, store, cm);
 
-//   flatbuffers::FlatBufferBuilder fbb;
-//   raft::fbs::request_voteBuilder rvb(fbb);
-//   uint64_t term=1;
-//   rvb.add_recipient_id(0);
-//   rvb.add_term_number(term);
-//   rvb.add_candidate_id(1);
-//   rvb.add_last_log_index(1);
-//   rvb.add_last_log_term(0);
-//   auto rv = rvb.Finish();
-//   auto m = raft::fbs::Createraft_message(fbb, raft::fbs::any_message_request_vote, rv.Union());
-//   fbb.Finish(m);
+  flatbuffers::FlatBufferBuilder fbb;
+  raft::fbs::request_voteBuilder rvb(fbb);
+  uint64_t term=1;
+  rvb.add_recipient_id(0);
+  rvb.add_term_number(term);
+  rvb.add_candidate_id(1);
+  rvb.add_last_log_index(1);
+  rvb.add_last_log_term(0);
+  auto rv = rvb.Finish();
+  auto m = raft::fbs::Createraft_message(fbb, raft::fbs::any_message_request_vote, rv.Union());
+  fbb.Finish(m);
 
-//   proto.on_request_vote(raft::fbs::Getraft_message(fbb.GetBufferPointer()));
-//   BOOST_CHECK(proto.log_header_sync_required());
-//   BOOST_CHECK_EQUAL(term, proto.current_term());
-//   BOOST_CHECK_EQUAL(test_raft_type::FOLLOWER, proto.get_state());
-//   BOOST_CHECK_EQUAL(0U, comm.q.size());
-//   proto.on_log_header_sync();
-//   BOOST_CHECK(!proto.log_header_sync_required());
-//   BOOST_CHECK_EQUAL(term, proto.current_term());
-//   BOOST_CHECK_EQUAL(test_raft_type::FOLLOWER, proto.get_state());
-//   BOOST_CHECK_EQUAL(1U, comm.q.size());
-// }
+  proto.on_request_vote(raft::fbs::Getraft_message(fbb.GetBufferPointer()));
+  BOOST_CHECK(proto.log_header_sync_required());
+  BOOST_CHECK_EQUAL(term, proto.current_term());
+  BOOST_CHECK_EQUAL(test_raft_type::FOLLOWER, proto.get_state());
+  BOOST_CHECK_EQUAL(0U, comm.q.size());
+  proto.on_log_header_sync();
+  BOOST_CHECK(!proto.log_header_sync_required());
+  BOOST_CHECK_EQUAL(term, proto.current_term());
+  BOOST_CHECK_EQUAL(test_raft_type::FOLLOWER, proto.get_state());
+  BOOST_CHECK_EQUAL(1U, comm.q.size());
+}
 
 BOOST_AUTO_TEST_CASE(RaftFlatBufferRequestVoteTest)
 {

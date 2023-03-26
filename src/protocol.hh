@@ -106,12 +106,12 @@ namespace raft {
     // typedef test_communicator<append_checkpoint_chunk_type, append_entry_type> communicator_type;
 
     // Config description types
-    // typedef typename messages_type::configuration_description_type configuration_description_type;
-    // typedef typename messages_type::configuration_description_server_type configuration_description_server_type;
-    // typedef typename messages_type::simple_configuration_description_type simple_configuration_description_type;
-    typedef configuration_description configuration_description_type;
-    typedef server_description configuration_description_server_type;
-    typedef simple_configuration_description simple_configuration_description_type;
+    typedef typename messages_type::configuration_description_type configuration_description_type;
+    typedef typename messages_type::configuration_description_server_type configuration_description_server_type;
+    typedef typename messages_type::simple_configuration_description_type simple_configuration_description_type;
+    // typedef configuration_description configuration_description_type;
+    // typedef server_description configuration_description_server_type;
+    // typedef simple_configuration_description simple_configuration_description_type;
     
     // Checkpoint types
     typedef checkpoint_data_store<configuration_description::checkpoint_type> checkpoint_data_store_type;
@@ -131,12 +131,14 @@ namespace raft {
     };
 
     // Log types
-    typedef log_entry<configuration_description_type> log_entry_type;
-    typedef in_memory_log<log_entry_type> log_type;
+    typedef typename messages_type::log_entry_type log_entry_type;
+    typedef typename messages_type::log_entry_traits_type log_entry_traits_type;
+    typedef in_memory_log<log_entry_type, log_entry_traits_type> log_type;
     typedef typename log_type::index_type log_index_type;
 
     // Message types
     typedef typename messages_type::client_request_type client_request_type;
+    typedef typename messages_type::client_request_traits_type client_request_traits_type;
     typedef typename messages_type::request_vote_traits_type request_vote_traits_type;
     typedef typename messages_type::request_vote_traits_type::const_arg_type request_vote_arg_type;
     typedef typename messages_type::vote_response_traits_type vote_response_traits_type;
@@ -155,7 +157,8 @@ namespace raft {
     typedef typename messages_type::set_configuration_request_traits_type::const_arg_type set_configuration_request_arg_type;
 
     // Configuration types
-    typedef configuration_manager<peer_metafunction, configuration_description_type> configuration_manager_type;
+    // TODO: Should the manager use the serialization types?
+    typedef configuration_manager<peer_metafunction, configuration_description, messages_type> configuration_manager_type;
     // typedef test_configuration_manager<peer_metafunction, configuration_description_type> configuration_manager_type;
     typedef typename configuration_manager_type::configuration_type configuration_type;
     typedef typename configuration_manager_type::checkpoint_type configuration_checkpoint_type;
@@ -163,7 +166,7 @@ namespace raft {
     // The complete peer type which includes info about both per-peer checkpoint and configuration state.
     typedef typename configuration_manager_type::peer_type peer_type;
 
-    typedef client<simple_configuration_description_type> client_type;
+    typedef raft::native::client<messages_type> client_type;
 
     enum state { LEADER, FOLLOWER, CANDIDATE };
 
@@ -274,7 +277,7 @@ namespace raft {
     std::multimap<uint64_t, client_response_continuation> client_response_continuations_;
     std::multimap<uint64_t, append_entry_continuation> append_entry_continuations_;
     // continuations depending on log header sync events
-    std::vector<append_entry_pinned_type> append_entry_header_sync_continuations_;
+    std::vector<std::pair<append_entry_pinned_type, std::function<void()>>> append_entry_header_sync_continuations_;
     std::vector<append_checkpoint_chunk_pinned_type> append_checkpoint_chunk_header_sync_continuations_;
     std::vector<vote_response_continuation> vote_response_header_sync_continuations_;
     // This flag is essentially another log header sync continuation that indicates vote requests 
@@ -437,66 +440,11 @@ namespace raft {
 	
 	  // comm_.send(p.peer_id, p.address, msg);
 
-	  class log_entry_view
-	  {
-	  public:
-	    const log_entry_type & e_;
-
-	    log_entry_view(const log_entry_type & e)
-	      :
-	      e_(e)
-	    {
-	    }
-	    bool is_command() const
-	    {
-	      return e_.type == log_entry_type::COMMAND;
-	    }
-	    bool is_configuration() const
-	    {
-	      return e_.type == log_entry_type::CONFIGURATION;
-	    }
-	    bool is_noop() const
-	    {
-	      return e_.type == log_entry_type::NOOP;
-	    }
-	    uint64_t term() const
-	    {
-	      return e_.term;
-	    }
-	    const std::string& data() const
-	    {
-	      return e_.data;
-	    }
-	    std::size_t from_size() const
-	    {
-	      return e_.configuration.from.servers.size();
-	    }
-	    std::size_t from_id(std::size_t i) const
-	    {
-	      return e_.configuration.from.servers[i].id;
-	    }
-	    const std::string & from_address(std::size_t i) const
-	    {
-	      return e_.configuration.from.servers[i].address;
-	    }
-	    std::size_t to_size() const
-	    {
-	      return e_.configuration.to.servers.size();
-	    }
-	    std::size_t to_id(std::size_t i) const
-	    {
-	      return e_.configuration.to.servers[i].id;
-	    }
-	    const std::string & to_address(std::size_t i) const
-	    {
-	      return e_.configuration.to.servers[i].address;
-	    }
-	  };
 	  uint64_t log_entries_sent = (uint64_t) (last_log_entry_index() - p.next_index_);
 	  comm_.append_entry(p.peer_id, p.address, i, current_term_, my_cluster_id(), previous_log_index, previous_log_term,
 			     std::min(last_committed_index_, previous_log_index+log_entries_sent),
 			     log_entries_sent,
-			     [this, &p](uint64_t i) {
+			     [this, &p](uint64_t i) -> const log_entry_type & {
 			       return this->log_.entry(p.next_index_ + i);
 			     });
 	  p.requires_heartbeat_ = new_heartbeat_timeout(clock_now);
@@ -632,7 +580,7 @@ namespace raft {
 
 	if (configuration().is_transitional()) {
 	  // Log the new stable configuration and get rid of old servers
-	  auto indices = log_.append_configuration(current_term_, configuration().get_stable_configuration());
+	  auto indices = log_.append(log_entry_traits_type::create_configuration(current_term_, configuration().get_stable_configuration()));
 	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	    " committed transitional configuration at index " << configuration().configuration_id() << 
 	    ".  Logging new stable configuration at index " << indices.first;
@@ -655,7 +603,7 @@ namespace raft {
 	// is it really not successful???).  Actually the answer is that the
 	// commit of a log entry occurs when a majority of peers have written
 	// the log entry to disk.  
-	it->second.client->on_client_response(it->second.term == current_term_ ? SUCCESS : NOT_LEADER, it->second.index, leader_id_);
+	it->second.client->on_client_response(it->second.term == current_term_ ? messages_type::client_result_success() : messages_type::client_result_not_leader(), it->second.index, leader_id_);
       }
       client_response_continuations_.erase(client_response_continuations_.begin(), e);
     }
@@ -667,32 +615,34 @@ namespace raft {
       if (configuration().is_transitional_initiator() && last_committed_index_ > configuration().configuration_id()) {
 	// Respond to the client that we've succeeded
 	BOOST_ASSERT(config_change_client_ != nullptr);
-	config_change_client_->on_configuration_response(SUCCESS);
+	config_change_client_->on_configuration_response(messages_type::client_result_success());
 	config_change_client_ = nullptr;
       }
     }
 
     // Append Entry processing
-    void internal_append_entry(append_entry_arg_type req)
+    void internal_append_entry(append_entry_arg_type req, std::function<void()> && deleter)
     {
       typedef append_entry_traits_type ae;
-
+      auto req_leader_id = ae::leader_id(req);
+      auto req_term_number = ae::term_number(req);
+      
       // TODO: Is this really true?  For example, if a log header sync takes a really long time and I don't hear
       // from leader is it possible to time out and transition to CANDIDATE?  I don't think so because we currently
       // suppress transitions to CANDIDATE when a header sync is outstanding
-      if (ae::term_number(req) != current_term_ && state_ != FOLLOWER) {
+      if (req_term_number != current_term_ && state_ != FOLLOWER) {
 	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " and state " << state_string(state_) << " processing append entry and expected to be at term " <<
-	  ae::term_number(req) << " and state FOLLOWER";
-	BOOST_ASSERT(ae::term_number(req) == current_term_ && state_ == FOLLOWER);
+	  req_term_number << " and state FOLLOWER";
+	BOOST_ASSERT(req_term_number == current_term_ && state_ == FOLLOWER);
       }
 
       // May be the first append_entry for this term; that's when we learn
       // who the leader actually is.
       if (leader_id_ == INVALID_PEER_ID) {
-	leader_id_ = ae::leader_id(req);
+	leader_id_ = req_leader_id;
       } else {
-	BOOST_ASSERT(leader_id_ == ae::leader_id(req));
+	BOOST_ASSERT(leader_id_ == req_leader_id);
       }
 
       // TODO: Finish
@@ -702,10 +652,10 @@ namespace raft {
 	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " received append entry with gap.  req.previous_log_index=" << ae::previous_log_index(req) <<
 	  " last_log_entry_index()=" << last_log_entry_index();
-	comm_.append_entry_response(ae::leader_id(req), get_peer_from_id(ae::leader_id(req)).address,
+	comm_.append_entry_response(req_leader_id, get_peer_from_id(req_leader_id).address,
 				    my_cluster_id(),
 				    current_term_,
-				    ae::term_number(req),
+				    req_term_number,
 				    last_log_entry_index(),
 				    last_log_entry_index(),
 				    false);
@@ -721,10 +671,10 @@ namespace raft {
 	  " received append entry with mismatch term.  req.previous_log_index=" << ae::previous_log_index(req) <<
 	  " req.previous_log_term=" << ae::previous_log_term(req) <<
 	  " log_.entry(" << (ae::previous_log_index(req)-1) << ").term=" << log_.term(ae::previous_log_index(req)-1);
-	comm_.append_entry_response(ae::leader_id(req), get_peer_from_id(ae::leader_id(req)).address,
+	comm_.append_entry_response(req_leader_id, get_peer_from_id(req_leader_id).address,
 				    my_cluster_id(),
 				    current_term_,
-				    ae::term_number(req),
+				    req_term_number,
 				    ae::previous_log_index(req),
 				    ae::previous_log_index(req),
 				    false);
@@ -770,7 +720,7 @@ namespace raft {
 	  // FOLLOWER that go a transitional config that didn't get committed?
 	  if(configuration().is_transitional() && configuration().configuration_id() >= entry_index) {
 	    BOOST_ASSERT(config_change_client_ != nullptr);
-	    config_change_client_->on_configuration_response(FAIL);
+	    config_change_client_->on_configuration_response(messages_type::client_result_fail());
 	    config_change_client_ = nullptr;
 	  }
 	  configuration_.truncate_suffix(entry_index);
@@ -797,19 +747,19 @@ namespace raft {
       if (it != entry_end) {
 	BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " appending log entries [" << entry_index <<
-	  "," << (entry_index + std::distance(it,entry_end)) << ") starting at term " << it->term;
+	  "," << (entry_index + std::distance(it,entry_end)) << ") starting at term " << log_entry_traits_type::term(&*it);
 
 	entry_end_index += std::distance(it, entry_end);
-	std::pair<log_index_type, log_index_type> range = log_.append(it, entry_end);
+	std::pair<log_index_type, log_index_type> range = log_.append(it, entry_end, std::move(deleter));
 	BOOST_ASSERT(range.first == entry_index);
 
 	// Make sure any configuration entries added are reflected in the configuration manager.
 	uint64_t idx = range.first;
 	for(; it != entry_end; ++it, ++idx) {
-	  if (it->type == log_entry_type::CONFIGURATION) {
+	  if (log_entry_traits_type::is_configuration(&*it)) {
 	    BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	      " received new configuration at index " << idx;
-	    configuration_.add_logged_description(idx, it->configuration);
+	    configuration_.add_logged_description(idx, &log_entry_traits_type::configuration(&*it));
 	  }
 	}
       } else {
@@ -817,9 +767,14 @@ namespace raft {
 	// the entries but we may need to wait for a log sync before doing so (e.g. an overly aggressive leader
 	// could try to send us entries before our disk sync has occurred).
 	BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	  " received append_entry message from " << ae::leader_id(req) << " for range [" << ae::previous_log_index(req) <<
+	  " received append_entry message from " << req_leader_id << " for range [" << ae::previous_log_index(req) <<
 	  "," << (ae::previous_log_index(req) + ae::num_entries(req)) << ") but already had all log entries";
+	// Free up memory of the request
+	deleter();
       }
+
+      // N.B. The argument req is no longer valid at this point. It has either been free or has ownership has been passed to the
+      // log
 
       // Common case here is that we've got new entries that must be synced to disk before we respond to
       // the leader.  It is also possible that we already had everything the leader had and that it is already
@@ -830,18 +785,18 @@ namespace raft {
 	// The thing is that I don't know how to get the type of the corresponding lambda to store it.  I should
 	// take a gander at how ASIO handles a similar issue.
 	append_entry_continuation cont;
-	cont.leader_id = ae::leader_id(req);
+	cont.leader_id = req_leader_id;
 	cont.begin_index = entry_index;
 	cont.end_index = entry_end_index;
-	cont.term = ae::term_number(req);
+	cont.term = req_term_number;
 	append_entry_continuations_.insert(std::make_pair(cont.end_index, cont));
       } else {
 	// TODO: Can I respond to more than what was requested?  Possibly useful idea for pipelined append_entry
 	// requests in which we can sync the log once for multiple append_entries.
-	comm_.append_entry_response(ae::leader_id(req), get_peer_from_id(ae::leader_id(req)).address,
+	comm_.append_entry_response(req_leader_id, get_peer_from_id(req_leader_id).address,
 				    my_cluster_id(),
 				    current_term_,
-				    ae::term_number(req),
+				    req_term_number,
 				    entry_index,
 				    last_synced_index_,
 				    true);
@@ -1147,7 +1102,7 @@ namespace raft {
       // (see Section 3.6.2 from Ongaro's thesis).
       // Another rationale for getting commit index advanced has to do with the protocol for doing non-stale reads (that uses
       // RaftConsensus::getLastCommitIndex in logcabin); I need to understand this protocol.
-      log_.append_noop(current_term_);
+      log_.append(log_entry_traits_type::create_noop(current_term_));
       send_append_entries(clock_now);
     
       // TODO: As an optimization cancel any outstanding request_vote since they are not needed
@@ -1181,8 +1136,8 @@ namespace raft {
       // TODO: This should be async.
       for(auto idx = log_.start_index(); idx < log_.last_index(); ++idx) {
 	const log_entry_type & e(log_.entry(idx));
-	if (log_entry_type::CONFIGURATION == e.type) {
-	  configuration_.add_logged_description(idx, e.configuration);
+	if (log_entry_traits_type::is_configuration(&e)) {
+	  configuration_.add_logged_description(idx, &log_entry_traits_type::configuration(&e));
 	}
       }
 
@@ -1235,7 +1190,7 @@ namespace raft {
 		" some server in new configuration not making progress so rejecting configuration.";
 	      configuration().reset_staging_servers();
 	      BOOST_ASSERT(!bad_servers.servers.empty());
-	      config_change_client_->on_configuration_response(FAIL, bad_servers);
+	      config_change_client_->on_configuration_response(messages_type::client_result_fail(), bad_servers);
 	      config_change_client_ = nullptr;
 	    } else {
 	      BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
@@ -1244,7 +1199,7 @@ namespace raft {
 	  } else {
 	    // Append a transitional configuration entry to the log
 	    // and wait for it to commit before moving to stable.
-	    auto indices = log_.append_configuration(current_term_, configuration().get_transitional_configuration());
+	    auto indices = log_.append(log_entry_traits_type::create_configuration(current_term_, configuration().get_transitional_configuration()));
 	    // This will update the value of configuration() with the transitional config we just logged
 	    configuration_.add_transitional_description(indices.first);
 	    BOOST_ASSERT(configuration().is_transitional());
@@ -1259,14 +1214,14 @@ namespace raft {
       }
     }
 
-    void on_client_request(client_type & client, const client_request_type & req)
+    void on_client_request(client_type & client, typename client_request_traits_type::const_arg_type req)
     {
       switch(state_) {
       case FOLLOWER:
       case CANDIDATE:
 	{
 	  // Not leader don't bother.
-	  client.on_client_response(NOT_LEADER, 0, leader_id_);
+	  client.on_client_response(messages_type::client_result_not_leader(), 0, leader_id_);
 	  return;
 	}
       case LEADER:
@@ -1286,7 +1241,8 @@ namespace raft {
 	  // Append to the in memory log then we have to wait for
 	  // the new log entry to be replicated to a majority (TODO: to disk?)/committed before
 	  // returning to the client
-	  auto indices = log_.append_command(current_term_, req.get_command_data());
+	  // auto indices = log_.append_command(current_term_, req.get_command_data());
+	  auto indices = log_.append(log_entry_traits_type::create_command(current_term_, req));
 	  client_response_continuation cont;
 	  cont.client = &client;
 	  cont.index = indices.second-1;
@@ -1305,17 +1261,17 @@ namespace raft {
     {
       typedef set_configuration_request_traits_type scr;
       if (LEADER != state_) {
-	client.on_configuration_response(NOT_LEADER);
+	client.on_configuration_response(messages_type::client_result_not_leader());
 	return;
       }
 
       if (configuration().configuration_id() != scr::old_id(req)) {
-	client.on_configuration_response(FAIL);
+	client.on_configuration_response(messages_type::client_result_fail());
 	return;
       }
 
       if (!configuration().is_stable()) {
-	client.on_configuration_response(FAIL);
+	client.on_configuration_response(messages_type::client_result_fail());
 	return;
       }
 
@@ -1471,7 +1427,7 @@ namespace raft {
       }
     }
 
-    void on_append_entry(append_entry_arg_type req)
+    void on_append_entry(append_entry_arg_type req, std::function<void()> && deleter)
     {
       typedef append_entry_traits_type ae;
       if (ae::term_number(req) < current_term_) {
@@ -1483,7 +1439,7 @@ namespace raft {
 				    last_log_entry_index(),
 				    last_log_entry_index(),
 				    false);
-	ae::release(req);
+	deleter();
 	return;
       }
 
@@ -1498,7 +1454,7 @@ namespace raft {
 	BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " cannot advance to term " << ae::term_number(req) <<
 	  " due to outstanding log header sync.  Ignoring append_entry message.";
-	ae::release(req);
+	deleter();
 	return;
       }
 
@@ -1515,10 +1471,10 @@ namespace raft {
 	  ae::recipient_id(req) << " previous_log_term " << ae::previous_log_term(req) <<
 	  " previous_log_index " << ae::previous_log_index(req);
 	log_.sync_header();
-	append_entry_header_sync_continuations_.push_back(std::move(ae::pin(req)));
+	append_entry_header_sync_continuations_.push_back(std::make_pair(std::move(ae::pin(req)), std::move(deleter)));
       } else {
 	election_timeout_ = new_election_timeout();
-	internal_append_entry(req);
+	internal_append_entry(req, std::move(deleter));
       }
     }
 
@@ -1781,8 +1737,7 @@ namespace raft {
       }
       append_checkpoint_chunk_header_sync_continuations_.clear();
       for(auto & ae : append_entry_header_sync_continuations_) {
-	internal_append_entry(ae);
-	append_entry_traits_type::release(ae);
+	internal_append_entry(ae.first, std::move(ae.second));
       }
       append_entry_header_sync_continuations_.clear();
     
@@ -1907,13 +1862,9 @@ namespace raft {
 
     // Create a seed configuration record with a single server configuration for a log.
     // This should be run exactly once on a single server in a cluster.
-    static log_entry_type get_bootstrap_log_entry(const configuration_description_server_type & s)
+    static std::pair<const log_entry_type *, std::function<void()>> get_bootstrap_log_entry(uint64_t id, const char * address)
     {
-      log_entry_type le;
-      le.type = log_entry_type::CONFIGURATION;
-      le.term = 0;
-      le.configuration.from.servers.push_back(s);
-      return le;
+      return log_entry_traits_type::create_bootstrap_log_entry(id, address);
     }
 
     // Observers for testing

@@ -6,42 +6,68 @@
 
 #include "flatbuffers/flatbuffers.h"
 
+// Ensure the included flatbuffers.h is the same version as when this file was
+// generated, otherwise it may not be compatible.
+static_assert(FLATBUFFERS_VERSION_MAJOR == 23 &&
+              FLATBUFFERS_VERSION_MINOR == 3 &&
+              FLATBUFFERS_VERSION_REVISION == 3,
+             "Non-compatible flatbuffers version included");
+
 namespace raft {
 namespace fbs {
 
 struct server_description;
+struct server_descriptionBuilder;
 
 struct simple_configuration_description;
+struct simple_configuration_descriptionBuilder;
 
 struct configuration_description;
-
-struct request_vote;
-
-struct vote_response;
+struct configuration_descriptionBuilder;
 
 struct log_entry;
+struct log_entryBuilder;
+
+struct request_vote;
+struct request_voteBuilder;
+
+struct vote_response;
+struct vote_responseBuilder;
+
+struct log_entries;
+struct log_entriesBuilder;
 
 struct append_entry;
+struct append_entryBuilder;
 
 struct append_response;
+struct append_responseBuilder;
 
 struct configuration_checkpoint;
+struct configuration_checkpointBuilder;
 
 struct append_checkpoint_chunk;
+struct append_checkpoint_chunkBuilder;
 
 struct append_checkpoint_chunk_response;
+struct append_checkpoint_chunk_responseBuilder;
 
 struct client_request;
+struct client_requestBuilder;
 
 struct client_response;
+struct client_responseBuilder;
 
 struct set_configuration_request;
+struct set_configuration_requestBuilder;
 
 struct set_configuration_response;
+struct set_configuration_responseBuilder;
 
 struct raft_message;
+struct raft_messageBuilder;
 
-enum log_entry_type {
+enum log_entry_type : int8_t {
   log_entry_type_COMMAND = 0,
   log_entry_type_CONFIGURATION = 1,
   log_entry_type_NOOP = 2,
@@ -49,8 +75,17 @@ enum log_entry_type {
   log_entry_type_MAX = log_entry_type_NOOP
 };
 
-inline const char **EnumNameslog_entry_type() {
-  static const char *names[] = {
+inline const log_entry_type (&EnumValueslog_entry_type())[3] {
+  static const log_entry_type values[] = {
+    log_entry_type_COMMAND,
+    log_entry_type_CONFIGURATION,
+    log_entry_type_NOOP
+  };
+  return values;
+}
+
+inline const char * const *EnumNameslog_entry_type() {
+  static const char * const names[4] = {
     "COMMAND",
     "CONFIGURATION",
     "NOOP",
@@ -60,11 +95,12 @@ inline const char **EnumNameslog_entry_type() {
 }
 
 inline const char *EnumNamelog_entry_type(log_entry_type e) {
-  const size_t index = static_cast<int>(e);
+  if (::flatbuffers::IsOutRange(e, log_entry_type_COMMAND, log_entry_type_NOOP)) return "";
+  const size_t index = static_cast<size_t>(e);
   return EnumNameslog_entry_type()[index];
 }
 
-enum client_result {
+enum client_result : int8_t {
   client_result_SUCCESS = 0,
   client_result_FAIL = 1,
   client_result_RETRY = 2,
@@ -73,8 +109,18 @@ enum client_result {
   client_result_MAX = client_result_NOT_LEADER
 };
 
-inline const char **EnumNamesclient_result() {
-  static const char *names[] = {
+inline const client_result (&EnumValuesclient_result())[4] {
+  static const client_result values[] = {
+    client_result_SUCCESS,
+    client_result_FAIL,
+    client_result_RETRY,
+    client_result_NOT_LEADER
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesclient_result() {
+  static const char * const names[5] = {
     "SUCCESS",
     "FAIL",
     "RETRY",
@@ -85,34 +131,68 @@ inline const char **EnumNamesclient_result() {
 }
 
 inline const char *EnumNameclient_result(client_result e) {
-  const size_t index = static_cast<int>(e);
+  if (::flatbuffers::IsOutRange(e, client_result_SUCCESS, client_result_NOT_LEADER)) return "";
+  const size_t index = static_cast<size_t>(e);
   return EnumNamesclient_result()[index];
 }
 
-enum any_message {
+enum any_message : uint8_t {
   any_message_NONE = 0,
   any_message_request_vote = 1,
   any_message_vote_response = 2,
   any_message_append_entry = 3,
   any_message_append_response = 4,
+  any_message_client_request = 5,
+  any_message_client_response = 6,
+  any_message_set_configuration_request = 7,
+  any_message_set_configuration_response = 8,
+  any_message_configuration_checkpoint = 9,
+  any_message_append_checkpoint_chunk = 10,
+  any_message_append_checkpoint_chunk_response = 11,
   any_message_MIN = any_message_NONE,
-  any_message_MAX = any_message_append_response
+  any_message_MAX = any_message_append_checkpoint_chunk_response
 };
 
-inline const char **EnumNamesany_message() {
-  static const char *names[] = {
+inline const any_message (&EnumValuesany_message())[12] {
+  static const any_message values[] = {
+    any_message_NONE,
+    any_message_request_vote,
+    any_message_vote_response,
+    any_message_append_entry,
+    any_message_append_response,
+    any_message_client_request,
+    any_message_client_response,
+    any_message_set_configuration_request,
+    any_message_set_configuration_response,
+    any_message_configuration_checkpoint,
+    any_message_append_checkpoint_chunk,
+    any_message_append_checkpoint_chunk_response
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesany_message() {
+  static const char * const names[13] = {
     "NONE",
     "request_vote",
     "vote_response",
     "append_entry",
     "append_response",
+    "client_request",
+    "client_response",
+    "set_configuration_request",
+    "set_configuration_response",
+    "configuration_checkpoint",
+    "append_checkpoint_chunk",
+    "append_checkpoint_chunk_response",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameany_message(any_message e) {
-  const size_t index = static_cast<int>(e);
+  if (::flatbuffers::IsOutRange(e, any_message_NONE, any_message_append_checkpoint_chunk_response)) return "";
+  const size_t index = static_cast<size_t>(e);
   return EnumNamesany_message()[index];
 }
 
@@ -120,190 +200,312 @@ template<typename T> struct any_messageTraits {
   static const any_message enum_value = any_message_NONE;
 };
 
-template<> struct any_messageTraits<request_vote> {
+template<> struct any_messageTraits<raft::fbs::request_vote> {
   static const any_message enum_value = any_message_request_vote;
 };
 
-template<> struct any_messageTraits<vote_response> {
+template<> struct any_messageTraits<raft::fbs::vote_response> {
   static const any_message enum_value = any_message_vote_response;
 };
 
-template<> struct any_messageTraits<append_entry> {
+template<> struct any_messageTraits<raft::fbs::append_entry> {
   static const any_message enum_value = any_message_append_entry;
 };
 
-template<> struct any_messageTraits<append_response> {
+template<> struct any_messageTraits<raft::fbs::append_response> {
   static const any_message enum_value = any_message_append_response;
 };
 
-bool Verifyany_message(flatbuffers::Verifier &verifier, const void *obj, any_message type);
-bool Verifyany_messageVector(flatbuffers::Verifier &verifier, const flatbuffers::Vector<flatbuffers::Offset<void>> *values, const flatbuffers::Vector<uint8_t> *types);
+template<> struct any_messageTraits<raft::fbs::client_request> {
+  static const any_message enum_value = any_message_client_request;
+};
 
-struct server_description FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+template<> struct any_messageTraits<raft::fbs::client_response> {
+  static const any_message enum_value = any_message_client_response;
+};
+
+template<> struct any_messageTraits<raft::fbs::set_configuration_request> {
+  static const any_message enum_value = any_message_set_configuration_request;
+};
+
+template<> struct any_messageTraits<raft::fbs::set_configuration_response> {
+  static const any_message enum_value = any_message_set_configuration_response;
+};
+
+template<> struct any_messageTraits<raft::fbs::configuration_checkpoint> {
+  static const any_message enum_value = any_message_configuration_checkpoint;
+};
+
+template<> struct any_messageTraits<raft::fbs::append_checkpoint_chunk> {
+  static const any_message enum_value = any_message_append_checkpoint_chunk;
+};
+
+template<> struct any_messageTraits<raft::fbs::append_checkpoint_chunk_response> {
+  static const any_message enum_value = any_message_append_checkpoint_chunk_response;
+};
+
+bool Verifyany_message(::flatbuffers::Verifier &verifier, const void *obj, any_message type);
+bool Verifyany_messageVector(::flatbuffers::Verifier &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<uint8_t> *types);
+
+struct server_description FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef server_descriptionBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_ID = 4,
     VT_ADDRESS = 6
   };
   uint64_t id() const {
     return GetField<uint64_t>(VT_ID, 0);
   }
-  const flatbuffers::String *address() const {
-    return GetPointer<const flatbuffers::String *>(VT_ADDRESS);
+  const ::flatbuffers::String *address() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_ADDRESS);
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint64_t>(verifier, VT_ID) &&
-           VerifyField<flatbuffers::uoffset_t>(verifier, VT_ADDRESS) &&
-           verifier.Verify(address()) &&
+           VerifyField<uint64_t>(verifier, VT_ID, 8) &&
+           VerifyOffset(verifier, VT_ADDRESS) &&
+           verifier.VerifyString(address()) &&
            verifier.EndTable();
   }
 };
 
 struct server_descriptionBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
+  typedef server_description Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
   void add_id(uint64_t id) {
     fbb_.AddElement<uint64_t>(server_description::VT_ID, id, 0);
   }
-  void add_address(flatbuffers::Offset<flatbuffers::String> address) {
+  void add_address(::flatbuffers::Offset<::flatbuffers::String> address) {
     fbb_.AddOffset(server_description::VT_ADDRESS, address);
   }
-  server_descriptionBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit server_descriptionBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  server_descriptionBuilder &operator=(const server_descriptionBuilder &);
-  flatbuffers::Offset<server_description> Finish() {
-    const auto end = fbb_.EndTable(start_, 2);
-    auto o = flatbuffers::Offset<server_description>(end);
+  ::flatbuffers::Offset<server_description> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<server_description>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<server_description> Createserver_description(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<server_description> Createserver_description(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t id = 0,
-    flatbuffers::Offset<flatbuffers::String> address = 0) {
+    ::flatbuffers::Offset<::flatbuffers::String> address = 0) {
   server_descriptionBuilder builder_(_fbb);
   builder_.add_id(id);
   builder_.add_address(address);
   return builder_.Finish();
 }
 
-inline flatbuffers::Offset<server_description> Createserver_descriptionDirect(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<server_description> Createserver_descriptionDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t id = 0,
     const char *address = nullptr) {
-  return Createserver_description(
+  auto address__ = address ? _fbb.CreateString(address) : 0;
+  return raft::fbs::Createserver_description(
       _fbb,
       id,
-      address ? _fbb.CreateString(address) : 0);
+      address__);
 }
 
-struct simple_configuration_description FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+struct simple_configuration_description FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef simple_configuration_descriptionBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_SERVERS = 4
   };
-  const flatbuffers::Vector<flatbuffers::Offset<server_description>> *servers() const {
-    return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<server_description>> *>(VT_SERVERS);
+  const ::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::server_description>> *servers() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::server_description>> *>(VT_SERVERS);
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<flatbuffers::uoffset_t>(verifier, VT_SERVERS) &&
-           verifier.Verify(servers()) &&
+           VerifyOffset(verifier, VT_SERVERS) &&
+           verifier.VerifyVector(servers()) &&
            verifier.VerifyVectorOfTables(servers()) &&
            verifier.EndTable();
   }
 };
 
 struct simple_configuration_descriptionBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
-  void add_servers(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<server_description>>> servers) {
+  typedef simple_configuration_description Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_servers(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::server_description>>> servers) {
     fbb_.AddOffset(simple_configuration_description::VT_SERVERS, servers);
   }
-  simple_configuration_descriptionBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit simple_configuration_descriptionBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  simple_configuration_descriptionBuilder &operator=(const simple_configuration_descriptionBuilder &);
-  flatbuffers::Offset<simple_configuration_description> Finish() {
-    const auto end = fbb_.EndTable(start_, 1);
-    auto o = flatbuffers::Offset<simple_configuration_description>(end);
+  ::flatbuffers::Offset<simple_configuration_description> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<simple_configuration_description>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<simple_configuration_description> Createsimple_configuration_description(
-    flatbuffers::FlatBufferBuilder &_fbb,
-    flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<server_description>>> servers = 0) {
+inline ::flatbuffers::Offset<simple_configuration_description> Createsimple_configuration_description(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::server_description>>> servers = 0) {
   simple_configuration_descriptionBuilder builder_(_fbb);
   builder_.add_servers(servers);
   return builder_.Finish();
 }
 
-inline flatbuffers::Offset<simple_configuration_description> Createsimple_configuration_descriptionDirect(
-    flatbuffers::FlatBufferBuilder &_fbb,
-    const std::vector<flatbuffers::Offset<server_description>> *servers = nullptr) {
-  return Createsimple_configuration_description(
+inline ::flatbuffers::Offset<simple_configuration_description> Createsimple_configuration_descriptionDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<::flatbuffers::Offset<raft::fbs::server_description>> *servers = nullptr) {
+  auto servers__ = servers ? _fbb.CreateVector<::flatbuffers::Offset<raft::fbs::server_description>>(*servers) : 0;
+  return raft::fbs::Createsimple_configuration_description(
       _fbb,
-      servers ? _fbb.CreateVector<flatbuffers::Offset<server_description>>(*servers) : 0);
+      servers__);
 }
 
-struct configuration_description FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+struct configuration_description FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef configuration_descriptionBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_FROM = 4,
     VT_TO = 6
   };
-  const simple_configuration_description *from() const {
-    return GetPointer<const simple_configuration_description *>(VT_FROM);
+  const raft::fbs::simple_configuration_description *from() const {
+    return GetPointer<const raft::fbs::simple_configuration_description *>(VT_FROM);
   }
-  const simple_configuration_description *to() const {
-    return GetPointer<const simple_configuration_description *>(VT_TO);
+  const raft::fbs::simple_configuration_description *to() const {
+    return GetPointer<const raft::fbs::simple_configuration_description *>(VT_TO);
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<flatbuffers::uoffset_t>(verifier, VT_FROM) &&
+           VerifyOffset(verifier, VT_FROM) &&
            verifier.VerifyTable(from()) &&
-           VerifyField<flatbuffers::uoffset_t>(verifier, VT_TO) &&
+           VerifyOffset(verifier, VT_TO) &&
            verifier.VerifyTable(to()) &&
            verifier.EndTable();
   }
 };
 
 struct configuration_descriptionBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
-  void add_from(flatbuffers::Offset<simple_configuration_description> from) {
+  typedef configuration_description Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_from(::flatbuffers::Offset<raft::fbs::simple_configuration_description> from) {
     fbb_.AddOffset(configuration_description::VT_FROM, from);
   }
-  void add_to(flatbuffers::Offset<simple_configuration_description> to) {
+  void add_to(::flatbuffers::Offset<raft::fbs::simple_configuration_description> to) {
     fbb_.AddOffset(configuration_description::VT_TO, to);
   }
-  configuration_descriptionBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit configuration_descriptionBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  configuration_descriptionBuilder &operator=(const configuration_descriptionBuilder &);
-  flatbuffers::Offset<configuration_description> Finish() {
-    const auto end = fbb_.EndTable(start_, 2);
-    auto o = flatbuffers::Offset<configuration_description>(end);
+  ::flatbuffers::Offset<configuration_description> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<configuration_description>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<configuration_description> Createconfiguration_description(
-    flatbuffers::FlatBufferBuilder &_fbb,
-    flatbuffers::Offset<simple_configuration_description> from = 0,
-    flatbuffers::Offset<simple_configuration_description> to = 0) {
+inline ::flatbuffers::Offset<configuration_description> Createconfiguration_description(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<raft::fbs::simple_configuration_description> from = 0,
+    ::flatbuffers::Offset<raft::fbs::simple_configuration_description> to = 0) {
   configuration_descriptionBuilder builder_(_fbb);
   builder_.add_to(to);
   builder_.add_from(from);
   return builder_.Finish();
 }
 
-struct request_vote FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+struct log_entry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef log_entryBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_TYPE = 4,
+    VT_TERM = 6,
+    VT_DATA = 8,
+    VT_CONFIGURATION = 10
+  };
+  raft::fbs::log_entry_type type() const {
+    return static_cast<raft::fbs::log_entry_type>(GetField<int8_t>(VT_TYPE, 0));
+  }
+  uint64_t term() const {
+    return GetField<uint64_t>(VT_TERM, 0);
+  }
+  const ::flatbuffers::String *data() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_DATA);
+  }
+  const raft::fbs::configuration_description *configuration() const {
+    return GetPointer<const raft::fbs::configuration_description *>(VT_CONFIGURATION);
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<int8_t>(verifier, VT_TYPE, 1) &&
+           VerifyField<uint64_t>(verifier, VT_TERM, 8) &&
+           VerifyOffset(verifier, VT_DATA) &&
+           verifier.VerifyString(data()) &&
+           VerifyOffset(verifier, VT_CONFIGURATION) &&
+           verifier.VerifyTable(configuration()) &&
+           verifier.EndTable();
+  }
+};
+
+struct log_entryBuilder {
+  typedef log_entry Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_type(raft::fbs::log_entry_type type) {
+    fbb_.AddElement<int8_t>(log_entry::VT_TYPE, static_cast<int8_t>(type), 0);
+  }
+  void add_term(uint64_t term) {
+    fbb_.AddElement<uint64_t>(log_entry::VT_TERM, term, 0);
+  }
+  void add_data(::flatbuffers::Offset<::flatbuffers::String> data) {
+    fbb_.AddOffset(log_entry::VT_DATA, data);
+  }
+  void add_configuration(::flatbuffers::Offset<raft::fbs::configuration_description> configuration) {
+    fbb_.AddOffset(log_entry::VT_CONFIGURATION, configuration);
+  }
+  explicit log_entryBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<log_entry> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<log_entry>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<log_entry> Createlog_entry(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    raft::fbs::log_entry_type type = raft::fbs::log_entry_type_COMMAND,
+    uint64_t term = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> data = 0,
+    ::flatbuffers::Offset<raft::fbs::configuration_description> configuration = 0) {
+  log_entryBuilder builder_(_fbb);
+  builder_.add_term(term);
+  builder_.add_configuration(configuration);
+  builder_.add_data(data);
+  builder_.add_type(type);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<log_entry> Createlog_entryDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    raft::fbs::log_entry_type type = raft::fbs::log_entry_type_COMMAND,
+    uint64_t term = 0,
+    const char *data = nullptr,
+    ::flatbuffers::Offset<raft::fbs::configuration_description> configuration = 0) {
+  auto data__ = data ? _fbb.CreateString(data) : 0;
+  return raft::fbs::Createlog_entry(
+      _fbb,
+      type,
+      term,
+      data__,
+      configuration);
+}
+
+struct request_vote FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef request_voteBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_RECIPIENT_ID = 4,
     VT_TERM_NUMBER = 6,
     VT_CANDIDATE_ID = 8,
@@ -325,20 +527,21 @@ struct request_vote FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   uint64_t last_log_term() const {
     return GetField<uint64_t>(VT_LAST_LOG_TERM, 0);
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID) &&
-           VerifyField<uint64_t>(verifier, VT_TERM_NUMBER) &&
-           VerifyField<uint64_t>(verifier, VT_CANDIDATE_ID) &&
-           VerifyField<uint64_t>(verifier, VT_LAST_LOG_INDEX) &&
-           VerifyField<uint64_t>(verifier, VT_LAST_LOG_TERM) &&
+           VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID, 8) &&
+           VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
+           VerifyField<uint64_t>(verifier, VT_CANDIDATE_ID, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LAST_LOG_INDEX, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LAST_LOG_TERM, 8) &&
            verifier.EndTable();
   }
 };
 
 struct request_voteBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
+  typedef request_vote Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
   void add_recipient_id(uint64_t recipient_id) {
     fbb_.AddElement<uint64_t>(request_vote::VT_RECIPIENT_ID, recipient_id, 0);
   }
@@ -354,20 +557,19 @@ struct request_voteBuilder {
   void add_last_log_term(uint64_t last_log_term) {
     fbb_.AddElement<uint64_t>(request_vote::VT_LAST_LOG_TERM, last_log_term, 0);
   }
-  request_voteBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit request_voteBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  request_voteBuilder &operator=(const request_voteBuilder &);
-  flatbuffers::Offset<request_vote> Finish() {
-    const auto end = fbb_.EndTable(start_, 5);
-    auto o = flatbuffers::Offset<request_vote>(end);
+  ::flatbuffers::Offset<request_vote> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<request_vote>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<request_vote> Createrequest_vote(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<request_vote> Createrequest_vote(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t candidate_id = 0,
@@ -382,8 +584,9 @@ inline flatbuffers::Offset<request_vote> Createrequest_vote(
   return builder_.Finish();
 }
 
-struct vote_response FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+struct vote_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef vote_responseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_PEER_ID = 4,
     VT_TERM_NUMBER = 6,
     VT_REQUEST_TERM_NUMBER = 8,
@@ -401,19 +604,20 @@ struct vote_response FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   bool granted() const {
     return GetField<uint8_t>(VT_GRANTED, 0) != 0;
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint64_t>(verifier, VT_PEER_ID) &&
-           VerifyField<uint64_t>(verifier, VT_TERM_NUMBER) &&
-           VerifyField<uint64_t>(verifier, VT_REQUEST_TERM_NUMBER) &&
-           VerifyField<uint8_t>(verifier, VT_GRANTED) &&
+           VerifyField<uint64_t>(verifier, VT_PEER_ID, 8) &&
+           VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
+           VerifyField<uint64_t>(verifier, VT_REQUEST_TERM_NUMBER, 8) &&
+           VerifyField<uint8_t>(verifier, VT_GRANTED, 1) &&
            verifier.EndTable();
   }
 };
 
 struct vote_responseBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
+  typedef vote_response Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
   void add_peer_id(uint64_t peer_id) {
     fbb_.AddElement<uint64_t>(vote_response::VT_PEER_ID, peer_id, 0);
   }
@@ -426,20 +630,19 @@ struct vote_responseBuilder {
   void add_granted(bool granted) {
     fbb_.AddElement<uint8_t>(vote_response::VT_GRANTED, static_cast<uint8_t>(granted), 0);
   }
-  vote_responseBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit vote_responseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  vote_responseBuilder &operator=(const vote_responseBuilder &);
-  flatbuffers::Offset<vote_response> Finish() {
-    const auto end = fbb_.EndTable(start_, 4);
-    auto o = flatbuffers::Offset<vote_response>(end);
+  ::flatbuffers::Offset<vote_response> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<vote_response>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<vote_response> Createvote_response(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<vote_response> Createvote_response(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t peer_id = 0,
     uint64_t term_number = 0,
     uint64_t request_term_number = 0,
@@ -452,101 +655,72 @@ inline flatbuffers::Offset<vote_response> Createvote_response(
   return builder_.Finish();
 }
 
-struct log_entry FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
-    VT_TYPE = 4,
-    VT_TERM = 6,
-    VT_DATA = 8,
-    VT_CONFIGURATION = 10
+struct log_entries FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef log_entriesBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ENTRY = 4
   };
-  log_entry_type type() const {
-    return static_cast<log_entry_type>(GetField<int8_t>(VT_TYPE, 0));
+  const ::flatbuffers::Vector<uint8_t> *entry() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_ENTRY);
   }
-  uint64_t term() const {
-    return GetField<uint64_t>(VT_TERM, 0);
+  const raft::fbs::log_entry *entry_nested_root() const {
+    return ::flatbuffers::GetRoot<raft::fbs::log_entry>(entry()->Data());
   }
-  const flatbuffers::String *data() const {
-    return GetPointer<const flatbuffers::String *>(VT_DATA);
-  }
-  const configuration_description *configuration() const {
-    return GetPointer<const configuration_description *>(VT_CONFIGURATION);
-  }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<int8_t>(verifier, VT_TYPE) &&
-           VerifyField<uint64_t>(verifier, VT_TERM) &&
-           VerifyField<flatbuffers::uoffset_t>(verifier, VT_DATA) &&
-           verifier.Verify(data()) &&
-           VerifyField<flatbuffers::uoffset_t>(verifier, VT_CONFIGURATION) &&
-           verifier.VerifyTable(configuration()) &&
+           VerifyOffset(verifier, VT_ENTRY) &&
+           verifier.VerifyVector(entry()) &&
+           verifier.VerifyNestedFlatBuffer<raft::fbs::log_entry>(entry(), nullptr) &&
            verifier.EndTable();
   }
 };
 
-struct log_entryBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
-  void add_type(log_entry_type type) {
-    fbb_.AddElement<int8_t>(log_entry::VT_TYPE, static_cast<int8_t>(type), 0);
+struct log_entriesBuilder {
+  typedef log_entries Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_entry(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> entry) {
+    fbb_.AddOffset(log_entries::VT_ENTRY, entry);
   }
-  void add_term(uint64_t term) {
-    fbb_.AddElement<uint64_t>(log_entry::VT_TERM, term, 0);
-  }
-  void add_data(flatbuffers::Offset<flatbuffers::String> data) {
-    fbb_.AddOffset(log_entry::VT_DATA, data);
-  }
-  void add_configuration(flatbuffers::Offset<configuration_description> configuration) {
-    fbb_.AddOffset(log_entry::VT_CONFIGURATION, configuration);
-  }
-  log_entryBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit log_entriesBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  log_entryBuilder &operator=(const log_entryBuilder &);
-  flatbuffers::Offset<log_entry> Finish() {
-    const auto end = fbb_.EndTable(start_, 4);
-    auto o = flatbuffers::Offset<log_entry>(end);
+  ::flatbuffers::Offset<log_entries> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<log_entries>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<log_entry> Createlog_entry(
-    flatbuffers::FlatBufferBuilder &_fbb,
-    log_entry_type type = log_entry_type_COMMAND,
-    uint64_t term = 0,
-    flatbuffers::Offset<flatbuffers::String> data = 0,
-    flatbuffers::Offset<configuration_description> configuration = 0) {
-  log_entryBuilder builder_(_fbb);
-  builder_.add_term(term);
-  builder_.add_configuration(configuration);
-  builder_.add_data(data);
-  builder_.add_type(type);
+inline ::flatbuffers::Offset<log_entries> Createlog_entries(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> entry = 0) {
+  log_entriesBuilder builder_(_fbb);
+  builder_.add_entry(entry);
   return builder_.Finish();
 }
 
-inline flatbuffers::Offset<log_entry> Createlog_entryDirect(
-    flatbuffers::FlatBufferBuilder &_fbb,
-    log_entry_type type = log_entry_type_COMMAND,
-    uint64_t term = 0,
-    const char *data = nullptr,
-    flatbuffers::Offset<configuration_description> configuration = 0) {
-  return Createlog_entry(
+inline ::flatbuffers::Offset<log_entries> Createlog_entriesDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    const std::vector<uint8_t> *entry = nullptr) {
+  auto entry__ = entry ? _fbb.CreateVector<uint8_t>(*entry) : 0;
+  return raft::fbs::Createlog_entries(
       _fbb,
-      type,
-      term,
-      data ? _fbb.CreateString(data) : 0,
-      configuration);
+      entry__);
 }
 
-struct append_entry FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+struct append_entry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef append_entryBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_RECIPIENT_ID = 4,
     VT_TERM_NUMBER = 6,
     VT_LEADER_ID = 8,
     VT_PREVIOUS_LOG_INDEX = 10,
     VT_PREVIOUS_LOG_TERM = 12,
     VT_LEADER_COMMIT_INDEX = 14,
-    VT_ENTRY = 16
+    VT_ENTRY = 16,
+    VT_ENTRIES = 18
   };
   uint64_t recipient_id() const {
     return GetField<uint64_t>(VT_RECIPIENT_ID, 0);
@@ -566,27 +740,34 @@ struct append_entry FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   uint64_t leader_commit_index() const {
     return GetField<uint64_t>(VT_LEADER_COMMIT_INDEX, 0);
   }
-  const flatbuffers::Vector<flatbuffers::Offset<log_entry>> *entry() const {
-    return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<log_entry>> *>(VT_ENTRY);
+  const ::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entry>> *entry() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entry>> *>(VT_ENTRY);
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  const ::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>> *entries() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>> *>(VT_ENTRIES);
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID) &&
-           VerifyField<uint64_t>(verifier, VT_TERM_NUMBER) &&
-           VerifyField<uint64_t>(verifier, VT_LEADER_ID) &&
-           VerifyField<uint64_t>(verifier, VT_PREVIOUS_LOG_INDEX) &&
-           VerifyField<uint64_t>(verifier, VT_PREVIOUS_LOG_TERM) &&
-           VerifyField<uint64_t>(verifier, VT_LEADER_COMMIT_INDEX) &&
-           VerifyField<flatbuffers::uoffset_t>(verifier, VT_ENTRY) &&
-           verifier.Verify(entry()) &&
+           VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID, 8) &&
+           VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LEADER_ID, 8) &&
+           VerifyField<uint64_t>(verifier, VT_PREVIOUS_LOG_INDEX, 8) &&
+           VerifyField<uint64_t>(verifier, VT_PREVIOUS_LOG_TERM, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LEADER_COMMIT_INDEX, 8) &&
+           VerifyOffset(verifier, VT_ENTRY) &&
+           verifier.VerifyVector(entry()) &&
            verifier.VerifyVectorOfTables(entry()) &&
+           VerifyOffset(verifier, VT_ENTRIES) &&
+           verifier.VerifyVector(entries()) &&
+           verifier.VerifyVectorOfTables(entries()) &&
            verifier.EndTable();
   }
 };
 
 struct append_entryBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
+  typedef append_entry Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
   void add_recipient_id(uint64_t recipient_id) {
     fbb_.AddElement<uint64_t>(append_entry::VT_RECIPIENT_ID, recipient_id, 0);
   }
@@ -605,30 +786,33 @@ struct append_entryBuilder {
   void add_leader_commit_index(uint64_t leader_commit_index) {
     fbb_.AddElement<uint64_t>(append_entry::VT_LEADER_COMMIT_INDEX, leader_commit_index, 0);
   }
-  void add_entry(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<log_entry>>> entry) {
+  void add_entry(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entry>>> entry) {
     fbb_.AddOffset(append_entry::VT_ENTRY, entry);
   }
-  append_entryBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  void add_entries(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>>> entries) {
+    fbb_.AddOffset(append_entry::VT_ENTRIES, entries);
+  }
+  explicit append_entryBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  append_entryBuilder &operator=(const append_entryBuilder &);
-  flatbuffers::Offset<append_entry> Finish() {
-    const auto end = fbb_.EndTable(start_, 7);
-    auto o = flatbuffers::Offset<append_entry>(end);
+  ::flatbuffers::Offset<append_entry> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<append_entry>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<append_entry> Createappend_entry(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<append_entry> Createappend_entry(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t leader_id = 0,
     uint64_t previous_log_index = 0,
     uint64_t previous_log_term = 0,
     uint64_t leader_commit_index = 0,
-    flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<log_entry>>> entry = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entry>>> entry = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>>> entries = 0) {
   append_entryBuilder builder_(_fbb);
   builder_.add_leader_commit_index(leader_commit_index);
   builder_.add_previous_log_term(previous_log_term);
@@ -636,20 +820,24 @@ inline flatbuffers::Offset<append_entry> Createappend_entry(
   builder_.add_leader_id(leader_id);
   builder_.add_term_number(term_number);
   builder_.add_recipient_id(recipient_id);
+  builder_.add_entries(entries);
   builder_.add_entry(entry);
   return builder_.Finish();
 }
 
-inline flatbuffers::Offset<append_entry> Createappend_entryDirect(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<append_entry> Createappend_entryDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t leader_id = 0,
     uint64_t previous_log_index = 0,
     uint64_t previous_log_term = 0,
     uint64_t leader_commit_index = 0,
-    const std::vector<flatbuffers::Offset<log_entry>> *entry = nullptr) {
-  return Createappend_entry(
+    const std::vector<::flatbuffers::Offset<raft::fbs::log_entry>> *entry = nullptr,
+    const std::vector<::flatbuffers::Offset<raft::fbs::log_entries>> *entries = nullptr) {
+  auto entry__ = entry ? _fbb.CreateVector<::flatbuffers::Offset<raft::fbs::log_entry>>(*entry) : 0;
+  auto entries__ = entries ? _fbb.CreateVector<::flatbuffers::Offset<raft::fbs::log_entries>>(*entries) : 0;
+  return raft::fbs::Createappend_entry(
       _fbb,
       recipient_id,
       term_number,
@@ -657,11 +845,13 @@ inline flatbuffers::Offset<append_entry> Createappend_entryDirect(
       previous_log_index,
       previous_log_term,
       leader_commit_index,
-      entry ? _fbb.CreateVector<flatbuffers::Offset<log_entry>>(*entry) : 0);
+      entry__,
+      entries__);
 }
 
-struct append_response FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+struct append_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef append_responseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_RECIPIENT_ID = 4,
     VT_TERM_NUMBER = 6,
     VT_REQUEST_TERM_NUMBER = 8,
@@ -687,21 +877,22 @@ struct append_response FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   bool success() const {
     return GetField<uint8_t>(VT_SUCCESS, 0) != 0;
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID) &&
-           VerifyField<uint64_t>(verifier, VT_TERM_NUMBER) &&
-           VerifyField<uint64_t>(verifier, VT_REQUEST_TERM_NUMBER) &&
-           VerifyField<uint64_t>(verifier, VT_BEGIN_INDEX) &&
-           VerifyField<uint64_t>(verifier, VT_LAST_INDEX) &&
-           VerifyField<uint8_t>(verifier, VT_SUCCESS) &&
+           VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID, 8) &&
+           VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
+           VerifyField<uint64_t>(verifier, VT_REQUEST_TERM_NUMBER, 8) &&
+           VerifyField<uint64_t>(verifier, VT_BEGIN_INDEX, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LAST_INDEX, 8) &&
+           VerifyField<uint8_t>(verifier, VT_SUCCESS, 1) &&
            verifier.EndTable();
   }
 };
 
 struct append_responseBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
+  typedef append_response Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
   void add_recipient_id(uint64_t recipient_id) {
     fbb_.AddElement<uint64_t>(append_response::VT_RECIPIENT_ID, recipient_id, 0);
   }
@@ -720,20 +911,19 @@ struct append_responseBuilder {
   void add_success(bool success) {
     fbb_.AddElement<uint8_t>(append_response::VT_SUCCESS, static_cast<uint8_t>(success), 0);
   }
-  append_responseBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit append_responseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  append_responseBuilder &operator=(const append_responseBuilder &);
-  flatbuffers::Offset<append_response> Finish() {
-    const auto end = fbb_.EndTable(start_, 6);
-    auto o = flatbuffers::Offset<append_response>(end);
+  ::flatbuffers::Offset<append_response> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<append_response>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<append_response> Createappend_response(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<append_response> Createappend_response(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t request_term_number = 0,
@@ -750,59 +940,61 @@ inline flatbuffers::Offset<append_response> Createappend_response(
   return builder_.Finish();
 }
 
-struct configuration_checkpoint FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+struct configuration_checkpoint FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef configuration_checkpointBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_INDEX = 4,
     VT_DESCRIPTION = 6
   };
   uint64_t index() const {
     return GetField<uint64_t>(VT_INDEX, 0);
   }
-  const configuration_description *description() const {
-    return GetPointer<const configuration_description *>(VT_DESCRIPTION);
+  const raft::fbs::configuration_description *description() const {
+    return GetPointer<const raft::fbs::configuration_description *>(VT_DESCRIPTION);
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint64_t>(verifier, VT_INDEX) &&
-           VerifyField<flatbuffers::uoffset_t>(verifier, VT_DESCRIPTION) &&
+           VerifyField<uint64_t>(verifier, VT_INDEX, 8) &&
+           VerifyOffset(verifier, VT_DESCRIPTION) &&
            verifier.VerifyTable(description()) &&
            verifier.EndTable();
   }
 };
 
 struct configuration_checkpointBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
+  typedef configuration_checkpoint Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
   void add_index(uint64_t index) {
     fbb_.AddElement<uint64_t>(configuration_checkpoint::VT_INDEX, index, 0);
   }
-  void add_description(flatbuffers::Offset<configuration_description> description) {
+  void add_description(::flatbuffers::Offset<raft::fbs::configuration_description> description) {
     fbb_.AddOffset(configuration_checkpoint::VT_DESCRIPTION, description);
   }
-  configuration_checkpointBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit configuration_checkpointBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  configuration_checkpointBuilder &operator=(const configuration_checkpointBuilder &);
-  flatbuffers::Offset<configuration_checkpoint> Finish() {
-    const auto end = fbb_.EndTable(start_, 2);
-    auto o = flatbuffers::Offset<configuration_checkpoint>(end);
+  ::flatbuffers::Offset<configuration_checkpoint> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<configuration_checkpoint>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<configuration_checkpoint> Createconfiguration_checkpoint(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<configuration_checkpoint> Createconfiguration_checkpoint(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t index = 0,
-    flatbuffers::Offset<configuration_description> description = 0) {
+    ::flatbuffers::Offset<raft::fbs::configuration_description> description = 0) {
   configuration_checkpointBuilder builder_(_fbb);
   builder_.add_index(index);
   builder_.add_description(description);
   return builder_.Finish();
 }
 
-struct append_checkpoint_chunk FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+struct append_checkpoint_chunk FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef append_checkpoint_chunkBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_RECIPIENT_ID = 4,
     VT_TERM_NUMBER = 6,
     VT_LEADER_ID = 8,
@@ -829,8 +1021,8 @@ struct append_checkpoint_chunk FLATBUFFERS_FINAL_CLASS : private flatbuffers::Ta
   uint64_t last_checkpoint_term() const {
     return GetField<uint64_t>(VT_LAST_CHECKPOINT_TERM, 0);
   }
-  const configuration_checkpoint *last_checkpoint_configuration() const {
-    return GetPointer<const configuration_checkpoint *>(VT_LAST_CHECKPOINT_CONFIGURATION);
+  const raft::fbs::configuration_checkpoint *last_checkpoint_configuration() const {
+    return GetPointer<const raft::fbs::configuration_checkpoint *>(VT_LAST_CHECKPOINT_CONFIGURATION);
   }
   uint64_t checkpoint_begin() const {
     return GetField<uint64_t>(VT_CHECKPOINT_BEGIN, 0);
@@ -841,30 +1033,31 @@ struct append_checkpoint_chunk FLATBUFFERS_FINAL_CLASS : private flatbuffers::Ta
   bool checkpoint_done() const {
     return GetField<uint8_t>(VT_CHECKPOINT_DONE, 0) != 0;
   }
-  const flatbuffers::Vector<uint8_t> *data() const {
-    return GetPointer<const flatbuffers::Vector<uint8_t> *>(VT_DATA);
+  const ::flatbuffers::Vector<uint8_t> *data() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_DATA);
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID) &&
-           VerifyField<uint64_t>(verifier, VT_TERM_NUMBER) &&
-           VerifyField<uint64_t>(verifier, VT_LEADER_ID) &&
-           VerifyField<uint64_t>(verifier, VT_LAST_CHECKPOINT_INDEX) &&
-           VerifyField<uint64_t>(verifier, VT_LAST_CHECKPOINT_TERM) &&
-           VerifyField<flatbuffers::uoffset_t>(verifier, VT_LAST_CHECKPOINT_CONFIGURATION) &&
+           VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID, 8) &&
+           VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LEADER_ID, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LAST_CHECKPOINT_INDEX, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LAST_CHECKPOINT_TERM, 8) &&
+           VerifyOffset(verifier, VT_LAST_CHECKPOINT_CONFIGURATION) &&
            verifier.VerifyTable(last_checkpoint_configuration()) &&
-           VerifyField<uint64_t>(verifier, VT_CHECKPOINT_BEGIN) &&
-           VerifyField<uint64_t>(verifier, VT_CHECKPOINT_END) &&
-           VerifyField<uint8_t>(verifier, VT_CHECKPOINT_DONE) &&
-           VerifyField<flatbuffers::uoffset_t>(verifier, VT_DATA) &&
-           verifier.Verify(data()) &&
+           VerifyField<uint64_t>(verifier, VT_CHECKPOINT_BEGIN, 8) &&
+           VerifyField<uint64_t>(verifier, VT_CHECKPOINT_END, 8) &&
+           VerifyField<uint8_t>(verifier, VT_CHECKPOINT_DONE, 1) &&
+           VerifyOffset(verifier, VT_DATA) &&
+           verifier.VerifyVector(data()) &&
            verifier.EndTable();
   }
 };
 
 struct append_checkpoint_chunkBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
+  typedef append_checkpoint_chunk Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
   void add_recipient_id(uint64_t recipient_id) {
     fbb_.AddElement<uint64_t>(append_checkpoint_chunk::VT_RECIPIENT_ID, recipient_id, 0);
   }
@@ -880,7 +1073,7 @@ struct append_checkpoint_chunkBuilder {
   void add_last_checkpoint_term(uint64_t last_checkpoint_term) {
     fbb_.AddElement<uint64_t>(append_checkpoint_chunk::VT_LAST_CHECKPOINT_TERM, last_checkpoint_term, 0);
   }
-  void add_last_checkpoint_configuration(flatbuffers::Offset<configuration_checkpoint> last_checkpoint_configuration) {
+  void add_last_checkpoint_configuration(::flatbuffers::Offset<raft::fbs::configuration_checkpoint> last_checkpoint_configuration) {
     fbb_.AddOffset(append_checkpoint_chunk::VT_LAST_CHECKPOINT_CONFIGURATION, last_checkpoint_configuration);
   }
   void add_checkpoint_begin(uint64_t checkpoint_begin) {
@@ -892,33 +1085,32 @@ struct append_checkpoint_chunkBuilder {
   void add_checkpoint_done(bool checkpoint_done) {
     fbb_.AddElement<uint8_t>(append_checkpoint_chunk::VT_CHECKPOINT_DONE, static_cast<uint8_t>(checkpoint_done), 0);
   }
-  void add_data(flatbuffers::Offset<flatbuffers::Vector<uint8_t>> data) {
+  void add_data(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> data) {
     fbb_.AddOffset(append_checkpoint_chunk::VT_DATA, data);
   }
-  append_checkpoint_chunkBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit append_checkpoint_chunkBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  append_checkpoint_chunkBuilder &operator=(const append_checkpoint_chunkBuilder &);
-  flatbuffers::Offset<append_checkpoint_chunk> Finish() {
-    const auto end = fbb_.EndTable(start_, 10);
-    auto o = flatbuffers::Offset<append_checkpoint_chunk>(end);
+  ::flatbuffers::Offset<append_checkpoint_chunk> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<append_checkpoint_chunk>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_chunk(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_chunk(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t leader_id = 0,
     uint64_t last_checkpoint_index = 0,
     uint64_t last_checkpoint_term = 0,
-    flatbuffers::Offset<configuration_checkpoint> last_checkpoint_configuration = 0,
+    ::flatbuffers::Offset<raft::fbs::configuration_checkpoint> last_checkpoint_configuration = 0,
     uint64_t checkpoint_begin = 0,
     uint64_t checkpoint_end = 0,
     bool checkpoint_done = false,
-    flatbuffers::Offset<flatbuffers::Vector<uint8_t>> data = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> data = 0) {
   append_checkpoint_chunkBuilder builder_(_fbb);
   builder_.add_checkpoint_end(checkpoint_end);
   builder_.add_checkpoint_begin(checkpoint_begin);
@@ -933,19 +1125,20 @@ inline flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_chun
   return builder_.Finish();
 }
 
-inline flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_chunkDirect(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_chunkDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t leader_id = 0,
     uint64_t last_checkpoint_index = 0,
     uint64_t last_checkpoint_term = 0,
-    flatbuffers::Offset<configuration_checkpoint> last_checkpoint_configuration = 0,
+    ::flatbuffers::Offset<raft::fbs::configuration_checkpoint> last_checkpoint_configuration = 0,
     uint64_t checkpoint_begin = 0,
     uint64_t checkpoint_end = 0,
     bool checkpoint_done = false,
     const std::vector<uint8_t> *data = nullptr) {
-  return Createappend_checkpoint_chunk(
+  auto data__ = data ? _fbb.CreateVector<uint8_t>(*data) : 0;
+  return raft::fbs::Createappend_checkpoint_chunk(
       _fbb,
       recipient_id,
       term_number,
@@ -956,11 +1149,12 @@ inline flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_chun
       checkpoint_begin,
       checkpoint_end,
       checkpoint_done,
-      data ? _fbb.CreateVector<uint8_t>(*data) : 0);
+      data__);
 }
 
-struct append_checkpoint_chunk_response FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+struct append_checkpoint_chunk_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef append_checkpoint_chunk_responseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_RECIPIENT_ID = 4,
     VT_TERM_NUMBER = 6,
     VT_REQUEST_TERM_NUMBER = 8,
@@ -978,19 +1172,20 @@ struct append_checkpoint_chunk_response FLATBUFFERS_FINAL_CLASS : private flatbu
   uint64_t bytes_stored() const {
     return GetField<uint64_t>(VT_BYTES_STORED, 0);
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID) &&
-           VerifyField<uint64_t>(verifier, VT_TERM_NUMBER) &&
-           VerifyField<uint64_t>(verifier, VT_REQUEST_TERM_NUMBER) &&
-           VerifyField<uint64_t>(verifier, VT_BYTES_STORED) &&
+           VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID, 8) &&
+           VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
+           VerifyField<uint64_t>(verifier, VT_REQUEST_TERM_NUMBER, 8) &&
+           VerifyField<uint64_t>(verifier, VT_BYTES_STORED, 8) &&
            verifier.EndTable();
   }
 };
 
 struct append_checkpoint_chunk_responseBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
+  typedef append_checkpoint_chunk_response Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
   void add_recipient_id(uint64_t recipient_id) {
     fbb_.AddElement<uint64_t>(append_checkpoint_chunk_response::VT_RECIPIENT_ID, recipient_id, 0);
   }
@@ -1003,20 +1198,19 @@ struct append_checkpoint_chunk_responseBuilder {
   void add_bytes_stored(uint64_t bytes_stored) {
     fbb_.AddElement<uint64_t>(append_checkpoint_chunk_response::VT_BYTES_STORED, bytes_stored, 0);
   }
-  append_checkpoint_chunk_responseBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit append_checkpoint_chunk_responseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  append_checkpoint_chunk_responseBuilder &operator=(const append_checkpoint_chunk_responseBuilder &);
-  flatbuffers::Offset<append_checkpoint_chunk_response> Finish() {
-    const auto end = fbb_.EndTable(start_, 4);
-    auto o = flatbuffers::Offset<append_checkpoint_chunk_response>(end);
+  ::flatbuffers::Offset<append_checkpoint_chunk_response> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<append_checkpoint_chunk_response>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<append_checkpoint_chunk_response> Createappend_checkpoint_chunk_response(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<append_checkpoint_chunk_response> Createappend_checkpoint_chunk_response(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t request_term_number = 0,
@@ -1029,69 +1223,72 @@ inline flatbuffers::Offset<append_checkpoint_chunk_response> Createappend_checkp
   return builder_.Finish();
 }
 
-struct client_request FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+struct client_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef client_requestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_ID = 4,
     VT_COMMAND = 6
   };
   uint64_t id() const {
     return GetField<uint64_t>(VT_ID, 0);
   }
-  const flatbuffers::String *command() const {
-    return GetPointer<const flatbuffers::String *>(VT_COMMAND);
+  const ::flatbuffers::String *command() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_COMMAND);
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint64_t>(verifier, VT_ID) &&
-           VerifyField<flatbuffers::uoffset_t>(verifier, VT_COMMAND) &&
-           verifier.Verify(command()) &&
+           VerifyField<uint64_t>(verifier, VT_ID, 8) &&
+           VerifyOffset(verifier, VT_COMMAND) &&
+           verifier.VerifyString(command()) &&
            verifier.EndTable();
   }
 };
 
 struct client_requestBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
+  typedef client_request Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
   void add_id(uint64_t id) {
     fbb_.AddElement<uint64_t>(client_request::VT_ID, id, 0);
   }
-  void add_command(flatbuffers::Offset<flatbuffers::String> command) {
+  void add_command(::flatbuffers::Offset<::flatbuffers::String> command) {
     fbb_.AddOffset(client_request::VT_COMMAND, command);
   }
-  client_requestBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit client_requestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  client_requestBuilder &operator=(const client_requestBuilder &);
-  flatbuffers::Offset<client_request> Finish() {
-    const auto end = fbb_.EndTable(start_, 2);
-    auto o = flatbuffers::Offset<client_request>(end);
+  ::flatbuffers::Offset<client_request> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<client_request>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<client_request> Createclient_request(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<client_request> Createclient_request(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t id = 0,
-    flatbuffers::Offset<flatbuffers::String> command = 0) {
+    ::flatbuffers::Offset<::flatbuffers::String> command = 0) {
   client_requestBuilder builder_(_fbb);
   builder_.add_id(id);
   builder_.add_command(command);
   return builder_.Finish();
 }
 
-inline flatbuffers::Offset<client_request> Createclient_requestDirect(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<client_request> Createclient_requestDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t id = 0,
     const char *command = nullptr) {
-  return Createclient_request(
+  auto command__ = command ? _fbb.CreateString(command) : 0;
+  return raft::fbs::Createclient_request(
       _fbb,
       id,
-      command ? _fbb.CreateString(command) : 0);
+      command__);
 }
 
-struct client_response FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+struct client_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef client_responseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_ID = 4,
     VT_RESULT = 6,
     VT_INDEX = 8,
@@ -1100,8 +1297,8 @@ struct client_response FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   uint64_t id() const {
     return GetField<uint64_t>(VT_ID, 0);
   }
-  client_result result() const {
-    return static_cast<client_result>(GetField<int8_t>(VT_RESULT, 0));
+  raft::fbs::client_result result() const {
+    return static_cast<raft::fbs::client_result>(GetField<int8_t>(VT_RESULT, 0));
   }
   uint64_t index() const {
     return GetField<uint64_t>(VT_INDEX, 0);
@@ -1109,23 +1306,24 @@ struct client_response FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   uint64_t leader_id() const {
     return GetField<uint64_t>(VT_LEADER_ID, 0);
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint64_t>(verifier, VT_ID) &&
-           VerifyField<int8_t>(verifier, VT_RESULT) &&
-           VerifyField<uint64_t>(verifier, VT_INDEX) &&
-           VerifyField<uint64_t>(verifier, VT_LEADER_ID) &&
+           VerifyField<uint64_t>(verifier, VT_ID, 8) &&
+           VerifyField<int8_t>(verifier, VT_RESULT, 1) &&
+           VerifyField<uint64_t>(verifier, VT_INDEX, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LEADER_ID, 8) &&
            verifier.EndTable();
   }
 };
 
 struct client_responseBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
+  typedef client_response Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
   void add_id(uint64_t id) {
     fbb_.AddElement<uint64_t>(client_response::VT_ID, id, 0);
   }
-  void add_result(client_result result) {
+  void add_result(raft::fbs::client_result result) {
     fbb_.AddElement<int8_t>(client_response::VT_RESULT, static_cast<int8_t>(result), 0);
   }
   void add_index(uint64_t index) {
@@ -1134,22 +1332,21 @@ struct client_responseBuilder {
   void add_leader_id(uint64_t leader_id) {
     fbb_.AddElement<uint64_t>(client_response::VT_LEADER_ID, leader_id, 0);
   }
-  client_responseBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit client_responseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  client_responseBuilder &operator=(const client_responseBuilder &);
-  flatbuffers::Offset<client_response> Finish() {
-    const auto end = fbb_.EndTable(start_, 4);
-    auto o = flatbuffers::Offset<client_response>(end);
+  ::flatbuffers::Offset<client_response> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<client_response>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<client_response> Createclient_response(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<client_response> Createclient_response(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t id = 0,
-    client_result result = client_result_SUCCESS,
+    raft::fbs::client_result result = raft::fbs::client_result_SUCCESS,
     uint64_t index = 0,
     uint64_t leader_id = 0) {
   client_responseBuilder builder_(_fbb);
@@ -1160,187 +1357,297 @@ inline flatbuffers::Offset<client_response> Createclient_response(
   return builder_.Finish();
 }
 
-struct set_configuration_request FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+struct set_configuration_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef set_configuration_requestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_OLD_ID = 4,
     VT_NEW_CONFIGURATION = 6
   };
   uint64_t old_id() const {
     return GetField<uint64_t>(VT_OLD_ID, 0);
   }
-  const simple_configuration_description *new_configuration() const {
-    return GetPointer<const simple_configuration_description *>(VT_NEW_CONFIGURATION);
+  const raft::fbs::simple_configuration_description *new_configuration() const {
+    return GetPointer<const raft::fbs::simple_configuration_description *>(VT_NEW_CONFIGURATION);
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint64_t>(verifier, VT_OLD_ID) &&
-           VerifyField<flatbuffers::uoffset_t>(verifier, VT_NEW_CONFIGURATION) &&
+           VerifyField<uint64_t>(verifier, VT_OLD_ID, 8) &&
+           VerifyOffset(verifier, VT_NEW_CONFIGURATION) &&
            verifier.VerifyTable(new_configuration()) &&
            verifier.EndTable();
   }
 };
 
 struct set_configuration_requestBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
+  typedef set_configuration_request Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
   void add_old_id(uint64_t old_id) {
     fbb_.AddElement<uint64_t>(set_configuration_request::VT_OLD_ID, old_id, 0);
   }
-  void add_new_configuration(flatbuffers::Offset<simple_configuration_description> new_configuration) {
+  void add_new_configuration(::flatbuffers::Offset<raft::fbs::simple_configuration_description> new_configuration) {
     fbb_.AddOffset(set_configuration_request::VT_NEW_CONFIGURATION, new_configuration);
   }
-  set_configuration_requestBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit set_configuration_requestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  set_configuration_requestBuilder &operator=(const set_configuration_requestBuilder &);
-  flatbuffers::Offset<set_configuration_request> Finish() {
-    const auto end = fbb_.EndTable(start_, 2);
-    auto o = flatbuffers::Offset<set_configuration_request>(end);
+  ::flatbuffers::Offset<set_configuration_request> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<set_configuration_request>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<set_configuration_request> Createset_configuration_request(
-    flatbuffers::FlatBufferBuilder &_fbb,
+inline ::flatbuffers::Offset<set_configuration_request> Createset_configuration_request(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t old_id = 0,
-    flatbuffers::Offset<simple_configuration_description> new_configuration = 0) {
+    ::flatbuffers::Offset<raft::fbs::simple_configuration_description> new_configuration = 0) {
   set_configuration_requestBuilder builder_(_fbb);
   builder_.add_old_id(old_id);
   builder_.add_new_configuration(new_configuration);
   return builder_.Finish();
 }
 
-struct set_configuration_response FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+struct set_configuration_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef set_configuration_responseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_RESULT = 4,
     VT_BAD_SERVERS = 6
   };
-  client_result result() const {
-    return static_cast<client_result>(GetField<int8_t>(VT_RESULT, 0));
+  raft::fbs::client_result result() const {
+    return static_cast<raft::fbs::client_result>(GetField<int8_t>(VT_RESULT, 0));
   }
-  const simple_configuration_description *bad_servers() const {
-    return GetPointer<const simple_configuration_description *>(VT_BAD_SERVERS);
+  const raft::fbs::simple_configuration_description *bad_servers() const {
+    return GetPointer<const raft::fbs::simple_configuration_description *>(VT_BAD_SERVERS);
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<int8_t>(verifier, VT_RESULT) &&
-           VerifyField<flatbuffers::uoffset_t>(verifier, VT_BAD_SERVERS) &&
+           VerifyField<int8_t>(verifier, VT_RESULT, 1) &&
+           VerifyOffset(verifier, VT_BAD_SERVERS) &&
            verifier.VerifyTable(bad_servers()) &&
            verifier.EndTable();
   }
 };
 
 struct set_configuration_responseBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
-  void add_result(client_result result) {
+  typedef set_configuration_response Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_result(raft::fbs::client_result result) {
     fbb_.AddElement<int8_t>(set_configuration_response::VT_RESULT, static_cast<int8_t>(result), 0);
   }
-  void add_bad_servers(flatbuffers::Offset<simple_configuration_description> bad_servers) {
+  void add_bad_servers(::flatbuffers::Offset<raft::fbs::simple_configuration_description> bad_servers) {
     fbb_.AddOffset(set_configuration_response::VT_BAD_SERVERS, bad_servers);
   }
-  set_configuration_responseBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit set_configuration_responseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  set_configuration_responseBuilder &operator=(const set_configuration_responseBuilder &);
-  flatbuffers::Offset<set_configuration_response> Finish() {
-    const auto end = fbb_.EndTable(start_, 2);
-    auto o = flatbuffers::Offset<set_configuration_response>(end);
+  ::flatbuffers::Offset<set_configuration_response> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<set_configuration_response>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<set_configuration_response> Createset_configuration_response(
-    flatbuffers::FlatBufferBuilder &_fbb,
-    client_result result = client_result_SUCCESS,
-    flatbuffers::Offset<simple_configuration_description> bad_servers = 0) {
+inline ::flatbuffers::Offset<set_configuration_response> Createset_configuration_response(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    raft::fbs::client_result result = raft::fbs::client_result_SUCCESS,
+    ::flatbuffers::Offset<raft::fbs::simple_configuration_description> bad_servers = 0) {
   set_configuration_responseBuilder builder_(_fbb);
   builder_.add_bad_servers(bad_servers);
   builder_.add_result(result);
   return builder_.Finish();
 }
 
-struct raft_message FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
-  enum {
+struct raft_message FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef raft_messageBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_MESSAGE_TYPE = 4,
     VT_MESSAGE = 6
   };
-  any_message message_type() const {
-    return static_cast<any_message>(GetField<uint8_t>(VT_MESSAGE_TYPE, 0));
+  raft::fbs::any_message message_type() const {
+    return static_cast<raft::fbs::any_message>(GetField<uint8_t>(VT_MESSAGE_TYPE, 0));
   }
   const void *message() const {
     return GetPointer<const void *>(VT_MESSAGE);
   }
-  bool Verify(flatbuffers::Verifier &verifier) const {
+  template<typename T> const T *message_as() const;
+  const raft::fbs::request_vote *message_as_request_vote() const {
+    return message_type() == raft::fbs::any_message_request_vote ? static_cast<const raft::fbs::request_vote *>(message()) : nullptr;
+  }
+  const raft::fbs::vote_response *message_as_vote_response() const {
+    return message_type() == raft::fbs::any_message_vote_response ? static_cast<const raft::fbs::vote_response *>(message()) : nullptr;
+  }
+  const raft::fbs::append_entry *message_as_append_entry() const {
+    return message_type() == raft::fbs::any_message_append_entry ? static_cast<const raft::fbs::append_entry *>(message()) : nullptr;
+  }
+  const raft::fbs::append_response *message_as_append_response() const {
+    return message_type() == raft::fbs::any_message_append_response ? static_cast<const raft::fbs::append_response *>(message()) : nullptr;
+  }
+  const raft::fbs::client_request *message_as_client_request() const {
+    return message_type() == raft::fbs::any_message_client_request ? static_cast<const raft::fbs::client_request *>(message()) : nullptr;
+  }
+  const raft::fbs::client_response *message_as_client_response() const {
+    return message_type() == raft::fbs::any_message_client_response ? static_cast<const raft::fbs::client_response *>(message()) : nullptr;
+  }
+  const raft::fbs::set_configuration_request *message_as_set_configuration_request() const {
+    return message_type() == raft::fbs::any_message_set_configuration_request ? static_cast<const raft::fbs::set_configuration_request *>(message()) : nullptr;
+  }
+  const raft::fbs::set_configuration_response *message_as_set_configuration_response() const {
+    return message_type() == raft::fbs::any_message_set_configuration_response ? static_cast<const raft::fbs::set_configuration_response *>(message()) : nullptr;
+  }
+  const raft::fbs::configuration_checkpoint *message_as_configuration_checkpoint() const {
+    return message_type() == raft::fbs::any_message_configuration_checkpoint ? static_cast<const raft::fbs::configuration_checkpoint *>(message()) : nullptr;
+  }
+  const raft::fbs::append_checkpoint_chunk *message_as_append_checkpoint_chunk() const {
+    return message_type() == raft::fbs::any_message_append_checkpoint_chunk ? static_cast<const raft::fbs::append_checkpoint_chunk *>(message()) : nullptr;
+  }
+  const raft::fbs::append_checkpoint_chunk_response *message_as_append_checkpoint_chunk_response() const {
+    return message_type() == raft::fbs::any_message_append_checkpoint_chunk_response ? static_cast<const raft::fbs::append_checkpoint_chunk_response *>(message()) : nullptr;
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint8_t>(verifier, VT_MESSAGE_TYPE) &&
-           VerifyField<flatbuffers::uoffset_t>(verifier, VT_MESSAGE) &&
+           VerifyField<uint8_t>(verifier, VT_MESSAGE_TYPE, 1) &&
+           VerifyOffset(verifier, VT_MESSAGE) &&
            Verifyany_message(verifier, message(), message_type()) &&
            verifier.EndTable();
   }
 };
 
+template<> inline const raft::fbs::request_vote *raft_message::message_as<raft::fbs::request_vote>() const {
+  return message_as_request_vote();
+}
+
+template<> inline const raft::fbs::vote_response *raft_message::message_as<raft::fbs::vote_response>() const {
+  return message_as_vote_response();
+}
+
+template<> inline const raft::fbs::append_entry *raft_message::message_as<raft::fbs::append_entry>() const {
+  return message_as_append_entry();
+}
+
+template<> inline const raft::fbs::append_response *raft_message::message_as<raft::fbs::append_response>() const {
+  return message_as_append_response();
+}
+
+template<> inline const raft::fbs::client_request *raft_message::message_as<raft::fbs::client_request>() const {
+  return message_as_client_request();
+}
+
+template<> inline const raft::fbs::client_response *raft_message::message_as<raft::fbs::client_response>() const {
+  return message_as_client_response();
+}
+
+template<> inline const raft::fbs::set_configuration_request *raft_message::message_as<raft::fbs::set_configuration_request>() const {
+  return message_as_set_configuration_request();
+}
+
+template<> inline const raft::fbs::set_configuration_response *raft_message::message_as<raft::fbs::set_configuration_response>() const {
+  return message_as_set_configuration_response();
+}
+
+template<> inline const raft::fbs::configuration_checkpoint *raft_message::message_as<raft::fbs::configuration_checkpoint>() const {
+  return message_as_configuration_checkpoint();
+}
+
+template<> inline const raft::fbs::append_checkpoint_chunk *raft_message::message_as<raft::fbs::append_checkpoint_chunk>() const {
+  return message_as_append_checkpoint_chunk();
+}
+
+template<> inline const raft::fbs::append_checkpoint_chunk_response *raft_message::message_as<raft::fbs::append_checkpoint_chunk_response>() const {
+  return message_as_append_checkpoint_chunk_response();
+}
+
 struct raft_messageBuilder {
-  flatbuffers::FlatBufferBuilder &fbb_;
-  flatbuffers::uoffset_t start_;
-  void add_message_type(any_message message_type) {
+  typedef raft_message Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_message_type(raft::fbs::any_message message_type) {
     fbb_.AddElement<uint8_t>(raft_message::VT_MESSAGE_TYPE, static_cast<uint8_t>(message_type), 0);
   }
-  void add_message(flatbuffers::Offset<void> message) {
+  void add_message(::flatbuffers::Offset<void> message) {
     fbb_.AddOffset(raft_message::VT_MESSAGE, message);
   }
-  raft_messageBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+  explicit raft_messageBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  raft_messageBuilder &operator=(const raft_messageBuilder &);
-  flatbuffers::Offset<raft_message> Finish() {
-    const auto end = fbb_.EndTable(start_, 2);
-    auto o = flatbuffers::Offset<raft_message>(end);
+  ::flatbuffers::Offset<raft_message> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<raft_message>(end);
     return o;
   }
 };
 
-inline flatbuffers::Offset<raft_message> Createraft_message(
-    flatbuffers::FlatBufferBuilder &_fbb,
-    any_message message_type = any_message_NONE,
-    flatbuffers::Offset<void> message = 0) {
+inline ::flatbuffers::Offset<raft_message> Createraft_message(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    raft::fbs::any_message message_type = raft::fbs::any_message_NONE,
+    ::flatbuffers::Offset<void> message = 0) {
   raft_messageBuilder builder_(_fbb);
   builder_.add_message(message);
   builder_.add_message_type(message_type);
   return builder_.Finish();
 }
 
-inline bool Verifyany_message(flatbuffers::Verifier &verifier, const void *obj, any_message type) {
+inline bool Verifyany_message(::flatbuffers::Verifier &verifier, const void *obj, any_message type) {
   switch (type) {
     case any_message_NONE: {
       return true;
     }
     case any_message_request_vote: {
-      auto ptr = reinterpret_cast<const request_vote *>(obj);
+      auto ptr = reinterpret_cast<const raft::fbs::request_vote *>(obj);
       return verifier.VerifyTable(ptr);
     }
     case any_message_vote_response: {
-      auto ptr = reinterpret_cast<const vote_response *>(obj);
+      auto ptr = reinterpret_cast<const raft::fbs::vote_response *>(obj);
       return verifier.VerifyTable(ptr);
     }
     case any_message_append_entry: {
-      auto ptr = reinterpret_cast<const append_entry *>(obj);
+      auto ptr = reinterpret_cast<const raft::fbs::append_entry *>(obj);
       return verifier.VerifyTable(ptr);
     }
     case any_message_append_response: {
-      auto ptr = reinterpret_cast<const append_response *>(obj);
+      auto ptr = reinterpret_cast<const raft::fbs::append_response *>(obj);
       return verifier.VerifyTable(ptr);
     }
-    default: return false;
+    case any_message_client_request: {
+      auto ptr = reinterpret_cast<const raft::fbs::client_request *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case any_message_client_response: {
+      auto ptr = reinterpret_cast<const raft::fbs::client_response *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case any_message_set_configuration_request: {
+      auto ptr = reinterpret_cast<const raft::fbs::set_configuration_request *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case any_message_set_configuration_response: {
+      auto ptr = reinterpret_cast<const raft::fbs::set_configuration_response *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case any_message_configuration_checkpoint: {
+      auto ptr = reinterpret_cast<const raft::fbs::configuration_checkpoint *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case any_message_append_checkpoint_chunk: {
+      auto ptr = reinterpret_cast<const raft::fbs::append_checkpoint_chunk *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case any_message_append_checkpoint_chunk_response: {
+      auto ptr = reinterpret_cast<const raft::fbs::append_checkpoint_chunk_response *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    default: return true;
   }
 }
 
-inline bool Verifyany_messageVector(flatbuffers::Verifier &verifier, const flatbuffers::Vector<flatbuffers::Offset<void>> *values, const flatbuffers::Vector<uint8_t> *types) {
+inline bool Verifyany_messageVector(::flatbuffers::Verifier &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<uint8_t> *types) {
+  if (!values || !types) return !values && !types;
   if (values->size() != types->size()) return false;
-  for (flatbuffers::uoffset_t i = 0; i < values->size(); ++i) {
+  for (::flatbuffers::uoffset_t i = 0; i < values->size(); ++i) {
     if (!Verifyany_message(
         verifier,  values->Get(i), types->GetEnum<any_message>(i))) {
       return false;
@@ -1350,18 +1657,33 @@ inline bool Verifyany_messageVector(flatbuffers::Verifier &verifier, const flatb
 }
 
 inline const raft::fbs::raft_message *Getraft_message(const void *buf) {
-  return flatbuffers::GetRoot<raft::fbs::raft_message>(buf);
+  return ::flatbuffers::GetRoot<raft::fbs::raft_message>(buf);
+}
+
+inline const raft::fbs::raft_message *GetSizePrefixedraft_message(const void *buf) {
+  return ::flatbuffers::GetSizePrefixedRoot<raft::fbs::raft_message>(buf);
 }
 
 inline bool Verifyraft_messageBuffer(
-    flatbuffers::Verifier &verifier) {
+    ::flatbuffers::Verifier &verifier) {
   return verifier.VerifyBuffer<raft::fbs::raft_message>(nullptr);
 }
 
+inline bool VerifySizePrefixedraft_messageBuffer(
+    ::flatbuffers::Verifier &verifier) {
+  return verifier.VerifySizePrefixedBuffer<raft::fbs::raft_message>(nullptr);
+}
+
 inline void Finishraft_messageBuffer(
-    flatbuffers::FlatBufferBuilder &fbb,
-    flatbuffers::Offset<raft::fbs::raft_message> root) {
+    ::flatbuffers::FlatBufferBuilder &fbb,
+    ::flatbuffers::Offset<raft::fbs::raft_message> root) {
   fbb.Finish(root);
+}
+
+inline void FinishSizePrefixedraft_messageBuffer(
+    ::flatbuffers::FlatBufferBuilder &fbb,
+    ::flatbuffers::Offset<raft::fbs::raft_message> root) {
+  fbb.FinishSizePrefixed(root);
 }
 
 }  // namespace fbs

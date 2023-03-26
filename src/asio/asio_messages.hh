@@ -90,7 +90,7 @@ namespace raft {
 	return sz;
       }
 
-      static std::size_t serialize_helper(boost::asio::mutable_buffer b, const raft::log_entry<raft::configuration_description>& entry)
+      static std::size_t serialize_helper(boost::asio::mutable_buffer b, const raft::native::log_entry<raft::configuration_description>& entry)
       {
 	little_log_entry * log_buf = boost::asio::buffer_cast<little_log_entry *>(b);
 	log_buf->term = entry.term;
@@ -146,19 +146,19 @@ namespace raft {
 	return sz;
       }
 
-      static std::size_t deserialize_helper(boost::asio::const_buffer b, raft::log_entry<raft::configuration_description>& entry)
+      static std::size_t deserialize_helper(boost::asio::const_buffer b, raft::native::log_entry<raft::configuration_description>& entry)
       {
 	const little_log_entry * log_buf = boost::asio::buffer_cast<const little_log_entry *>(b);
 	entry.term = log_buf->term;
 	switch(log_buf->type) {
 	case 0:
-	  entry.type = raft::log_entry<raft::configuration_description>::COMMAND;
+	  entry.type = raft::native::log_entry<raft::configuration_description>::COMMAND;
 	  break;
 	case 1:
-	  entry.type = raft::log_entry<raft::configuration_description>::CONFIGURATION;
+	  entry.type = raft::native::log_entry<raft::configuration_description>::CONFIGURATION;
 	  break;
 	case 2:
-	  entry.type = raft::log_entry<raft::configuration_description>::NOOP;
+	  entry.type = raft::native::log_entry<raft::configuration_description>::NOOP;
 	  break;
 	default:
 	  // TODO: error handling
@@ -177,7 +177,7 @@ namespace raft {
 	return boost::asio::buffer(boost::asio::buffer_cast<const void *>(b), 0);
       }
 
-      static void deserialize(boost::asio::const_buffer b, raft::messages::request_vote_type & msg)
+      static void deserialize(boost::asio::const_buffer b, raft::native::messages::request_vote_type & msg)
       {
 	BOOST_ASSERT(boost::asio::buffer_size(b) == sizeof(little_request_vote));
 	const little_request_vote * buf = boost::asio::buffer_cast<const little_request_vote *>(b);
@@ -188,7 +188,7 @@ namespace raft {
 	msg.set_last_log_term(buf->last_log_term);
       }
 
-      static void deserialize(boost::asio::const_buffer b, raft::messages::vote_response_type & msg)
+      static void deserialize(boost::asio::const_buffer b, raft::native::messages::vote_response_type & msg)
       {
 	BOOST_ASSERT(boost::asio::buffer_size(b) == sizeof(little_vote_response));
 	const little_vote_response * buf = boost::asio::buffer_cast<const little_vote_response *>(b);
@@ -198,7 +198,7 @@ namespace raft {
 	msg.granted = (buf->granted != 0);
       }
 
-      static std::size_t deserialize(boost::asio::const_buffer b, raft::messages::append_entry_type & msg)
+      static std::size_t deserialize(boost::asio::const_buffer b, raft::native::messages::append_entry_type & msg)
       {
 	const little_append_entry * buf = boost::asio::buffer_cast<const little_append_entry *>(b);
 	msg.recipient_id = buf->recipient_id;
@@ -212,7 +212,7 @@ namespace raft {
 	return sz;
       }
 
-      static std::size_t deserialize(boost::asio::const_buffer b, raft::messages::append_entry_response_type & msg)
+      static std::size_t deserialize(boost::asio::const_buffer b, raft::native::messages::append_entry_response_type & msg)
       {
 	const little_append_response * buf = boost::asio::buffer_cast<const little_append_response *>(b);
 	msg.recipient_id = buf->recipient_id;
@@ -226,7 +226,7 @@ namespace raft {
     };
     
     template<>
-    boost::asio::const_buffers_1 serialization::serialize(boost::asio::mutable_buffer b, const raft::messages::request_vote_type & msg)
+    boost::asio::const_buffers_1 serialization::serialize(boost::asio::mutable_buffer b, const raft::native::messages::request_vote_type & msg)
     {
       static const std::size_t sz = sizeof(little_request_vote) + sizeof(rpc_header);
       BOOST_ASSERT(boost::asio::buffer_size(b) >= sz);
@@ -236,16 +236,16 @@ namespace raft {
       header->service = 0;
       header->operation = 0;
       little_request_vote * buf = boost::asio::buffer_cast<little_request_vote *>(b+sizeof(rpc_header));
-      buf->recipient_id = raft::messages::request_vote_traits_type::recipient_id(msg);
-      buf->term_number = raft::messages::request_vote_traits_type::term_number(msg);
-      buf->candidate_id = raft::messages::request_vote_traits_type::candidate_id(msg);
-      buf->last_log_index = raft::messages::request_vote_traits_type::last_log_index(msg);
-      buf->last_log_term = raft::messages::request_vote_traits_type::last_log_term(msg);
+      buf->recipient_id = raft::native::messages::request_vote_traits_type::recipient_id(msg);
+      buf->term_number = raft::native::messages::request_vote_traits_type::term_number(msg);
+      buf->candidate_id = raft::native::messages::request_vote_traits_type::candidate_id(msg);
+      buf->last_log_index = raft::native::messages::request_vote_traits_type::last_log_index(msg);
+      buf->last_log_term = raft::native::messages::request_vote_traits_type::last_log_term(msg);
       return boost::asio::buffer(boost::asio::buffer_cast<const void *>(b), sz);
     }
 
     template<>
-    boost::asio::const_buffers_1 serialization::serialize(boost::asio::mutable_buffer b, const raft::messages::vote_response_type & msg)
+    boost::asio::const_buffers_1 serialization::serialize(boost::asio::mutable_buffer b, const raft::native::messages::vote_response_type & msg)
     {
       static const std::size_t sz = sizeof(little_vote_response) + sizeof(rpc_header);
       BOOST_ASSERT(boost::asio::buffer_size(b) >= sz);
@@ -263,7 +263,7 @@ namespace raft {
     }
 
     template<>
-    boost::asio::const_buffers_1 serialization::serialize(boost::asio::mutable_buffer b, const raft::messages::append_entry_type & msg)
+    boost::asio::const_buffers_1 serialization::serialize(boost::asio::mutable_buffer b, const raft::native::messages::append_entry_type & msg)
     {
       // TODO: Make sure the msg fits in our buffer; either throw or support by allocating a new buffer
       std::size_t sz = 0;
@@ -288,7 +288,7 @@ namespace raft {
     }
 
     template<>
-    boost::asio::const_buffers_1 serialization::serialize(boost::asio::mutable_buffer b, const raft::messages::append_entry_response_type & msg)
+    boost::asio::const_buffers_1 serialization::serialize(boost::asio::mutable_buffer b, const raft::native::messages::append_entry_response_type & msg)
     {
       static const std::size_t sz = sizeof(little_append_response) + sizeof(rpc_header);
       BOOST_ASSERT(boost::asio::buffer_size(b) >= sz);
@@ -308,7 +308,7 @@ namespace raft {
     };
     
     template<>
-    boost::asio::const_buffers_1 serialization::serialize(boost::asio::mutable_buffer b, const raft::log_entry<raft::configuration_description>& entry)
+    boost::asio::const_buffers_1 serialization::serialize(boost::asio::mutable_buffer b, const raft::native::log_entry<raft::configuration_description>& entry)
     {
       std::size_t sz = serialize_helper(b, entry);
       return boost::asio::buffer(boost::asio::buffer_cast<const void *>(b), sz);

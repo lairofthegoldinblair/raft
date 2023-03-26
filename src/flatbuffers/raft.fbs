@@ -19,6 +19,18 @@ table configuration_description
   to:simple_configuration_description;
 }
 
+enum log_entry_type:byte { COMMAND=0, CONFIGURATION=1, NOOP=2 }
+
+table log_entry
+{
+    type:log_entry_type;
+    term:ulong;
+    // TODO: Should we use a union here?
+    // Populated if type==COMMAND
+    data:string;
+    // Populated if type==CONFIGURATION
+    configuration:configuration_description;
+}
 table request_vote
 {
   recipient_id:ulong;
@@ -36,17 +48,9 @@ table vote_response
   granted:bool;
 }
 
-enum log_entry_type:byte { COMMAND=0, CONFIGURATION=1, NOOP=2 }
-
-table log_entry
+table log_entries
 {
-    type:log_entry_type;
-    term:ulong;
-    // TODO: Should we use a union here?
-    // Populated if type==COMMAND
-    data:string;
-    // Populated if type==CONFIGURATION
-    configuration:configuration_description;
+  entry:[ubyte] (nested_flatbuffer: "log_entry");
 }
 
 table append_entry
@@ -70,6 +74,7 @@ table append_entry
   // Last log entry in message that is committed on leader
   leader_commit_index:ulong;
   entry:[log_entry];
+  entries:[log_entries];
 }
 
 table append_response
@@ -156,7 +161,7 @@ table set_configuration_response
   bad_servers:simple_configuration_description;
 }
 
-union any_message { request_vote, vote_response, append_entry, append_response }
+union any_message { request_vote, vote_response, append_entry, append_response, client_request, client_response, set_configuration_request, set_configuration_response, configuration_checkpoint, append_checkpoint_chunk, append_checkpoint_chunk_response }
 
 table raft_message
 {

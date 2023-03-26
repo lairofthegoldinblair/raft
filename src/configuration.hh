@@ -11,6 +11,8 @@
 #include "boost/iterator/transform_iterator.hpp"
 #include "boost/log/trivial.hpp"
 
+#include "slice.hh"
+
 namespace raft {
 
   struct server_description
@@ -671,13 +673,13 @@ namespace raft {
   // Also it keeps a configuration object sync'd up with the latest
   // logged description.
   // This might be a good candidate for a mixin with a log class or maybe not...
-  template <typename _Peer, typename _Description>
+  template <typename _Peer, typename _Description, typename _Messages>
   class configuration_manager
   {
   public:
     typedef _Description description_type;
     typedef typename _Peer::template apply<peer_configuration_change>::type peer_type;
-    typedef configuration_algorithm<peer_type, _Description> configuration_type;
+    typedef configuration_algorithm<peer_type, description_type> configuration_type;
     typedef typename description_type::checkpoint_type checkpoint_type;
   private:
 
@@ -745,6 +747,34 @@ namespace raft {
       :
       configuration_(self)
     {
+    }
+
+    void add_logged_description(uint64_t log_index, const typename _Messages::configuration_description_type * description)
+    {
+      // TODO: Implement and removed duplication with add_logged_description by reference
+      // TODO: Should we transition to internally using the _Message::configuration_description_type?
+      typedef typename _Messages::server_description_traits_type server_description_traits_type;
+      typedef typename _Messages::simple_configuration_description_traits_type simple_configuration_description_traits_type;
+      typedef typename _Messages::configuration_description_traits_type configuration_description_traits_type;
+      configuration_description tmp;
+      for(auto it = simple_configuration_description_traits_type::begin_servers(&configuration_description_traits_type::from(description)),
+	    e = simple_configuration_description_traits_type::end_servers(&configuration_description_traits_type::from(description));
+	  it != e;
+	  ++it) {
+	auto addr_slice = server_description_traits_type::address(&*it);
+	std::string addr(slice::buffer_cast<const char *>(addr_slice), slice::buffer_size(addr_slice));
+	tmp.from.servers.push_back({server_description_traits_type::id(&*it), std::move(addr)});
+      }
+      for(auto it = simple_configuration_description_traits_type::begin_servers(&configuration_description_traits_type::to(description)),
+	    e = simple_configuration_description_traits_type::end_servers(&configuration_description_traits_type::to(description));
+	  it != e;
+	  ++it) {
+	auto addr_slice = server_description_traits_type::address(&*it);
+	std::string addr(slice::buffer_cast<const char *>(addr_slice), slice::buffer_size(addr_slice));
+	tmp.to.servers.push_back({server_description_traits_type::id(&*it), std::move(addr)});
+      }
+      logged_descriptions_[log_index] = std::move(tmp);
+      on_update();
     }
 
     void add_logged_description(uint64_t log_index, const description_type & description)

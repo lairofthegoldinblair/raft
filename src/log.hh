@@ -7,20 +7,6 @@
 
 namespace raft {
 
-  template<typename _Description>
-  struct log_entry
-  {
-  public:
-    typedef _Description configuration_description_type;
-    enum entry_type { COMMAND, CONFIGURATION, NOOP };
-    entry_type type;
-    uint64_t term;
-    // Populated if type==COMMAND
-    std::string data;
-    // Populated if type==CONFIGURATION
-    configuration_description_type configuration;
-  };
-
   // TODO: FIX
   class log_header_write
   {
@@ -30,15 +16,16 @@ namespace raft {
   };
 
   // Probably template out the Raft log header stuff (current_term_ and voted_for_).
-  template<typename _LogEntry>
+  template<typename _LogEntry, typename _LogEntryTraits>
   class in_memory_log
   {
   public:
     typedef uint64_t index_type;
     typedef _LogEntry entry_type;
+    typedef _LogEntryTraits traits_type;
   private:
     index_type start_index_;
-    std::deque<entry_type> entries_;
+    std::deque<std::pair<const entry_type *, std::function<void()>>> entries_;
     uint64_t current_term_;
     uint64_t voted_for_;
     log_header_write * writer_;
@@ -73,54 +60,66 @@ namespace raft {
     //   return std::make_pair(start_added, last_added);
     // }
 
-    /**
-     * Returns index range [begin,end) that was appended
-     */
-    std::pair<index_type, index_type> append_command(uint64_t term, slice s)
-    {
-      index_type start_added = last_index();
-      entry_type e;
-      e.type = entry_type::COMMAND;
-      e.term = term;
-      e.data.assign(slice::buffer_cast<const char *>(s), slice::buffer_size(s));
-      entries_.push_back(std::move(e));
-      return std::make_pair(start_added, start_added+1);
-    }
+    // /**
+    //  * Returns index range [begin,end) that was appended
+    //  */
+    // std::pair<index_type, index_type> append_command(uint64_t term, slice s)
+    // {
+    //   index_type start_added = last_index();
+    //   entry_type e;
+    //   e.type = entry_type::COMMAND;
+    //   e.term = term;
+    //   e.data.assign(slice::buffer_cast<const char *>(s), slice::buffer_size(s));
+    //   entries_.push_back(std::move(e));
+    //   return std::make_pair(start_added, start_added+1);
+    // }
 
-    std::pair<index_type, index_type> append_noop(uint64_t term)
-    {
-      index_type start_added = last_index();
-      entry_type e;
-      e.type = entry_type::NOOP;
-      e.term = term;
-      entries_.push_back(std::move(e));
-      return std::make_pair(start_added, start_added+1);
-    }
+    // std::pair<index_type, index_type> append_noop(uint64_t term)
+    // {
+    //   index_type start_added = last_index();
+    //   entry_type e;
+    //   e.type = entry_type::NOOP;
+    //   e.term = term;
+    //   entries_.push_back(std::move(e));
+    //   return std::make_pair(start_added, start_added+1);
+    // }
 
-    template<typename Configuration>
-    std::pair<index_type, index_type> append_configuration(uint64_t term, const Configuration & config)
+    // template<typename Configuration>
+    // std::pair<index_type, index_type> append_configuration(uint64_t term, const Configuration & config)
+    // {
+    //   index_type start_added = last_index();
+    //   entry_type e;
+    //   e.type = entry_type::CONFIGURATION;
+    //   e.term = term;
+    //   for(auto i=0; i<config.from_size(); ++i) {
+    // 	e.configuration.from.servers.push_back({ config.from_id(i), config.from_address(i) });
+    //   }
+    //   for(auto i=0; i<config.to_size(); ++i) {
+    // 	e.configuration.to.servers.push_back({ config.to_id(i), config.to_address(i) });
+    //   }
+    //   entries_.push_back(std::move(e));
+    //   return std::make_pair(start_added, start_added+1);
+    // }
+
+    std::pair<index_type, index_type> append(std::pair<const entry_type *, std::function<void()>> && e)
     {
       index_type start_added = last_index();
-      entry_type e;
-      e.type = entry_type::CONFIGURATION;
-      e.term = term;
-      for(auto i=0; i<config.from_size(); ++i) {
-	e.configuration.from.servers.push_back({ config.from_id(i), config.from_address(i) });
-      }
-      for(auto i=0; i<config.to_size(); ++i) {
-	e.configuration.to.servers.push_back({ config.to_id(i), config.to_address(i) });
-      }
       entries_.push_back(std::move(e));
       return std::make_pair(start_added, start_added+1);
     }
 
     template<typename InputIterator>
-    std::pair<index_type, index_type> append(InputIterator begin, InputIterator end)
+    std::pair<index_type, index_type> append(InputIterator begin, InputIterator end, std::function<void()> && del)
     {
+      std::function<void()> null_del = []() {};
       index_type start_added = last_index();
       index_type last_added = start_added + std::distance(begin, end);
       for(; begin != end; ++begin) {
-	entries_.push_back(*begin);
+	entries_.push_back(std::make_pair(&*begin, null_del));
+      }
+      if (start_added != last_added) {
+	// If we added anything set the deleter to the last entry
+	entries_.back().second = std::move(del);
       }
       return std::make_pair(start_added, last_added);
     }
@@ -157,7 +156,7 @@ namespace raft {
      */
     uint64_t term(index_type i) const
     {
-      return entries_.at(i - start_index()).term;
+      return traits_type::term(entries_.at(i - start_index()).first);
     }
 
     /**
@@ -165,7 +164,7 @@ namespace raft {
      */
     uint64_t last_entry_term() const
     {
-      return entries_.back().term;
+      return traits_type::term(entries_.back().first);
     }
 
     /**
@@ -176,7 +175,7 @@ namespace raft {
      */
     const entry_type & entry(index_type i) const
     {
-      return entries_.at(i - start_index());
+      return *entries_.at(i - start_index()).first;
     }
 
     /**
@@ -211,6 +210,7 @@ namespace raft {
     {
       index_type i = start_index_;
       while(i++ < idx && !entries_.empty()) {
+	entries_.front().second();
 	entries_.pop_front();
       }
       start_index_ = idx;
@@ -223,6 +223,10 @@ namespace raft {
     {
       index_type last = last_index();
       while (idx++ < last && !entries_.empty()) {
+	// TODO: If we are not throwing away all of the entries covered by the delete then
+	// it's a big problem.   If that is the case then we should save the deleter and
+	// put it at the back of entries_.
+	entries_.back().second();
 	entries_.pop_back();
       }
     }

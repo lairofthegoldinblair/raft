@@ -1,6 +1,8 @@
 #ifndef __RAFT_FLATBUFFER_MESSAGES_HH__
 #define __RAFT_FLATBUFFER_MESSAGES_HH__
 
+#include <boost/iterator/indirect_iterator.hpp>
+
 #include "raft_generated.h"
 
 #include "../slice.hh"
@@ -49,12 +51,28 @@ namespace raft {
 	return slice(fbb_->GetBufferPointer(), fbb_->GetSize());
       }
     };
+
+    struct client_request_traits
+    {
+      typedef const raft_message * const_arg_type;
+      typedef const raft_message * pinned_type;
+      static const client_request *  get_client_request(const_arg_type ae)
+      {
+	return static_cast<const raft::fbs::client_request * >(ae->message());
+      }      
+      static slice get_command_data(const_arg_type cr)
+      {
+	return slice(reinterpret_cast<const uint8_t *>(get_client_request(cr)->command()->c_str()),
+		     get_client_request(cr)->command()->size());
+      }
+    };
     
     struct append_entry_traits
     {
       typedef const raft_message * const_arg_type;
       typedef const raft_message * pinned_type;
-      typedef flatbuffers::Vector<flatbuffers::Offset<log_entry>>::const_iterator iterator_type;
+      typedef flatbuffers::Vector<flatbuffers::Offset<log_entry>>::const_iterator pointer_iterator_type;
+      typedef boost::indirect_iterator<pointer_iterator_type> iterator_type;
       static const append_entry *  get_append_entry(const_arg_type ae)
       {
 	return static_cast<const raft::fbs::append_entry * >(ae->message());
@@ -96,11 +114,11 @@ namespace raft {
       }
       static iterator_type begin_entries(const_arg_type ae)
       {
-	return get_append_entry(ae)->entry()->begin();
+	return boost::make_indirect_iterator(get_append_entry(ae)->entry()->begin());
       }
       static iterator_type end_entries(const_arg_type ae)
       {
-	return get_append_entry(ae)->entry()->end();
+	return boost::make_indirect_iterator(get_append_entry(ae)->entry()->end());
       }
       static void release(const_arg_type ae)
       {
@@ -111,6 +129,184 @@ namespace raft {
 	return ae;
       }
     };
+
+    struct server_description_traits
+    {
+      typedef const raft::fbs::server_description * const_arg_type;
+
+      static uint64_t id(const_arg_type msg)
+      {
+	return msg->id();
+      }
+      static slice address(const_arg_type msg)
+      {
+	return slice(reinterpret_cast<const uint8_t *>(msg->address()->c_str()), msg->address()->size());
+      }
+    };
+
+    struct simple_configuration_description_traits
+    {
+      typedef const raft::fbs::simple_configuration_description * const_arg_type;
+      typedef flatbuffers::Vector<flatbuffers::Offset<server_description>>::const_iterator pointer_iterator_type;
+      typedef boost::indirect_iterator<pointer_iterator_type> iterator_type;
+
+      static iterator_type begin_servers(const_arg_type msg)
+      {
+	return boost::make_indirect_iterator(msg->servers()->begin());
+      }
+      static iterator_type end_servers(const_arg_type msg)
+      {
+	return boost::make_indirect_iterator(msg->servers()->end());
+      }
+    };
+
+    struct configuration_description_traits
+    {
+      typedef const raft::fbs::configuration_description * const_arg_type;
+      static const raft::fbs::simple_configuration_description & from(const_arg_type msg)
+      {
+	return *msg->from();
+      }
+      static const raft::fbs::simple_configuration_description & to(const_arg_type msg)
+      {
+	return *msg->to();
+      }
+    };
+
+  struct log_entry_traits
+  {
+    typedef raft::fbs::log_entry value_type;
+    typedef const value_type * const_arg_type;
+
+    static const raft::fbs::log_entry *  get_log_entry(const_arg_type ae)
+    {
+      return ae;
+    }      
+    static uint64_t term(const_arg_type msg)
+    {
+      return get_log_entry(msg)->term();
+    }
+    static bool is_command(const_arg_type msg)
+    {
+      return raft::fbs::log_entry_type_COMMAND == get_log_entry(msg)->type();
+    }
+    static bool is_configuration(const_arg_type msg)
+    {
+      return raft::fbs::log_entry_type_CONFIGURATION == get_log_entry(msg)->type();
+    }
+    static bool is_noop(const_arg_type msg)
+    {
+      return raft::fbs::log_entry_type_NOOP == get_log_entry(msg)->type();
+    }
+    static slice data(const_arg_type msg)
+    {
+      return slice(reinterpret_cast<const uint8_t *>(get_log_entry(msg)->data()->c_str()), get_log_entry(msg)->data()->size());
+    }
+    static const raft::fbs::configuration_description & configuration(const_arg_type msg)
+    {
+      return *get_log_entry(msg)->configuration();
+    }
+    static std::pair<log_entry_traits::const_arg_type, std::function<void()> > create_command(uint64_t term, client_request_traits::const_arg_type req)
+    {
+      auto fbb = new flatbuffers::FlatBufferBuilder();
+      raft::fbs::log_entryBuilder leb(*fbb);
+      leb.add_term(term);
+      leb.add_type(log_entry_type_COMMAND);
+      // TODO: Would be better to avoid the copy and transfer ownership of the req memory to the log entry
+      auto cmd = client_request_traits::get_command_data(req);
+      auto data = fbb->CreateString(slice::buffer_cast<const char *>(cmd), slice::buffer_size(cmd));
+      leb.add_data(data);
+      auto le = leb.Finish();
+      fbb->Finish(le);
+      
+      return std::pair<log_entry_traits::const_arg_type, std::function<void()> >(::flatbuffers::GetRoot<raft::fbs::log_entry>(fbb->GetBufferPointer()),
+										 [fbb]() { delete fbb; });
+    }
+    static std::pair<log_entry_traits::const_arg_type, std::function<void()> > create_noop(uint64_t term)
+    {
+      auto fbb = new flatbuffers::FlatBufferBuilder();
+      raft::fbs::log_entryBuilder leb(*fbb);
+      leb.add_term(term);
+      leb.add_type(log_entry_type_NOOP);
+      auto le = leb.Finish();
+      fbb->Finish(le);
+      
+      return std::pair<log_entry_traits::const_arg_type, std::function<void()> >(::flatbuffers::GetRoot<raft::fbs::log_entry>(fbb->GetBufferPointer()),
+										 [fbb]() { delete fbb; });
+    }
+    static std::pair<log_entry_traits::const_arg_type, std::function<void()> > create_configuration_from_message(uint64_t term,  const raft::fbs::configuration_description * c)
+    {
+      auto fbb = new flatbuffers::FlatBufferBuilder();
+      std::vector<flatbuffers::Offset<raft::fbs::server_description>> servers;
+      for(auto s = c->from()->servers()->begin(), e = c->from()->servers()->end(); s != e; ++s) {
+	servers.push_back(raft::fbs::Createserver_description(*fbb, s->id(), fbb->CreateString(s->address())));
+      }
+      auto from_config = Createsimple_configuration_description(*fbb, fbb->CreateVector(servers));
+      servers.clear();
+      for(auto s = c->to()->servers()->begin(), e = c->to()->servers()->end(); s != e; ++s) {
+	servers.push_back(raft::fbs::Createserver_description(*fbb, s->id(), fbb->CreateString(s->address())));
+      }
+      auto to_config = Createsimple_configuration_description(*fbb, fbb->CreateVector(servers));
+      auto cfg = Createconfiguration_description(*fbb, from_config, to_config);
+      
+      raft::fbs::log_entryBuilder leb(*fbb);
+      leb.add_term(term);
+      leb.add_type(log_entry_type_CONFIGURATION);
+      leb.add_configuration(cfg);
+      auto le = leb.Finish();
+      fbb->Finish(le);
+      
+      return std::pair<log_entry_traits::const_arg_type, std::function<void()> >(::flatbuffers::GetRoot<raft::fbs::log_entry>(fbb->GetBufferPointer()),
+										 [fbb]() { delete fbb; });
+    }
+    template<typename _ConfigView>
+    static std::pair<log_entry_traits::const_arg_type, std::function<void()> > create_configuration(uint64_t term,  const _ConfigView & config)
+    {
+      auto fbb = new flatbuffers::FlatBufferBuilder();
+      std::vector<flatbuffers::Offset<raft::fbs::server_description>> servers;
+      for(auto i=0; i<config.from_size(); ++i) {
+	servers.push_back(raft::fbs::Createserver_description(*fbb, config.from_id(i), fbb->CreateString(config.from_address(i))));
+      }
+      auto from_config = Createsimple_configuration_description(*fbb, fbb->CreateVector(servers));
+      servers.clear();
+      for(auto i=0; i<config.to_size(); ++i) {
+	servers.push_back(raft::fbs::Createserver_description(*fbb, config.to_id(i), fbb->CreateString(config.to_address(i))));
+      }
+      auto to_config = Createsimple_configuration_description(*fbb, fbb->CreateVector(servers));
+      auto cfg = Createconfiguration_description(*fbb, from_config, to_config);
+      
+      raft::fbs::log_entryBuilder leb(*fbb);
+      leb.add_term(term);
+      leb.add_type(log_entry_type_CONFIGURATION);
+      leb.add_configuration(cfg);
+      auto le = leb.Finish();
+      fbb->Finish(le);
+      
+      return std::pair<log_entry_traits::const_arg_type, std::function<void()> >(::flatbuffers::GetRoot<raft::fbs::log_entry>(fbb->GetBufferPointer()),
+										 [fbb]() { delete fbb; });
+    }
+    static std::pair<log_entry_traits::const_arg_type, std::function<void()> > create_bootstrap_log_entry(uint64_t id, const char * address)
+    {
+      auto fbb = new flatbuffers::FlatBufferBuilder();
+      std::vector<flatbuffers::Offset<raft::fbs::server_description>> servers;
+	servers.push_back(raft::fbs::Createserver_description(*fbb, id, fbb->CreateString(address)));
+      auto from_config = Createsimple_configuration_description(*fbb, fbb->CreateVector(servers));
+      servers.clear();
+      auto to_config = Createsimple_configuration_description(*fbb, fbb->CreateVector(servers));
+      auto cfg = Createconfiguration_description(*fbb, from_config, to_config);
+      
+      raft::fbs::log_entryBuilder leb(*fbb);
+      leb.add_term(0);
+      leb.add_type(log_entry_type_CONFIGURATION);
+      leb.add_configuration(cfg);
+      auto le = leb.Finish();
+      fbb->Finish(le);
+      
+      return std::pair<log_entry_traits::const_arg_type, std::function<void()> >(::flatbuffers::GetRoot<raft::fbs::log_entry>(fbb->GetBufferPointer()),
+										 [fbb]() { delete fbb; });
+    }
+  };
+    
 
     template<typename _Communicator>
     class append_entry_sender
@@ -142,35 +338,50 @@ namespace raft {
 	flatbuffer_builder_adapter fbb;
 	std::vector<flatbuffers::Offset<raft::fbs::log_entry>> entries_vec;
 	for(uint64_t i=0; i<num_entries; ++i) {
-	  auto e = entries(i);
-	  if (e.is_command()) {
-	    auto str = fbb->CreateString(e.data());
+	  const auto & e = entries(i);
+	  if (log_entry_traits::is_command(&e)) {
+	    auto tmp = log_entry_traits::data(&e);
+	    auto str = fbb->CreateString(slice::buffer_cast<const char *>(tmp),
+					 slice::buffer_size(tmp));
 	    raft::fbs::log_entryBuilder leb(*fbb);
 	    leb.add_type(raft::fbs::log_entry_type_COMMAND);
-	    leb.add_term(e.term());
+	    leb.add_term(log_entry_traits::term(&e));
 	    leb.add_data(str);
 	    entries_vec.push_back(leb.Finish());
-	  } else if (e.is_configuration()) {
+	  } else if (log_entry_traits::is_configuration(&e)) {
 	    std::vector<flatbuffers::Offset<raft::fbs::server_description>> servers_vec;
-	    for(auto i=0; i<e.from_size(); ++i) {
-	      servers_vec.push_back(raft::fbs::Createserver_description(*fbb, e.from_id(i), fbb->CreateString(e.from_address(i))));
+	    const auto & cfg(log_entry_traits::configuration(&e));
+	    const auto & from(configuration_description_traits::from(&cfg));
+	    for(auto it = simple_configuration_description_traits::begin_servers(&from), e = simple_configuration_description_traits::end_servers(&from);
+		it != e; ++it) {
+	      auto slce = server_description_traits::address(&*it);
+	      servers_vec.push_back(raft::fbs::Createserver_description(*fbb,
+									server_description_traits::id(&*it),
+									fbb->CreateString(slice::buffer_cast<const char *>(slce),
+											  slice::buffer_size(slce))));
 	    }
 	    auto from_desc = raft::fbs::Createsimple_configuration_description(*fbb, fbb->CreateVector(servers_vec));
 	    servers_vec.clear();
-	    for(auto i=0; i<e.to_size(); ++i) {
-	      servers_vec.push_back(raft::fbs::Createserver_description(*fbb, e.to_id(i), fbb->CreateString(e.to_address(i))));
+	    const auto & to(configuration_description_traits::to(&cfg));
+	    for(auto it = simple_configuration_description_traits::begin_servers(&to), e = simple_configuration_description_traits::end_servers(&to);
+		it != e; ++it) {
+	      auto slce = server_description_traits::address(&*it);
+	      servers_vec.push_back(raft::fbs::Createserver_description(*fbb,
+									server_description_traits::id(&*it),
+									fbb->CreateString(slice::buffer_cast<const char *>(slce),
+											  slice::buffer_size(slce))));
 	    }
 	    auto to_desc = raft::fbs::Createsimple_configuration_description(*fbb, fbb->CreateVector(servers_vec));
 	    auto conf = raft::fbs::Createconfiguration_description(*fbb, from_desc, to_desc);
 	    raft::fbs::log_entryBuilder leb(*fbb);
 	    leb.add_type(raft::fbs::log_entry_type_CONFIGURATION);
-	    leb.add_term(e.term());
+	    leb.add_term(log_entry_traits::term(&e));
 	    leb.add_configuration(conf);
 	    entries_vec.push_back(leb.Finish());
 	  } else {
 	    raft::fbs::log_entryBuilder leb(*fbb);
 	    leb.add_type(raft::fbs::log_entry_type_NOOP);
-	    leb.add_term(e.term());
+	    leb.add_term(log_entry_traits::term(&e));
 	    entries_vec.push_back(leb.Finish());
 	  }
 	}
@@ -226,6 +437,46 @@ namespace raft {
       }
     };
 
+    template<typename _Communicator>
+    class request_vote_sender
+    {
+    private:
+      _Communicator & comm_;
+      typename _Communicator::endpoint ep_;
+      std::string address_;      
+	
+    public:
+      request_vote_sender(_Communicator & comm, typename _Communicator::endpoint ep, const std::string & addr)
+	:
+	comm_(comm),
+	ep_(ep),
+	address_(addr)
+      {
+      }
+
+      void send(uint64_t recipient_id,
+		uint64_t term_number,
+		uint64_t candidate_id,
+		uint64_t last_log_index,
+		uint64_t last_log_term)
+      {
+	flatbuffer_builder_adapter fbb;
+	raft::fbs::request_voteBuilder aeb(*fbb);
+	aeb.add_recipient_id(recipient_id);
+	aeb.add_term_number(term_number);
+	aeb.add_candidate_id(candidate_id);
+	aeb.add_last_log_index(last_log_index);
+	aeb.add_last_log_term(last_log_term);
+	auto ae = aeb.Finish();
+	// Create the surrounding raft_message
+	auto m = raft::fbs::Createraft_message(*fbb, raft::fbs::any_message_request_vote, ae.Union());
+	// Finish and get buffer
+	fbb->Finish(m);
+	// Send on to communicator
+	comm_.send(ep_, address_, std::move(fbb));
+      }
+    };
+
     struct vote_response_traits
     {
       typedef const raft_message * const_arg_type;
@@ -250,6 +501,44 @@ namespace raft {
       static bool granted(const_arg_type msg)
       {
 	return vr(msg)->granted();
+      }
+    };
+
+    template<typename _Communicator>
+    class vote_response_sender
+    {
+    private:
+      _Communicator & comm_;
+      typename _Communicator::endpoint ep_;
+      std::string address_;      
+	
+    public:
+      vote_response_sender(_Communicator & comm, typename _Communicator::endpoint ep, const std::string & addr)
+	:
+	comm_(comm),
+	ep_(ep),
+	address_(addr)
+      {
+      }
+
+      void send(uint64_t peer_id,
+		uint64_t term_number,
+		uint64_t request_term_number,
+		bool granted)
+      {
+	flatbuffer_builder_adapter fbb;
+	raft::fbs::vote_responseBuilder aeb(*fbb);
+	aeb.add_peer_id(peer_id);
+	aeb.add_term_number(term_number);
+	aeb.add_request_term_number(request_term_number);
+	aeb.add_granted(granted);
+	auto ae = aeb.Finish();
+	// Create the surrounding raft_message
+	auto m = raft::fbs::Createraft_message(*fbb, raft::fbs::any_message_vote_response, ae.Union());
+	// Finish and get buffer
+	fbb->Finish(m);
+	// Send on to communicator
+	comm_.send(ep_, address_, std::move(fbb));
       }
     };
 
@@ -288,6 +577,48 @@ namespace raft {
       static bool success(const_arg_type msg)
       {
 	return aer(msg)->success();
+      }
+    };
+
+    template<typename _Communicator>
+    class append_entry_response_sender
+    {
+    private:
+      _Communicator & comm_;
+      typename _Communicator::endpoint ep_;
+      std::string address_;      
+	
+    public:
+      append_entry_response_sender(_Communicator & comm, typename _Communicator::endpoint ep, const std::string & addr)
+	:
+	comm_(comm),
+	ep_(ep),
+	address_(addr)
+      {
+      }
+
+      void send(uint64_t recipient_id,
+		uint64_t term_number,
+		uint64_t request_term_number,
+		uint64_t begin_index,
+		uint64_t last_index,
+		bool success)
+      {
+	flatbuffer_builder_adapter fbb;
+	raft::fbs::append_responseBuilder aeb(*fbb);
+	aeb.add_recipient_id(recipient_id);
+	aeb.add_term_number(term_number);
+	aeb.add_request_term_number(request_term_number);
+	aeb.add_begin_index(begin_index);
+	aeb.add_last_index(last_index);
+	aeb.add_success(success);
+	auto ae = aeb.Finish();
+	// Create the surrounding raft_message
+	auto m = raft::fbs::Createraft_message(*fbb, raft::fbs::any_message_append_response, ae.Union());
+	// Finish and get buffer
+	fbb->Finish(m);
+	// Send on to communicator
+	comm_.send(ep_, address_, std::move(fbb));
       }
     };
 
@@ -405,6 +736,44 @@ namespace raft {
       }
     };
   
+    template<typename _Communicator>
+    class append_checkpoint_chunk_response_sender
+    {
+    private:
+      _Communicator & comm_;
+      typename _Communicator::endpoint ep_;
+      std::string address_;      
+	
+    public:
+      append_checkpoint_chunk_response_sender(_Communicator & comm, typename _Communicator::endpoint ep, const std::string & addr)
+	:
+	comm_(comm),
+	ep_(ep),
+	address_(addr)
+      {
+      }
+
+      void send(uint64_t recipient_id,
+		uint64_t term_number,
+		uint64_t request_term_number,
+		uint64_t bytes_stored)
+      {
+	flatbuffer_builder_adapter fbb;
+	raft::fbs::append_checkpoint_chunk_responseBuilder aeb(*fbb);
+	aeb.add_recipient_id(recipient_id);
+	aeb.add_term_number(term_number);
+	aeb.add_request_term_number(request_term_number);
+	aeb.add_bytes_stored(bytes_stored);
+	auto ae = aeb.Finish();
+	// Create the surrounding raft_message
+	auto m = raft::fbs::Createraft_message(*fbb, raft::fbs::any_message_append_checkpoint_chunk_response, ae.Union());
+	// Finish and get buffer
+	fbb->Finish(m);
+	// Send on to communicator
+	comm_.send(ep_, address_, std::move(fbb));
+      }
+    };
+
     class set_configuration_request_traits
     {
     public:
@@ -433,10 +802,41 @@ namespace raft {
       }
     };
 
+    class set_configuration_response_traits
+    {
+    public:
+      typedef const raft_message * const_arg_type;    
+    
+      static const raft::fbs::set_configuration_response * scr(const_arg_type msg)
+      {
+	return static_cast<const raft::fbs::set_configuration_response * >(msg->message());
+      }
+    
+      static raft::fbs::client_result result(const_arg_type msg)
+      {
+	return scr(msg)->result();
+      }
+      static std::size_t bad_servers_size(const_arg_type msg)
+      {
+	return scr(msg)->bad_servers()->servers()->size();
+      }
+      static uint64_t bad_servers_id(const_arg_type msg, std::size_t i)
+      {
+	return scr(msg)->bad_servers()->servers()->Get(i)->id();
+      }
+      static const char * bad_servers_address(const_arg_type msg, std::size_t i)
+      {
+	return scr(msg)->bad_servers()->servers()->Get(i)->address()->c_str();
+      }
+    };
+
     class messages
     {
     public:
+      typedef log_entry log_entry_type;
+      typedef log_entry_traits log_entry_traits_type;
       typedef client_request client_request_type;
+      typedef client_request_traits client_request_traits_type;
       typedef request_vote request_vote_type;
       typedef request_vote_traits request_vote_traits_type;
       typedef vote_response vote_response_type;
@@ -449,11 +849,22 @@ namespace raft {
       typedef append_entry_traits append_entry_traits_type;
       typedef append_response append_entry_response_type;
       typedef append_entry_response_traits append_entry_response_traits_type;      
+
+      typedef server_description_traits server_description_traits_type;
+      typedef simple_configuration_description_traits simple_configuration_description_traits_type;
+      typedef configuration_description_traits configuration_description_traits_type;
       typedef set_configuration_request_traits set_configuration_request_traits_type;
+      typedef set_configuration_response_traits set_configuration_response_traits_type;
 
       typedef server_description configuration_description_server_type;
       typedef simple_configuration_description simple_configuration_description_type;
       typedef configuration_description configuration_description_type;
+
+      typedef raft::fbs::client_result client_result_type;
+      static raft::fbs::client_result client_result_success() { return raft::fbs::client_result_SUCCESS; }
+      static raft::fbs::client_result client_result_fail() { return raft::fbs::client_result_FAIL; }
+      static raft::fbs::client_result client_result_retry() { return raft::fbs::client_result_RETRY; }
+      static raft::fbs::client_result client_result_not_leader() { return raft::fbs::client_result_NOT_LEADER; }
     };      
   }
 }
