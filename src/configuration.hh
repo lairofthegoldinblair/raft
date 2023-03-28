@@ -15,74 +15,6 @@
 
 namespace raft {
 
-  struct server_description
-  {
-    typedef std::string address_type;
-    uint64_t id;
-    std::string address;
-  };
-
-  struct simple_configuration_description
-  {
-    typedef server_description server_type;
-    std::vector<server_description> servers;
-  };
-
-  // Data about a configuration that has to be stored in a checkpoint
-  template<typename configuration_description_type>
-  struct configuration_checkpoint
-  {
-    typedef typename configuration_description_type::address_type address_type;
-    uint64_t index;
-    configuration_description_type description;
-
-    configuration_checkpoint()
-      :
-      index(std::numeric_limits<uint64_t>::max())
-    {
-    }
-
-    configuration_checkpoint(uint64_t i, const configuration_description_type & desc)
-      :
-      index(i),
-      description(desc)
-    {
-    }
-
-    bool is_valid() const
-    {
-      return index != std::numeric_limits<uint64_t>::max();
-    }
-  };
-
-  struct configuration_description
-  {
-    typedef simple_configuration_description simple_type;
-    typedef server_description server_type;
-    typedef configuration_checkpoint<configuration_description> checkpoint_type;
-    typedef server_description::address_type address_type;
-    simple_type from;
-    simple_type to;
-  };
-
-  template<typename _Description>
-  struct configuration_simple_type
-  {
-    typedef typename _Description::simple_type type;
-  };
-
-  template<typename _Description>
-  struct configuration_server_type
-  {
-    typedef typename _Description::server_type type;
-  };
-
-  template<typename _Description>
-  struct configuration_checkpoint_type
-  {
-    typedef typename _Description::checkpoint_type type;
-  };
-
   // Track how far behind a newly added peer is.  The idea is that we don't want to transition the peer
   // from staging until it is pretty close to having all the state it needs (e.g. it could take some time
   // to load a checkpoint).  This is a fuzzy concept and is heurisitc.  The logic here is from logcabin and
@@ -206,51 +138,14 @@ namespace raft {
     std::vector<std::shared_ptr<_Peer> > peers_;
   };
 
-  class configuration_description_view
-  {
-  private:
-    const configuration_description & description_;
-  public:
-    configuration_description_view(const configuration_description & desc)
-      :
-      description_(desc)
-    {
-    }
-
-    std::size_t from_size() const
-    {
-      return description_.from.servers.size();
-    }
-
-    std::size_t from_id(std::size_t i) const
-    {
-      return description_.from.servers[i].id;
-    }
-
-    const std::string & from_address(std::size_t i) const
-    {
-      return description_.from.servers[i].address;
-    }
-
-    std::size_t to_size() const
-    {
-      return description_.to.servers.size();
-    }
-
-    std::size_t to_id(std::size_t i) const
-    {
-      return description_.to.servers[i].id;
-    }
-
-    const std::string & to_address(std::size_t i) const
-    {
-      return description_.to.servers[i].address;
-    }
-  };
-  
   template<typename configuration_type>
   class transitional_configuration_view
   {
+  public:
+    // Configuraiton description stuff
+    typedef typename configuration_type::configuration_description_traits_type cdtt;
+    typedef typename configuration_type::simple_configuration_description_traits_type scdtt;
+    typedef typename configuration_type::server_description_traits_type sdtt;    
   private:
     const configuration_type & configuration_;
   public:
@@ -262,17 +157,20 @@ namespace raft {
 
     std::size_t from_size() const
     {
-      return configuration_.description_.from.servers.size();
+      const auto & f = cdtt::from(configuration_.description_);      
+      return scdtt::size(&f);
     }
 
     std::size_t from_id(std::size_t i) const
     {
-      return configuration_.description_.from.servers[i].id;
+      const auto & f = cdtt::from(configuration_.description_);
+      return sdtt::id(&scdtt::get(&f, i));
     }
 
-    const std::string & from_address(std::size_t i) const
+    std::string from_address(std::size_t i) const
     {
-      return configuration_.description_.from.servers[i].address;
+      const auto & f = cdtt::from(configuration_.description_);
+      return std::string(sdtt::address(&scdtt::get(&f, i)));
     }
 
     std::size_t to_size() const
@@ -294,6 +192,11 @@ namespace raft {
   template<typename configuration_type>
   class stable_configuration_view
   {
+  public:
+    // Configuraiton description stuff
+    typedef typename configuration_type::configuration_description_traits_type cdtt;
+    typedef typename configuration_type::simple_configuration_description_traits_type scdtt;
+    typedef typename configuration_type::server_description_traits_type sdtt;
   private:
     const configuration_type & configuration_;
   public:
@@ -305,17 +208,20 @@ namespace raft {
 
     std::size_t from_size() const
     {
-      return configuration_.description_.to.servers.size();
+      const auto & t = cdtt::to(configuration_.description_);      
+      return scdtt::size(&t);
     }
 
     std::size_t from_id(std::size_t i) const
     {
-      return configuration_.description_.to.servers[i].id;
+      const auto & t = cdtt::to(configuration_.description_);
+      return sdtt::id(&scdtt::get(&t, i));
     }
 
-    const std::string & from_address(std::size_t i) const
+    std::string from_address(std::size_t i) const
     {
-      return configuration_.description_.to.servers[i].address;
+      const auto & t = cdtt::to(configuration_.description_);
+      return std::string(sdtt::address(&scdtt::get(&t, i)));
     }
 
     std::size_t to_size() const
@@ -337,7 +243,7 @@ namespace raft {
   
   // Implements Ongaro's Joint Consensus configuration algorithm.  See Section 4.3 of Ongaro's thesis and
   // the "In search of understandable consensus algorithm" paper.
-  template <typename _Peer, typename _Description>
+  template <typename _Peer, typename _Messages>
   class configuration_algorithm
   {
   private:
@@ -357,10 +263,16 @@ namespace raft {
     typedef boost::filter_iterator<is_not_null, typename std::vector<std::shared_ptr<_Peer> >::iterator> peer_filter_iterator;
 
   public:
-    typedef transitional_configuration_view<configuration_algorithm<_Peer, _Description> > transitional_configuration_type;
-    typedef stable_configuration_view<configuration_algorithm<_Peer, _Description> > stable_configuration_type;
-    typedef typename configuration_server_type<_Description>::type server_description_type;
-    typedef typename configuration_simple_type<_Description>::type simple_configuration_description_type;
+    // Configuraiton description stuff
+    typedef typename _Messages::configuration_description_type configuration_description_type;
+    typedef typename _Messages::configuration_description_traits_type configuration_description_traits_type;
+    typedef typename _Messages::simple_configuration_description_type simple_configuration_description_type;
+    typedef typename _Messages::simple_configuration_description_traits_type simple_configuration_description_traits_type;
+    typedef typename _Messages::configuration_description_server_type server_description_type;
+    typedef typename _Messages::server_description_traits_type server_description_traits_type;
+
+    typedef transitional_configuration_view<configuration_algorithm<_Peer, _Messages> > transitional_configuration_type;
+    typedef stable_configuration_view<configuration_algorithm<_Peer, _Messages> > stable_configuration_type;
     typedef _Peer peer_type;
     typedef simple_configuration<peer_type> simple_description_type;
     typedef boost::transform_iterator<deref, peer_filter_iterator> peer_iterator;
@@ -402,7 +314,7 @@ namespace raft {
     simple_configuration<_Peer> new_peers_;
 
     // Description = is for serializing to log/checkpoint and for initializing
-    _Description description_;
+    const configuration_description_type * description_;
 
     // Remember if a transitional configuration was created by staging in this instance (as opposed
     // to being received in a log).  This is synonymous with being the LEADER where the config change
@@ -413,22 +325,25 @@ namespace raft {
     // Sync up the server description address with the peer type.
     std::shared_ptr<_Peer> get_or_create_peer(const server_description_type & s, bool is_staging)
     {
-      if (cluster_.size() <= s.id) {
-	cluster_.resize(s.id+1);
+      auto server_id = server_description_traits_type::id(&s);
+      auto server_address = server_description_traits_type::address(&s);
+      
+      if (cluster_.size() <= server_id) {
+	cluster_.resize(server_id+1);
       }
-      if (!cluster_[s.id]) {
-	cluster_[s.id].reset(new _Peer());
-	cluster_[s.id]->peer_id = s.id;
+      if (!cluster_[server_id]) {
+	cluster_[server_id].reset(new _Peer());
+	cluster_[server_id]->peer_id = server_id;
 	// Only staging servers need to be monitored for catchup.
 	if (is_staging) {
-	  cluster_[s.id]->configuration_change_.reset(new peer_configuration_change(my_cluster_id(), s.id, std::chrono::steady_clock::now()));
+	  cluster_[server_id]->configuration_change_.reset(new peer_configuration_change(my_cluster_id(), server_id, std::chrono::steady_clock::now()));
 	}
 	++num_known_peers_;
-	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") creating new peer with id " << s.id;
+	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") creating new peer with id " << server_id;
       }
       // NOTE: We always update the address even if peer is not created
-      cluster_[s.id]->address = s.address;
-      return cluster_[s.id];
+      cluster_[server_id]->address = std::string(server_address);
+      return cluster_[server_id];
     }
   public:
     configuration_algorithm(uint64_t self)
@@ -437,6 +352,7 @@ namespace raft {
       cluster_idx_(self),
       configuration_id_(std::numeric_limits<uint64_t>::max()),
       state_(EMPTY),
+      description_(nullptr),
       initiated_new_configuration_(false)
     {
     }
@@ -511,11 +427,13 @@ namespace raft {
       return configuration_id_ != std::numeric_limits<uint64_t>::max();
     }
 
-    void set_configuration(uint64_t configuration_id, const _Description & desc)
+    void set_configuration(uint64_t configuration_id, const configuration_description_type & desc)
     {
-      state_ = desc.to.servers.size() == 0 ? STABLE : TRANSITIONAL;
+      typedef configuration_description_traits_type cdtt;
+      typedef simple_configuration_description_traits_type scdtt;
+      state_ = 0 == scdtt::size(&cdtt::to(&desc)) ? STABLE : TRANSITIONAL;
       configuration_id_ = configuration_id;
-      description_ = desc;
+      description_ = &desc;
 
       // The in-progress config change is done (either we've rolled back to previous STABLE
       // or committed the new STABLE).
@@ -527,12 +445,12 @@ namespace raft {
       new_peers_.clear();
 
       std::set<uint64_t> new_known_peers;
-      for(auto & s : description_.from.servers) {
-	old_peers_.peers_.push_back(get_or_create_peer(s, false));
+      for(std::size_t i=0; i < scdtt::size(&cdtt::from(&desc)); ++i) {
+	old_peers_.peers_.push_back(get_or_create_peer(scdtt::get(&cdtt::from(&desc), i), false));
 	new_known_peers.insert(old_peers_.peers_.back()->peer_id);
       }
-      for(auto & s : description_.to.servers) {
-	new_peers_.peers_.push_back(get_or_create_peer(s, false));
+      for(std::size_t i=0; i<scdtt::size(&cdtt::to(&desc)); ++i) {
+	new_peers_.peers_.push_back(get_or_create_peer(scdtt::get(&cdtt::to(&desc), i), false));
 	new_known_peers.insert(new_peers_.peers_.back()->peer_id);
       }
 
@@ -549,12 +467,14 @@ namespace raft {
 
     void set_staging_configuration(const simple_configuration_description_type & desc)
     {
+      typedef simple_configuration_description_traits_type scdtt;
       BOOST_ASSERT(state_ == STABLE);
       state_ = STAGING;
       initiated_new_configuration_ = true;
-      for(auto & s : desc.servers) {
+      // for(auto & s : desc.servers) {
+      for(std::size_t i = 0; i < scdtt::size(&desc); ++i) {
 	// This may update address of any existing peer
-	new_peers_.peers_.push_back(get_or_create_peer(s, true));
+	new_peers_.peers_.push_back(get_or_create_peer(scdtt::get(&desc, i), true));
       }
     }
 
@@ -563,7 +483,7 @@ namespace raft {
       if (state_ == STAGING) {
 	// Cancel the STAGING and also restore any addresses that may have been
 	// updated by the staging...
-	set_configuration(configuration_id_, description_);
+	set_configuration(configuration_id_, *description_);
 	BOOST_ASSERT(initiated_new_configuration_ == false);
       }
     }
@@ -582,34 +502,20 @@ namespace raft {
       return true;
     }
 
-    bool staging_servers_making_progress(simple_configuration_description_type & desc) const
+    std::vector<std::pair<uint64_t, std::string>> staging_servers_making_progress() const
     {
+      std::vector<std::pair<uint64_t, std::string>> ret;
       if (state_ != STAGING) {
-	return true;
+	return ret;
       }
 
       // TODO: Implement
-      return true;
+      return ret;
     }
 
-    void get_transitional_configuration(_Description & desc)
-    {
-      desc.from = description_.from;
-      for(auto & p : new_peers_.peers_) {
-	desc.to.servers.push_back(server_description_type());
-	desc.to.servers.back().id = p->peer_id;
-	desc.to.servers.back().address = p->address;
-      }
-    }
-    
     transitional_configuration_type get_transitional_configuration() const
     {
       return transitional_configuration_type(*this);
-    }
-    
-    void get_stable_configuration(_Description & desc)
-    {
-      desc.from = description_.to;
     }
     
     stable_configuration_type get_stable_configuration() const
@@ -622,7 +528,7 @@ namespace raft {
       state_ = EMPTY;
       initiated_new_configuration_ = false;
       configuration_id_ = std::numeric_limits<uint64_t>::max();
-      description_ = _Description();
+      description_ = nullptr;
       old_peers_.clear();
       new_peers_.clear();
       for(auto p : cluster_) {
@@ -659,13 +565,12 @@ namespace raft {
       return is_transitional() && initiated_new_configuration_;
     }
 
-    const _Description description() const {
+    const configuration_description_type * description() const {
       return description_;
     }
   };
 
-  // Not exactly sure what this is about yet...
-  // On the one hand this class is a view (in the database sense) of the configuration
+  // This class is a view (in the database sense) of the configuration
   // entries in the log.
   // In particular it knows what configuration was active at each
   // point of the log (needed when taking a checkpoint at a point in the log that
@@ -673,14 +578,17 @@ namespace raft {
   // Also it keeps a configuration object sync'd up with the latest
   // logged description.
   // This might be a good candidate for a mixin with a log class or maybe not...
-  template <typename _Peer, typename _Description, typename _Messages>
+  template <typename _Peer, typename _Messages>
   class configuration_manager
   {
   public:
-    typedef _Description description_type;
     typedef typename _Peer::template apply<peer_configuration_change>::type peer_type;
-    typedef configuration_algorithm<peer_type, description_type> configuration_type;
-    typedef typename description_type::checkpoint_type checkpoint_type;
+    typedef configuration_algorithm<peer_type, _Messages> configuration_type;
+    typedef typename _Messages::checkpoint_header_type checkpoint_type;
+    typedef typename _Messages::checkpoint_header_traits_type checkpoint_traits_type;
+    typedef typename _Messages::configuration_description_type configuration_description_type;
+    typedef typename _Messages::log_entry_type log_entry_type;
+    typedef typename _Messages::log_entry_traits_type log_entry_traits_type;
   private:
 
     // The current configuration of the cluster (could be transitioning).
@@ -690,17 +598,18 @@ namespace raft {
     // the configuration in the most recent checkpoint.
 
     // log index => description.  Included checkpoint description as well.
-    std::map<uint64_t, description_type> logged_descriptions_;
+    std::map<uint64_t, const configuration_description_type *> logged_descriptions_;
 
     // Valid if and only if checkpoint_description_.first != std::numeric_limits<uint64_t>::max()
     // Not sure I need to track this separately from logged descriptions as I am storing the checkpointed
     // description in server_checkpoint::last_checkpoint_configuration_ (or I can get rid of that and use this).
-    checkpoint_type checkpoint_description_;
+    const checkpoint_type * checkpoint_header_;
 
     void on_update()
     {
-      if (checkpoint_description_.is_valid()) {
-	logged_descriptions_.insert(std::make_pair(checkpoint_description_.index, checkpoint_description_.description));
+      if (nullptr != checkpoint_header_) {
+	logged_descriptions_.insert(std::make_pair(checkpoint_traits_type::index(checkpoint_header_),
+						   &checkpoint_traits_type::configuration(checkpoint_header_)));
       }
 
       // Make sure configuration_ always reflects the last logged config
@@ -709,17 +618,58 @@ namespace raft {
       } else {
 	auto it = logged_descriptions_.rbegin();
 	if (configuration_.configuration_id() != it->first) {
-	  configuration_.set_configuration(it->first, it->second);
+	  configuration_.set_configuration(it->first, *it->second);
 	}
       }
     }
   
-    description_type get_configuration_description_at(uint64_t log_index) const
+  public:
+    configuration_manager(uint64_t self)
+      :
+      configuration_(self),
+      checkpoint_header_(nullptr)
+    {
+    }
+
+    void add_logged_description(uint64_t log_index, const log_entry_type & le)
+    {
+      BOOST_ASSERT(log_entry_traits_type::is_configuration(&le));
+      logged_descriptions_[log_index] = &log_entry_traits_type::configuration(&le);
+      on_update();
+    }
+
+    void set_checkpoint(const checkpoint_type & ckpt)
+    {
+      checkpoint_header_ = &ckpt;
+      on_update();
+    }
+
+    const checkpoint_type & get_checkpoint() const
+    {
+      return *checkpoint_header_;
+    }
+
+    // Remove entries with index < idx
+    void truncate_prefix(uint64_t idx)
+    {
+      logged_descriptions_.erase(logged_descriptions_.begin(), logged_descriptions_.lower_bound(idx));
+      on_update();
+    }
+  
+    // Remove entries with index >= idx
+    void truncate_suffix(uint64_t idx)
+    {
+      logged_descriptions_.erase(logged_descriptions_.lower_bound(idx), logged_descriptions_.end());
+      on_update();
+    }
+
+    // Get configuration in effect at log_index.  
+    const configuration_description_type * get_configuration_description_at(uint64_t log_index) const
     {
       auto it = logged_descriptions_.upper_bound(log_index);
       if (it == logged_descriptions_.begin()) {
 	// Nothing is less that or equal to log_index
-	return description_type();
+	return nullptr;
       } else if (it == logged_descriptions_.end()) {
 	// Everything is less than or equal to log_index
 	return logged_descriptions_.rbegin()->second;
@@ -741,90 +691,7 @@ namespace raft {
 	return (--it)->first;
       }
     }
-
-  public:
-    configuration_manager(uint64_t self)
-      :
-      configuration_(self)
-    {
-    }
-
-    void add_logged_description(uint64_t log_index, const typename _Messages::configuration_description_type * description)
-    {
-      // TODO: Implement and removed duplication with add_logged_description by reference
-      // TODO: Should we transition to internally using the _Message::configuration_description_type?
-      typedef typename _Messages::server_description_traits_type server_description_traits_type;
-      typedef typename _Messages::simple_configuration_description_traits_type simple_configuration_description_traits_type;
-      typedef typename _Messages::configuration_description_traits_type configuration_description_traits_type;
-      configuration_description tmp;
-      for(auto it = simple_configuration_description_traits_type::begin_servers(&configuration_description_traits_type::from(description)),
-	    e = simple_configuration_description_traits_type::end_servers(&configuration_description_traits_type::from(description));
-	  it != e;
-	  ++it) {
-	auto addr_slice = server_description_traits_type::address(&*it);
-	std::string addr(slice::buffer_cast<const char *>(addr_slice), slice::buffer_size(addr_slice));
-	tmp.from.servers.push_back({server_description_traits_type::id(&*it), std::move(addr)});
-      }
-      for(auto it = simple_configuration_description_traits_type::begin_servers(&configuration_description_traits_type::to(description)),
-	    e = simple_configuration_description_traits_type::end_servers(&configuration_description_traits_type::to(description));
-	  it != e;
-	  ++it) {
-	auto addr_slice = server_description_traits_type::address(&*it);
-	std::string addr(slice::buffer_cast<const char *>(addr_slice), slice::buffer_size(addr_slice));
-	tmp.to.servers.push_back({server_description_traits_type::id(&*it), std::move(addr)});
-      }
-      logged_descriptions_[log_index] = std::move(tmp);
-      on_update();
-    }
-
-    void add_logged_description(uint64_t log_index, const description_type & description)
-    {
-      logged_descriptions_[log_index] = description;
-      on_update();
-    }
-
-    void add_transitional_description(uint64_t log_index)
-    {
-      description_type description;
-      configuration_.get_transitional_configuration(description);
-      add_logged_description(log_index, description);
-    }
-
-    void add_stable_description(uint64_t log_index)
-    {
-      description_type description;
-      configuration_.get_stable_configuration(description);
-      add_logged_description(log_index, description);
-    }
-
-    void set_checkpoint(const checkpoint_type & ckpt)
-    {
-      // TODO: Error when invalid checkpoint data
-      if (ckpt.is_valid()) {
-	checkpoint_description_ = ckpt;
-	on_update();
-      }
-    }
-
-    const checkpoint_type & get_checkpoint() const
-    {
-      return checkpoint_description_;
-    }
-
-    // Remove entries with index < idx
-    void truncate_prefix(uint64_t idx)
-    {
-      logged_descriptions_.erase(logged_descriptions_.begin(), logged_descriptions_.lower_bound(idx));
-      on_update();
-    }
-  
-    // Remove entries with index >= idx
-    void truncate_suffix(uint64_t idx)
-    {
-      logged_descriptions_.erase(logged_descriptions_.lower_bound(idx), logged_descriptions_.end());
-      on_update();
-    }
-
+      
     // Get configuration in effect at log_index.  
     bool has_configuration_at(uint64_t log_index) const
     {
@@ -840,14 +707,6 @@ namespace raft {
       }
     }
       
-    void get_checkpoint_state(uint64_t log_index, checkpoint_type & ck) const
-    {
-      if (has_configuration_at(log_index)) {
-	ck.index = get_configuration_index_at(log_index);
-	ck.description = get_configuration_description_at(log_index);
-      }
-    }
-
     const configuration_type & configuration() const
     {
       return configuration_;

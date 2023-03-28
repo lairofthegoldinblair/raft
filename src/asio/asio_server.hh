@@ -10,7 +10,7 @@
 #include "asio/basic_file_object.hh"
 #include "asio/disk_io_service.hh"
 #include "leveldb_log.hh"
-#include "messages.hh"
+#include "../native/messages.hh"
 #include "protocol.hh"
 
 namespace raft {
@@ -73,11 +73,11 @@ namespace raft {
 			uint64_t last_log_term)
       {
 	typename _Messages::request_vote_type msg;
-	msg.recipient_id_=recipient_id;
-	msg.term_number_=term_number;
-	msg.candidate_id_=candidate_id;
-	msg.last_log_index_=last_log_index;
-	msg.last_log_term_=last_log_term;
+	msg.recipient_id=recipient_id;
+	msg.term_number=term_number;
+	msg.candidate_id=candidate_id;
+	msg.last_log_index=last_log_index;
+	msg.last_log_term=last_log_term;
 	send(ep, address, msg);	
       }
 
@@ -141,9 +141,7 @@ namespace raft {
 				   uint64_t recipient_id,
 				   uint64_t term_number,
 				   uint64_t leader_id,
-				   uint64_t last_checkpoint_index,
-				   uint64_t last_checkpoint_term,
-				   raft::configuration_checkpoint<raft::configuration_description> last_checkpoint_configuration,
+				   const raft::native::checkpoint_header & last_checkpoint_header,
 				   uint64_t checkpoint_begin,
 				   uint64_t checkpoint_end,
 				   bool checkpoint_done,
@@ -153,9 +151,7 @@ namespace raft {
 	msg.recipient_id=recipient_id;
 	msg.term_number=term_number;
 	msg.leader_id=leader_id;
-	msg.last_checkpoint_index=last_checkpoint_index;
-	msg.last_checkpoint_term=last_checkpoint_term;
-	msg.last_checkpoint_configuration=last_checkpoint_configuration;
+	msg.last_checkpoint_header=last_checkpoint_header;
 	msg.checkpoint_begin=checkpoint_begin;
 	msg.checkpoint_end=checkpoint_end;
 	msg.checkpoint_done=checkpoint_done;
@@ -382,7 +378,16 @@ namespace raft {
       };
     };
 
-    typedef raft::protocol<asio_tcp_communicator_metafunction, raft::native::messages> raft_protocol_type;
+    struct native_client_metafunction
+    {
+      template <typename _Messages>
+      struct apply
+      {
+	typedef raft::native::client<_Messages> type;
+      };
+    };
+
+    typedef raft::protocol<asio_tcp_communicator_metafunction, native_client_metafunction, raft::native::messages> raft_protocol_type;
     
     class raft_receiver
     {
@@ -400,28 +405,28 @@ namespace raft {
 	  {
 	    raft::native::request_vote req;
 	    serialization::deserialize(buf, req);
-	    protocol_.on_request_vote(req);
+	    protocol_.on_request_vote(std::move(req));
 	    break;
 	  }
 	case 1:
 	  {
 	    raft::native::vote_response resp;
 	    serialization::deserialize(buf, resp);
-	    protocol_.on_vote_response(resp);
+	    protocol_.on_vote_response(std::move(resp));
 	    break;
 	  }
 	case 2:
 	  {
-	    auto req = new raft::native::messages::append_entry_type();
-	    serialization::deserialize(buf, *req);
-	    protocol_.on_append_entry(req, [req]() { delete req; });
+	    raft::native::messages::append_entry_type req;
+	    serialization::deserialize(buf, req);
+	    protocol_.on_append_entry(std::move(req));
 	    break;
 	  }
 	case 3:
 	  {
 	    raft::native::messages::append_entry_response_type req;
 	    serialization::deserialize(buf, req);
-	    protocol_.on_append_response(req);
+	    protocol_.on_append_response(std::move(req));
 	    break;
 	  }
 	default:
@@ -555,7 +560,7 @@ namespace raft {
       tcp_server(boost::asio::io_service & ios,
 		 uint64_t server_id,
 		 const boost::asio::ip::tcp::endpoint & e,
-		 const raft_protocol_type::simple_configuration_description_type & config,
+		 const raft::native::simple_configuration_description & config,
 		 const std::string & log_directory)
 	:
 	io_service_(ios),

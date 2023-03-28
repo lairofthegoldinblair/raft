@@ -46,6 +46,9 @@ struct append_responseBuilder;
 struct configuration_checkpoint;
 struct configuration_checkpointBuilder;
 
+struct checkpoint_header;
+struct checkpoint_headerBuilder;
+
 struct append_checkpoint_chunk;
 struct append_checkpoint_chunkBuilder;
 
@@ -432,8 +435,11 @@ struct log_entry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::String *data() const {
     return GetPointer<const ::flatbuffers::String *>(VT_DATA);
   }
-  const raft::fbs::configuration_description *configuration() const {
-    return GetPointer<const raft::fbs::configuration_description *>(VT_CONFIGURATION);
+  const ::flatbuffers::Vector<uint8_t> *configuration() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_CONFIGURATION);
+  }
+  const raft::fbs::configuration_description *configuration_nested_root() const {
+    return ::flatbuffers::GetRoot<raft::fbs::configuration_description>(configuration()->Data());
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -442,7 +448,8 @@ struct log_entry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_DATA) &&
            verifier.VerifyString(data()) &&
            VerifyOffset(verifier, VT_CONFIGURATION) &&
-           verifier.VerifyTable(configuration()) &&
+           verifier.VerifyVector(configuration()) &&
+           verifier.VerifyNestedFlatBuffer<raft::fbs::configuration_description>(configuration(), nullptr) &&
            verifier.EndTable();
   }
 };
@@ -460,7 +467,7 @@ struct log_entryBuilder {
   void add_data(::flatbuffers::Offset<::flatbuffers::String> data) {
     fbb_.AddOffset(log_entry::VT_DATA, data);
   }
-  void add_configuration(::flatbuffers::Offset<raft::fbs::configuration_description> configuration) {
+  void add_configuration(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> configuration) {
     fbb_.AddOffset(log_entry::VT_CONFIGURATION, configuration);
   }
   explicit log_entryBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
@@ -479,7 +486,7 @@ inline ::flatbuffers::Offset<log_entry> Createlog_entry(
     raft::fbs::log_entry_type type = raft::fbs::log_entry_type_COMMAND,
     uint64_t term = 0,
     ::flatbuffers::Offset<::flatbuffers::String> data = 0,
-    ::flatbuffers::Offset<raft::fbs::configuration_description> configuration = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> configuration = 0) {
   log_entryBuilder builder_(_fbb);
   builder_.add_term(term);
   builder_.add_configuration(configuration);
@@ -493,14 +500,15 @@ inline ::flatbuffers::Offset<log_entry> Createlog_entryDirect(
     raft::fbs::log_entry_type type = raft::fbs::log_entry_type_COMMAND,
     uint64_t term = 0,
     const char *data = nullptr,
-    ::flatbuffers::Offset<raft::fbs::configuration_description> configuration = 0) {
+    const std::vector<uint8_t> *configuration = nullptr) {
   auto data__ = data ? _fbb.CreateString(data) : 0;
+  auto configuration__ = configuration ? _fbb.CreateVector<uint8_t>(*configuration) : 0;
   return raft::fbs::Createlog_entry(
       _fbb,
       type,
       term,
       data__,
-      configuration);
+      configuration__);
 }
 
 struct request_vote FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -719,8 +727,7 @@ struct append_entry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_PREVIOUS_LOG_INDEX = 10,
     VT_PREVIOUS_LOG_TERM = 12,
     VT_LEADER_COMMIT_INDEX = 14,
-    VT_ENTRY = 16,
-    VT_ENTRIES = 18
+    VT_ENTRIES = 16
   };
   uint64_t recipient_id() const {
     return GetField<uint64_t>(VT_RECIPIENT_ID, 0);
@@ -740,9 +747,6 @@ struct append_entry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint64_t leader_commit_index() const {
     return GetField<uint64_t>(VT_LEADER_COMMIT_INDEX, 0);
   }
-  const ::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entry>> *entry() const {
-    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entry>> *>(VT_ENTRY);
-  }
   const ::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>> *entries() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>> *>(VT_ENTRIES);
   }
@@ -754,9 +758,6 @@ struct append_entry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint64_t>(verifier, VT_PREVIOUS_LOG_INDEX, 8) &&
            VerifyField<uint64_t>(verifier, VT_PREVIOUS_LOG_TERM, 8) &&
            VerifyField<uint64_t>(verifier, VT_LEADER_COMMIT_INDEX, 8) &&
-           VerifyOffset(verifier, VT_ENTRY) &&
-           verifier.VerifyVector(entry()) &&
-           verifier.VerifyVectorOfTables(entry()) &&
            VerifyOffset(verifier, VT_ENTRIES) &&
            verifier.VerifyVector(entries()) &&
            verifier.VerifyVectorOfTables(entries()) &&
@@ -786,9 +787,6 @@ struct append_entryBuilder {
   void add_leader_commit_index(uint64_t leader_commit_index) {
     fbb_.AddElement<uint64_t>(append_entry::VT_LEADER_COMMIT_INDEX, leader_commit_index, 0);
   }
-  void add_entry(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entry>>> entry) {
-    fbb_.AddOffset(append_entry::VT_ENTRY, entry);
-  }
   void add_entries(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>>> entries) {
     fbb_.AddOffset(append_entry::VT_ENTRIES, entries);
   }
@@ -811,7 +809,6 @@ inline ::flatbuffers::Offset<append_entry> Createappend_entry(
     uint64_t previous_log_index = 0,
     uint64_t previous_log_term = 0,
     uint64_t leader_commit_index = 0,
-    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entry>>> entry = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>>> entries = 0) {
   append_entryBuilder builder_(_fbb);
   builder_.add_leader_commit_index(leader_commit_index);
@@ -821,7 +818,6 @@ inline ::flatbuffers::Offset<append_entry> Createappend_entry(
   builder_.add_term_number(term_number);
   builder_.add_recipient_id(recipient_id);
   builder_.add_entries(entries);
-  builder_.add_entry(entry);
   return builder_.Finish();
 }
 
@@ -833,9 +829,7 @@ inline ::flatbuffers::Offset<append_entry> Createappend_entryDirect(
     uint64_t previous_log_index = 0,
     uint64_t previous_log_term = 0,
     uint64_t leader_commit_index = 0,
-    const std::vector<::flatbuffers::Offset<raft::fbs::log_entry>> *entry = nullptr,
     const std::vector<::flatbuffers::Offset<raft::fbs::log_entries>> *entries = nullptr) {
-  auto entry__ = entry ? _fbb.CreateVector<::flatbuffers::Offset<raft::fbs::log_entry>>(*entry) : 0;
   auto entries__ = entries ? _fbb.CreateVector<::flatbuffers::Offset<raft::fbs::log_entries>>(*entries) : 0;
   return raft::fbs::Createappend_entry(
       _fbb,
@@ -845,7 +839,6 @@ inline ::flatbuffers::Offset<append_entry> Createappend_entryDirect(
       previous_log_index,
       previous_log_term,
       leader_commit_index,
-      entry__,
       entries__);
 }
 
@@ -944,19 +937,23 @@ struct configuration_checkpoint FLATBUFFERS_FINAL_CLASS : private ::flatbuffers:
   typedef configuration_checkpointBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_INDEX = 4,
-    VT_DESCRIPTION = 6
+    VT_CONFIGURATION = 6
   };
   uint64_t index() const {
     return GetField<uint64_t>(VT_INDEX, 0);
   }
-  const raft::fbs::configuration_description *description() const {
-    return GetPointer<const raft::fbs::configuration_description *>(VT_DESCRIPTION);
+  const ::flatbuffers::Vector<uint8_t> *configuration() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_CONFIGURATION);
+  }
+  const raft::fbs::configuration_description *configuration_nested_root() const {
+    return ::flatbuffers::GetRoot<raft::fbs::configuration_description>(configuration()->Data());
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint64_t>(verifier, VT_INDEX, 8) &&
-           VerifyOffset(verifier, VT_DESCRIPTION) &&
-           verifier.VerifyTable(description()) &&
+           VerifyOffset(verifier, VT_CONFIGURATION) &&
+           verifier.VerifyVector(configuration()) &&
+           verifier.VerifyNestedFlatBuffer<raft::fbs::configuration_description>(configuration(), nullptr) &&
            verifier.EndTable();
   }
 };
@@ -968,8 +965,8 @@ struct configuration_checkpointBuilder {
   void add_index(uint64_t index) {
     fbb_.AddElement<uint64_t>(configuration_checkpoint::VT_INDEX, index, 0);
   }
-  void add_description(::flatbuffers::Offset<raft::fbs::configuration_description> description) {
-    fbb_.AddOffset(configuration_checkpoint::VT_DESCRIPTION, description);
+  void add_configuration(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> configuration) {
+    fbb_.AddOffset(configuration_checkpoint::VT_CONFIGURATION, configuration);
   }
   explicit configuration_checkpointBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -985,10 +982,83 @@ struct configuration_checkpointBuilder {
 inline ::flatbuffers::Offset<configuration_checkpoint> Createconfiguration_checkpoint(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t index = 0,
-    ::flatbuffers::Offset<raft::fbs::configuration_description> description = 0) {
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> configuration = 0) {
   configuration_checkpointBuilder builder_(_fbb);
   builder_.add_index(index);
-  builder_.add_description(description);
+  builder_.add_configuration(configuration);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<configuration_checkpoint> Createconfiguration_checkpointDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t index = 0,
+    const std::vector<uint8_t> *configuration = nullptr) {
+  auto configuration__ = configuration ? _fbb.CreateVector<uint8_t>(*configuration) : 0;
+  return raft::fbs::Createconfiguration_checkpoint(
+      _fbb,
+      index,
+      configuration__);
+}
+
+struct checkpoint_header FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef checkpoint_headerBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_LAST_LOG_ENTRY_INDEX = 4,
+    VT_LAST_LOG_ENTRY_TERM = 6,
+    VT_CONFIGURATION = 8
+  };
+  uint64_t last_log_entry_index() const {
+    return GetField<uint64_t>(VT_LAST_LOG_ENTRY_INDEX, 0);
+  }
+  uint64_t last_log_entry_term() const {
+    return GetField<uint64_t>(VT_LAST_LOG_ENTRY_TERM, 0);
+  }
+  const raft::fbs::configuration_checkpoint *configuration() const {
+    return GetPointer<const raft::fbs::configuration_checkpoint *>(VT_CONFIGURATION);
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, VT_LAST_LOG_ENTRY_INDEX, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LAST_LOG_ENTRY_TERM, 8) &&
+           VerifyOffset(verifier, VT_CONFIGURATION) &&
+           verifier.VerifyTable(configuration()) &&
+           verifier.EndTable();
+  }
+};
+
+struct checkpoint_headerBuilder {
+  typedef checkpoint_header Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_last_log_entry_index(uint64_t last_log_entry_index) {
+    fbb_.AddElement<uint64_t>(checkpoint_header::VT_LAST_LOG_ENTRY_INDEX, last_log_entry_index, 0);
+  }
+  void add_last_log_entry_term(uint64_t last_log_entry_term) {
+    fbb_.AddElement<uint64_t>(checkpoint_header::VT_LAST_LOG_ENTRY_TERM, last_log_entry_term, 0);
+  }
+  void add_configuration(::flatbuffers::Offset<raft::fbs::configuration_checkpoint> configuration) {
+    fbb_.AddOffset(checkpoint_header::VT_CONFIGURATION, configuration);
+  }
+  explicit checkpoint_headerBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<checkpoint_header> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<checkpoint_header>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<checkpoint_header> Createcheckpoint_header(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t last_log_entry_index = 0,
+    uint64_t last_log_entry_term = 0,
+    ::flatbuffers::Offset<raft::fbs::configuration_checkpoint> configuration = 0) {
+  checkpoint_headerBuilder builder_(_fbb);
+  builder_.add_last_log_entry_term(last_log_entry_term);
+  builder_.add_last_log_entry_index(last_log_entry_index);
+  builder_.add_configuration(configuration);
   return builder_.Finish();
 }
 
@@ -998,13 +1068,11 @@ struct append_checkpoint_chunk FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::
     VT_RECIPIENT_ID = 4,
     VT_TERM_NUMBER = 6,
     VT_LEADER_ID = 8,
-    VT_LAST_CHECKPOINT_INDEX = 10,
-    VT_LAST_CHECKPOINT_TERM = 12,
-    VT_LAST_CHECKPOINT_CONFIGURATION = 14,
-    VT_CHECKPOINT_BEGIN = 16,
-    VT_CHECKPOINT_END = 18,
-    VT_CHECKPOINT_DONE = 20,
-    VT_DATA = 22
+    VT_LAST_CHECKPOINT_HEADER = 10,
+    VT_CHECKPOINT_BEGIN = 12,
+    VT_CHECKPOINT_END = 14,
+    VT_CHECKPOINT_DONE = 16,
+    VT_DATA = 18
   };
   uint64_t recipient_id() const {
     return GetField<uint64_t>(VT_RECIPIENT_ID, 0);
@@ -1015,14 +1083,8 @@ struct append_checkpoint_chunk FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::
   uint64_t leader_id() const {
     return GetField<uint64_t>(VT_LEADER_ID, 0);
   }
-  uint64_t last_checkpoint_index() const {
-    return GetField<uint64_t>(VT_LAST_CHECKPOINT_INDEX, 0);
-  }
-  uint64_t last_checkpoint_term() const {
-    return GetField<uint64_t>(VT_LAST_CHECKPOINT_TERM, 0);
-  }
-  const raft::fbs::configuration_checkpoint *last_checkpoint_configuration() const {
-    return GetPointer<const raft::fbs::configuration_checkpoint *>(VT_LAST_CHECKPOINT_CONFIGURATION);
+  const raft::fbs::checkpoint_header *last_checkpoint_header() const {
+    return GetPointer<const raft::fbs::checkpoint_header *>(VT_LAST_CHECKPOINT_HEADER);
   }
   uint64_t checkpoint_begin() const {
     return GetField<uint64_t>(VT_CHECKPOINT_BEGIN, 0);
@@ -1041,10 +1103,8 @@ struct append_checkpoint_chunk FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::
            VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID, 8) &&
            VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
            VerifyField<uint64_t>(verifier, VT_LEADER_ID, 8) &&
-           VerifyField<uint64_t>(verifier, VT_LAST_CHECKPOINT_INDEX, 8) &&
-           VerifyField<uint64_t>(verifier, VT_LAST_CHECKPOINT_TERM, 8) &&
-           VerifyOffset(verifier, VT_LAST_CHECKPOINT_CONFIGURATION) &&
-           verifier.VerifyTable(last_checkpoint_configuration()) &&
+           VerifyOffset(verifier, VT_LAST_CHECKPOINT_HEADER) &&
+           verifier.VerifyTable(last_checkpoint_header()) &&
            VerifyField<uint64_t>(verifier, VT_CHECKPOINT_BEGIN, 8) &&
            VerifyField<uint64_t>(verifier, VT_CHECKPOINT_END, 8) &&
            VerifyField<uint8_t>(verifier, VT_CHECKPOINT_DONE, 1) &&
@@ -1067,14 +1127,8 @@ struct append_checkpoint_chunkBuilder {
   void add_leader_id(uint64_t leader_id) {
     fbb_.AddElement<uint64_t>(append_checkpoint_chunk::VT_LEADER_ID, leader_id, 0);
   }
-  void add_last_checkpoint_index(uint64_t last_checkpoint_index) {
-    fbb_.AddElement<uint64_t>(append_checkpoint_chunk::VT_LAST_CHECKPOINT_INDEX, last_checkpoint_index, 0);
-  }
-  void add_last_checkpoint_term(uint64_t last_checkpoint_term) {
-    fbb_.AddElement<uint64_t>(append_checkpoint_chunk::VT_LAST_CHECKPOINT_TERM, last_checkpoint_term, 0);
-  }
-  void add_last_checkpoint_configuration(::flatbuffers::Offset<raft::fbs::configuration_checkpoint> last_checkpoint_configuration) {
-    fbb_.AddOffset(append_checkpoint_chunk::VT_LAST_CHECKPOINT_CONFIGURATION, last_checkpoint_configuration);
+  void add_last_checkpoint_header(::flatbuffers::Offset<raft::fbs::checkpoint_header> last_checkpoint_header) {
+    fbb_.AddOffset(append_checkpoint_chunk::VT_LAST_CHECKPOINT_HEADER, last_checkpoint_header);
   }
   void add_checkpoint_begin(uint64_t checkpoint_begin) {
     fbb_.AddElement<uint64_t>(append_checkpoint_chunk::VT_CHECKPOINT_BEGIN, checkpoint_begin, 0);
@@ -1104,9 +1158,7 @@ inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_ch
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t leader_id = 0,
-    uint64_t last_checkpoint_index = 0,
-    uint64_t last_checkpoint_term = 0,
-    ::flatbuffers::Offset<raft::fbs::configuration_checkpoint> last_checkpoint_configuration = 0,
+    ::flatbuffers::Offset<raft::fbs::checkpoint_header> last_checkpoint_header = 0,
     uint64_t checkpoint_begin = 0,
     uint64_t checkpoint_end = 0,
     bool checkpoint_done = false,
@@ -1114,13 +1166,11 @@ inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_ch
   append_checkpoint_chunkBuilder builder_(_fbb);
   builder_.add_checkpoint_end(checkpoint_end);
   builder_.add_checkpoint_begin(checkpoint_begin);
-  builder_.add_last_checkpoint_term(last_checkpoint_term);
-  builder_.add_last_checkpoint_index(last_checkpoint_index);
   builder_.add_leader_id(leader_id);
   builder_.add_term_number(term_number);
   builder_.add_recipient_id(recipient_id);
   builder_.add_data(data);
-  builder_.add_last_checkpoint_configuration(last_checkpoint_configuration);
+  builder_.add_last_checkpoint_header(last_checkpoint_header);
   builder_.add_checkpoint_done(checkpoint_done);
   return builder_.Finish();
 }
@@ -1130,9 +1180,7 @@ inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_ch
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t leader_id = 0,
-    uint64_t last_checkpoint_index = 0,
-    uint64_t last_checkpoint_term = 0,
-    ::flatbuffers::Offset<raft::fbs::configuration_checkpoint> last_checkpoint_configuration = 0,
+    ::flatbuffers::Offset<raft::fbs::checkpoint_header> last_checkpoint_header = 0,
     uint64_t checkpoint_begin = 0,
     uint64_t checkpoint_end = 0,
     bool checkpoint_done = false,
@@ -1143,9 +1191,7 @@ inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_ch
       recipient_id,
       term_number,
       leader_id,
-      last_checkpoint_index,
-      last_checkpoint_term,
-      last_checkpoint_configuration,
+      last_checkpoint_header,
       checkpoint_begin,
       checkpoint_end,
       checkpoint_done,

@@ -25,7 +25,7 @@ namespace raft {
     typedef _LogEntryTraits traits_type;
   private:
     index_type start_index_;
-    std::deque<std::pair<const entry_type *, std::function<void()>>> entries_;
+    std::deque<std::pair<const entry_type *, raft::util::call_on_delete>> entries_;
     uint64_t current_term_;
     uint64_t voted_for_;
     log_header_write * writer_;
@@ -50,58 +50,7 @@ namespace raft {
     /**
      * Returns index range [begin,end) that was appended
      */
-    // std::pair<index_type, index_type> append(const std::vector<entry_type>& entries)
-    // {
-    //   index_type start_added = last_index();
-    //   index_type last_added = start_added + entries.size();
-    //   for(auto & e : entries) {
-    // 	entries_.push_back(e);
-    //   }
-    //   return std::make_pair(start_added, last_added);
-    // }
-
-    // /**
-    //  * Returns index range [begin,end) that was appended
-    //  */
-    // std::pair<index_type, index_type> append_command(uint64_t term, slice s)
-    // {
-    //   index_type start_added = last_index();
-    //   entry_type e;
-    //   e.type = entry_type::COMMAND;
-    //   e.term = term;
-    //   e.data.assign(slice::buffer_cast<const char *>(s), slice::buffer_size(s));
-    //   entries_.push_back(std::move(e));
-    //   return std::make_pair(start_added, start_added+1);
-    // }
-
-    // std::pair<index_type, index_type> append_noop(uint64_t term)
-    // {
-    //   index_type start_added = last_index();
-    //   entry_type e;
-    //   e.type = entry_type::NOOP;
-    //   e.term = term;
-    //   entries_.push_back(std::move(e));
-    //   return std::make_pair(start_added, start_added+1);
-    // }
-
-    // template<typename Configuration>
-    // std::pair<index_type, index_type> append_configuration(uint64_t term, const Configuration & config)
-    // {
-    //   index_type start_added = last_index();
-    //   entry_type e;
-    //   e.type = entry_type::CONFIGURATION;
-    //   e.term = term;
-    //   for(auto i=0; i<config.from_size(); ++i) {
-    // 	e.configuration.from.servers.push_back({ config.from_id(i), config.from_address(i) });
-    //   }
-    //   for(auto i=0; i<config.to_size(); ++i) {
-    // 	e.configuration.to.servers.push_back({ config.to_id(i), config.to_address(i) });
-    //   }
-    //   entries_.push_back(std::move(e));
-    //   return std::make_pair(start_added, start_added+1);
-    // }
-
-    std::pair<index_type, index_type> append(std::pair<const entry_type *, std::function<void()>> && e)
+    std::pair<index_type, index_type> append(std::pair<const entry_type *, raft::util::call_on_delete> && e)
     {
       index_type start_added = last_index();
       entries_.push_back(std::move(e));
@@ -109,13 +58,12 @@ namespace raft {
     }
 
     template<typename InputIterator>
-    std::pair<index_type, index_type> append(InputIterator begin, InputIterator end, std::function<void()> && del)
+    std::pair<index_type, index_type> append(InputIterator begin, InputIterator end, raft::util::call_on_delete && del)
     {
-      std::function<void()> null_del = []() {};
       index_type start_added = last_index();
       index_type last_added = start_added + std::distance(begin, end);
       for(; begin != end; ++begin) {
-	entries_.push_back(std::make_pair(&*begin, null_del));
+	entries_.push_back(std::make_pair(&*begin, raft::util::call_on_delete()));
       }
       if (start_added != last_added) {
 	// If we added anything set the deleter to the last entry
@@ -210,7 +158,6 @@ namespace raft {
     {
       index_type i = start_index_;
       while(i++ < idx && !entries_.empty()) {
-	entries_.front().second();
 	entries_.pop_front();
       }
       start_index_ = idx;
@@ -226,7 +173,6 @@ namespace raft {
 	// TODO: If we are not throwing away all of the entries covered by the delete then
 	// it's a big problem.   If that is the case then we should save the deleter and
 	// put it at the back of entries_.
-	entries_.back().second();
 	entries_.pop_back();
       }
     }

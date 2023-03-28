@@ -19,17 +19,12 @@ namespace raft {
   public:
     typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
     typedef typename checkpoint_data_store_type::block_type block_type;
-    typedef typename checkpoint_data_store_type::configuration_type configuration_type;
+    typedef typename checkpoint_data_store_type::header_type header_type;
     
     // One past last byte to written in checkpoint file.
     uint64_t checkpoint_next_byte_;
-    // The last log entry that the checkpoint covers.  Need to resume
-    // sending log entries to peer from this point.
-    uint64_t checkpoint_last_log_entry_index_;
-    // The term of the last log entry that the checkpoint covers.  
-    uint64_t checkpoint_last_log_entry_term_;
-    // Configuration in effect at the time the checkpoint occured
-    configuration_type checkpoint_last_configuration_;
+    // Header of the checkpoint
+    const header_type & checkpoint_last_header_;
     // Checkpoint data we are sending to this peer
     checkpoint_data_ptr data_;
     // Last block sent.  We do not assume that the checkpoint bytes are contiguous in memory
@@ -38,13 +33,10 @@ namespace raft {
     // Has the last block been acked?  TODO: Generalize to a window/credit system?
     bool awaiting_ack_;
 
-    peer_checkpoint(uint64_t checkpoint_last_log_entry_index, uint64_t checkpoint_last_log_entry_term,
-		    const configuration_type & config, checkpoint_data_ptr data)
+    peer_checkpoint(const header_type & header, checkpoint_data_ptr data)
       :
       checkpoint_next_byte_(0),
-      checkpoint_last_log_entry_index_(checkpoint_last_log_entry_index),
-      checkpoint_last_log_entry_term_(checkpoint_last_log_entry_term),
-      checkpoint_last_configuration_(config),
+      checkpoint_last_header_(header),
       data_(data),
       awaiting_ack_(false)
     {
@@ -56,14 +48,11 @@ namespace raft {
   class peer
   {
   public:
-    typedef typename checkpoint_data_store_type::configuration_type::address_type address_type;
-
-  public:
     // peer id = same as index in peer array
     uint64_t peer_id;
     // TODO: Templatize; do we actually want multiple addresses?  Does protocol really
     // need to know whether this is one or more addresses?
-    address_type address;
+    std::string address;
     // Leader specific state about peers
     // Index of next log entry to send
     uint64_t next_index_;
@@ -119,10 +108,11 @@ namespace raft {
     }
 
     in_progress_checkpoint(checkpoint_data_store_type & store,
-			   const header_type & header)
+			   const header_type * header,
+			   raft::util::call_on_delete && deleter)
       :
       end_(0),
-      file_(store.create(header))
+      file_(store.create(header, std::move(deleter)))
     {
     }
   };

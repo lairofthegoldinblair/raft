@@ -29,7 +29,7 @@ table log_entry
     // Populated if type==COMMAND
     data:string;
     // Populated if type==CONFIGURATION
-    configuration:configuration_description;
+    configuration:[ubyte] (nested_flatbuffer: "configuration_description");
 }
 table request_vote
 {
@@ -73,7 +73,7 @@ table append_entry
   previous_log_term:ulong;
   // Last log entry in message that is committed on leader
   leader_commit_index:ulong;
-  entry:[log_entry];
+  // Log entries in nested format
   entries:[log_entries];
 }
 
@@ -92,7 +92,14 @@ table append_response
 table configuration_checkpoint
 {
   index:ulong;
-  description:configuration_description;
+  configuration:[ubyte] (nested_flatbuffer: "configuration_description");
+}
+
+table checkpoint_header
+{
+  last_log_entry_index:ulong;
+  last_log_entry_term:ulong;
+  configuration:configuration_checkpoint;
 }
 
 // TODO: Why do we assume that the checkpoint term is in the checkpoint_header in the
@@ -103,22 +110,12 @@ table append_checkpoint_chunk
   recipient_id:ulong;
   term_number:ulong;
   leader_id:ulong;
-  // Only needed on a chunk if checkpoint_done==true; a client can know
-  // whether the checkpoint is up to date without looking at the data itself
-  // (which is is assumed to carry a checkpoint_header that also has the index).
-  last_checkpoint_index:ulong;
-  // Ongaro's logcabin does not put the term in the message but assumes that it is
-  // serialized as part of the data (the actual checkpoint file).
-  // I'm not sure I like that model so I am putting it in the chunk message as well;
-  // we'll see how that goes for me :-)  I am only look at this value in the first chunk
-  // of a checkpoint.
-  last_checkpoint_term:ulong;
   // Ongaro's logcabin does not put the configuration in the message but assumes that it is
   // serialized as part of the data (the actual checkpoint file).
   // I'm not sure I like that model so I am putting it in the chunk message as well;
   // we'll see how that goes for me :-)  I only look at this value in the first chunk
   // of a checkpoint.
-  last_checkpoint_configuration:configuration_checkpoint;
+  last_checkpoint_header:checkpoint_header;
   checkpoint_begin:ulong;
   checkpoint_end:ulong;
   checkpoint_done:bool;

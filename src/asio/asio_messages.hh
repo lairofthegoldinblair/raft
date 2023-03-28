@@ -3,8 +3,7 @@
 
 #include "boost/asio/buffer.hpp"
 #include "boost/endian/arithmetic.hpp"
-#include "log.hh"
-#include "messages.hh"
+#include "../native/messages.hh"
 
 namespace raft {
   namespace asio {
@@ -81,7 +80,7 @@ namespace raft {
 	return sizeof(boost::endian::little_uint32_t) + boost::asio::buffer_copy(b+sizeof(boost::endian::little_uint32_t), boost::asio::buffer(str));
       }
 
-      static std::size_t serialize_helper(boost::asio::mutable_buffer b, const raft::server_description& desc)
+      static std::size_t serialize_helper(boost::asio::mutable_buffer b, const raft::native::server_description& desc)
       {
 	boost::endian::little_uint64_t * id = boost::asio::buffer_cast<boost::endian::little_uint64_t *>(b);
 	*id = desc.id;
@@ -90,7 +89,7 @@ namespace raft {
 	return sz;
       }
 
-      static std::size_t serialize_helper(boost::asio::mutable_buffer b, const raft::native::log_entry<raft::configuration_description>& entry)
+      static std::size_t serialize_helper(boost::asio::mutable_buffer b, const raft::native::log_entry<raft::native::configuration_description>& entry)
       {
 	little_log_entry * log_buf = boost::asio::buffer_cast<little_log_entry *>(b);
 	log_buf->term = entry.term;
@@ -114,7 +113,7 @@ namespace raft {
 	return sz;
       }
 
-      static std::size_t deserialize_helper(boost::asio::const_buffer b, raft::server_description& desc)
+      static std::size_t deserialize_helper(boost::asio::const_buffer b, raft::native::server_description& desc)
       {
 	std::size_t sz = 0;
 	desc.id = *boost::asio::buffer_cast<const boost::endian::little_uint64_t *>(b);
@@ -146,19 +145,19 @@ namespace raft {
 	return sz;
       }
 
-      static std::size_t deserialize_helper(boost::asio::const_buffer b, raft::native::log_entry<raft::configuration_description>& entry)
+      static std::size_t deserialize_helper(boost::asio::const_buffer b, raft::native::log_entry<raft::native::configuration_description>& entry)
       {
 	const little_log_entry * log_buf = boost::asio::buffer_cast<const little_log_entry *>(b);
 	entry.term = log_buf->term;
 	switch(log_buf->type) {
 	case 0:
-	  entry.type = raft::native::log_entry<raft::configuration_description>::COMMAND;
+	  entry.type = raft::native::log_entry<raft::native::configuration_description>::COMMAND;
 	  break;
 	case 1:
-	  entry.type = raft::native::log_entry<raft::configuration_description>::CONFIGURATION;
+	  entry.type = raft::native::log_entry<raft::native::configuration_description>::CONFIGURATION;
 	  break;
 	case 2:
-	  entry.type = raft::native::log_entry<raft::configuration_description>::NOOP;
+	  entry.type = raft::native::log_entry<raft::native::configuration_description>::NOOP;
 	  break;
 	default:
 	  // TODO: error handling
@@ -308,7 +307,7 @@ namespace raft {
     };
     
     template<>
-    boost::asio::const_buffers_1 serialization::serialize(boost::asio::mutable_buffer b, const raft::native::log_entry<raft::configuration_description>& entry)
+    boost::asio::const_buffers_1 serialization::serialize(boost::asio::mutable_buffer b, const raft::native::log_entry<raft::native::configuration_description>& entry)
     {
       std::size_t sz = serialize_helper(b, entry);
       return boost::asio::buffer(boost::asio::buffer_cast<const void *>(b), sz);

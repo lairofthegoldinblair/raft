@@ -6,18 +6,11 @@
 #include <string>
 #include <vector>
 
-#include "boost/assert.hpp"
+#include <boost/assert.hpp>
+
+#include "util/call_on_delete.hh"
 
 namespace raft {
-
-  template<typename configuration_checkpoint_type>
-  class checkpoint_header
-  {
-  public:
-    uint64_t last_log_entry_index;
-    uint64_t last_log_entry_term;
-    configuration_checkpoint_type configuration;
-  };
 
   class checkpoint_block
   {
@@ -51,27 +44,33 @@ namespace raft {
   // array of data (could be a linked list of stuff as well).
   // TODO: This block stuff is half baked because it isn't consistent with the ack'ing protocol that is expressed
   // in terms of byte offsets; it works but it's goofy.
-  template<typename configuration_checkpoint_type>
+  template<typename _Messages>
   class checkpoint_data
   {
   public:
-    typedef checkpoint_header<configuration_checkpoint_type> header_type;
+    typedef typename _Messages::checkpoint_header_type header_type;
   private:
-    header_type header_;
+    // We have to use a generic deleter for the header because the header
+    // may or may not be embedded in a larger chunk of memory.
+    // 1) If we initialize the checkpoint then the header is created directly
+    // 2) If the checkpoint is sent to us then it is embedded in an append_checkpoint_chunk message
+    const header_type * header_;
+    raft::util::call_on_delete header_deleter_;
     std::vector<uint8_t> data_;
     // TODO: Configure block size
     std::size_t block_size_;
   public:
-    checkpoint_data(const header_type & header)
+    checkpoint_data(const header_type * header, raft::util::call_on_delete && deleter)
       :
       header_(header),
+      header_deleter_(std::move(deleter)),
       block_size_(2)
     {
     }
 
     const header_type & header() const
     {
-      return header_;
+      return *header_;
     }
 
     checkpoint_block block_at_offset(uint64_t offset) const {
@@ -122,21 +121,26 @@ namespace raft {
 
 
   // Checkpoints live here
-  template<typename configuration_checkpoint_type>
+  template<typename _Messages>
   class checkpoint_data_store
   {
   public:
-    typedef checkpoint_data<configuration_checkpoint_type> checkpoint_data_type;
+    typedef checkpoint_data<_Messages> checkpoint_data_type;
     typedef std::shared_ptr<checkpoint_data_type> checkpoint_data_ptr;
-    typedef typename checkpoint_data_type::header_type header_type;
+    typedef typename _Messages::checkpoint_header_type header_type;
+    typedef typename _Messages::checkpoint_header_traits_type header_traits_type;
     typedef checkpoint_block block_type;
-    typedef configuration_checkpoint_type configuration_type;
+    typedef typename _Messages::configuration_checkpoint_type configuration_type;
   private:
     checkpoint_data_ptr last_checkpoint_;
   public:
-    checkpoint_data_ptr create(const header_type & header) const
+    checkpoint_data_ptr create(const header_type * header, raft::util::call_on_delete && deleter) const
     {
-      return checkpoint_data_ptr(new checkpoint_data_type(header));
+      return checkpoint_data_ptr(new checkpoint_data_type(header, std::move(deleter)));
+    }
+    checkpoint_data_ptr create(std::pair<const header_type *, raft::util::call_on_delete> && header) const
+    {
+      return checkpoint_data_ptr(new checkpoint_data_type(header.first, std::move(header.second)));
     }
     void commit(checkpoint_data_ptr f)
     {
