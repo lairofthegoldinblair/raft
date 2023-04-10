@@ -566,11 +566,12 @@ namespace raft {
     class set_configuration_request_traits
     {
     public:
-      typedef const raft_message * const_arg_type;    
+      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
+      typedef const arg_type & const_arg_type;
     
       static const raft::fbs::set_configuration_request * scr(const_arg_type msg)
       {
-	return msg->message_as_set_configuration_request();
+	return msg.first->message_as_set_configuration_request();
       }
     
       static const raft::fbs::simple_configuration_description & new_configuration(const_arg_type msg)
@@ -1321,6 +1322,37 @@ simple_configuration_description_builder to()
       }
     };
 
+    class set_configuration_request_builder : public raft_message_builder_base<set_configuration_request_builder, raft::fbs::set_configuration_request>
+    {
+    private:
+      uint64_t old_id_ = 0;
+      ::flatbuffers::Offset<raft::fbs::simple_configuration_description> new_configuration_;
+    public:
+      void preinitialize()
+      {
+      }
+      
+      void initialize(fbs_builder_type * bld)
+      {
+	  bld->add_old_id(old_id_);
+	  bld->add_new_configuration(new_configuration_);
+      }	
+      set_configuration_request_builder & old_id(uint64_t val)
+      {
+	old_id_ = val;
+	return *this;
+      }
+      set_configuration_request_builder & new_configuration(::flatbuffers::Offset<raft::fbs::simple_configuration_description> val)
+      {
+	new_configuration_ = val;
+	return *this;
+      }
+      simple_configuration_description_builder new_configuration()
+      {
+	return simple_configuration_description_builder(fbb(), [this](::flatbuffers::Offset<raft::fbs::simple_configuration_description> val) { this->new_configuration(val); });
+      }
+    };
+
     class log_entry_builder
     {
     private:
@@ -1404,6 +1436,7 @@ simple_configuration_description_builder to()
       typedef append_response_builder append_response_builder_type;
       typedef append_checkpoint_chunk_builder append_checkpoint_chunk_builder_type;
       typedef append_checkpoint_chunk_response_builder append_checkpoint_chunk_response_builder_type;
+      typedef set_configuration_request_builder set_configuration_request_builder_type;
       typedef log_entry_builder log_entry_builder_type;
     };
 

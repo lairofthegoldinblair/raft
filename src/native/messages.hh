@@ -138,26 +138,25 @@ namespace raft {
       std::size_t leader_id;
     };
 
-    template<typename simple_configuration_description_type>
     class set_configuration_request
     {
     public:
       uint64_t old_id;
-      simple_configuration_description_type new_configuration;
+      simple_configuration_description new_configuration;
     };
 
-    template<typename simple_configuration_description_type>
     class set_configuration_request_traits
     {
     public:
-      typedef set_configuration_request<simple_configuration_description_type> value_type;
+      typedef set_configuration_request value_type;
+      typedef set_configuration_request arg_type;
       typedef const value_type& const_arg_type;
     
       static uint64_t old_id(const_arg_type msg)
       {
 	return msg.old_id;
       }
-      static const simple_configuration_description_type & new_configuration(const_arg_type msg)
+      static const simple_configuration_description & new_configuration(const_arg_type msg)
       {
 	return msg.new_configuration;
       }
@@ -701,8 +700,8 @@ namespace raft {
       typedef append_entry_traits<log_entry_type> append_entry_traits_type;
       typedef append_entry_response_traits append_entry_response_traits_type;
       typedef append_entry_response_traits::value_type append_entry_response_type;
-      typedef set_configuration_request<configuration_description::simple_type> set_configuration_request_type;
-      typedef set_configuration_request_traits<configuration_description::simple_type> set_configuration_request_traits_type;
+      typedef set_configuration_request set_configuration_request_type;
+      typedef set_configuration_request_traits set_configuration_request_traits_type;
       typedef set_configuration_response set_configuration_response_type;
       typedef set_configuration_response_traits set_configuration_response_traits_type;
       typedef configuration_description configuration_description_type;
@@ -1224,6 +1223,41 @@ namespace raft {
       }
     };
 
+    class set_configuration_request_builder
+    {
+    private:
+      std::unique_ptr<set_configuration_request> obj_;
+      set_configuration_request * get_object()
+      {
+	if (nullptr == obj_) {
+	  obj_ = std::make_unique<set_configuration_request>();
+	  obj_->old_id = 0;
+	}
+	return obj_.get();
+      }
+    public:
+      set_configuration_request_builder & old_id(uint64_t val)
+      {
+	get_object()->old_id = val;
+	return *this;
+      }
+      set_configuration_request_builder & new_configuration(simple_configuration_description && val)
+      {
+	get_object()->new_configuration = std::move(val);
+	return *this;
+      }
+      simple_configuration_description_builder new_configuration()
+      {
+	return simple_configuration_description_builder([this](simple_configuration_description && val) { this->new_configuration(std::move(val)); });
+      }
+      set_configuration_request finish()
+      {
+	auto obj = *get_object();
+	obj_.reset();
+	return obj;
+      }
+    };
+
     class log_entry_builder
     {
     private:
@@ -1286,6 +1320,7 @@ namespace raft {
       typedef append_response_builder append_response_builder_type;
       typedef append_checkpoint_chunk_builder append_checkpoint_chunk_builder_type;
       typedef append_checkpoint_chunk_response_builder append_checkpoint_chunk_response_builder_type;
+      typedef set_configuration_request_builder set_configuration_request_builder_type;
       typedef log_entry_builder log_entry_builder_type;
     };
 

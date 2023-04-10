@@ -147,7 +147,7 @@ namespace raft {
     typedef typename messages_type::append_entry_response_traits_type append_entry_response_traits_type;
     typedef typename messages_type::append_entry_response_traits_type::arg_type append_entry_response_arg_type;
     typedef typename messages_type::set_configuration_request_traits_type set_configuration_request_traits_type;
-    typedef typename messages_type::set_configuration_request_traits_type::const_arg_type set_configuration_request_arg_type;
+    typedef typename messages_type::set_configuration_request_traits_type::arg_type set_configuration_request_arg_type;
 
     // Configuration types
     typedef configuration_manager<peer_metafunction, messages_type> configuration_manager_type;

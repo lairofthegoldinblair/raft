@@ -1114,6 +1114,10 @@ public:
   typedef typename _TestType::messages_type::checkpoint_header_traits_type checkpoint_header_traits;
   typedef typename _TestType::messages_type::log_entry_traits_type log_entry_traits;
   typedef typename _TestType::builders_type::client_request_builder_type client_request_builder;
+  typedef typename _TestType::messages_type::simple_configuration_description_traits_type simple_configuration_description_traits;
+  typedef typename _TestType::messages_type::configuration_description_traits_type configuration_description_traits;
+  typedef typename _TestType::messages_type::set_configuration_request_traits_type set_configuration_request_traits;
+  typedef typename _TestType::builders_type::set_configuration_request_builder_type set_configuration_request_builder;
   typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
   typedef raft::protocol<generic_communicator_metafunction, native_client_metafunction, typename _TestType::messages_type> raft_type;
   std::size_t cluster_size;
@@ -1124,73 +1128,152 @@ public:
   std::shared_ptr<typename raft_type::configuration_manager_type> cm;
   std::shared_ptr<raft_type> s;
   append_checkpoint_chunk_arg_type five_servers;
-  append_checkpoint_chunk_arg_type six_servers;
+  // append_checkpoint_chunk_arg_type six_servers;
+  template<typename _Builder>
+  void add_five_servers(_Builder b)
+  {
+    b.server().id(0).address("192.168.1.1");
+    b.server().id(1).address("192.168.1.2");
+    b.server().id(2).address("192.168.1.3");
+    b.server().id(3).address("192.168.1.4");
+    b.server().id(4).address("192.168.1.5"); 
+  }
+  template<typename _Builder>
+  void add_six_servers(_Builder b)
+  {
+    b.server().id(0).address("192.168.1.1");
+    b.server().id(1).address("192.168.1.2");
+    b.server().id(2).address("192.168.1.3");
+    b.server().id(3).address("192.168.1.4");
+    b.server().id(4).address("192.168.1.5"); 
+    b.server().id(5).address("192.168.1.6"); 
+  }
 
-  RaftTestBase()
+//  RaftTestFixture::RaftTestFixture()
+// {
+//   cluster_size = 5;
+//   five_servers.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"},  {4, "192.168.1.5"}};
+//   six_servers.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"},  {4, "192.168.1.5"},  {5, "192.168.1.6"}};
+//   cm.reset(new test_raft_type::configuration_manager_type(0));
+//   // std::vector<test_raft_type::log_entry_type> entries;
+//   // entries.push_back(test_raft_type::log_entry_type());
+//   // entries.back().type = test_raft_type::log_entry_type::CONFIGURATION;
+//   // entries.back().term = 0;
+//   // entries.back().configuration.from = five_servers;
+//   // l.append(entries.begin(), entries.end());
+//   // l.update_header(entries.back().term, test_raft_type::INVALID_PEER_ID);
+//   initial_ckpt_.configuration.index = initial_ckpt_.last_log_entry_index =  0;
+//   initial_ckpt_.configuration.description.from = five_servers;
+//   cm->set_checkpoint(initial_ckpt_);
+//   BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
+//   BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
+//   BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
+//   BOOST_CHECK(cm->configuration().includes_self());
+//   s.reset(new test_raft_type(comm, l, store, *cm.get()));
+//   // BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
+//   // BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
+//   // BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
+//   // BOOST_CHECK(cm->configuration().includes_self());
+//   BOOST_CHECK_EQUAL(0U, s->current_term());
+//   BOOST_CHECK_EQUAL(0U, s->commit_index());
+//   BOOST_CHECK_EQUAL(test_raft_type::FOLLOWER, s->get_state());
+//   BOOST_CHECK_EQUAL(0U, comm.q.size());
+//   // BOOST_CHECK_EQUAL(0U, l.start_index());
+//   // BOOST_CHECK_EQUAL(1U, l.last_index());
+// }
+
+// RaftConfigurationTestFixture::RaftConfigurationTestFixture()
+// {
+//   cluster_size = 5;
+//   five_servers.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"},  {4, "192.168.1.5"}};
+//   six_servers.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"},  {4, "192.168.1.5"},  {5, "192.168.1.6"}};
+//   cm.reset(new test_raft_type::configuration_manager_type(0));
+//   auto entry = new test_raft_type::log_entry_type();
+//   entry->type = test_raft_type::log_entry_type::CONFIGURATION;
+//   entry->term = 0;
+//   entry->configuration.from = five_servers;
+//   l.append(std::pair<const test_raft_type::log_entry_type *, std::function<void()>>(entry, [entry]() { delete entry; }));
+//   l.update_header(0, test_raft_type::INVALID_PEER_ID);
+//   s.reset(new test_raft_type(comm, l, store, *cm.get()));
+//   BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
+//   BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
+//   BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
+//   BOOST_CHECK(cm->configuration().includes_self());
+//   BOOST_CHECK_EQUAL(0U, s->current_term());
+//   BOOST_CHECK_EQUAL(0U, s->commit_index());
+//   BOOST_CHECK_EQUAL(test_raft_type::FOLLOWER, s->get_state());
+//   BOOST_CHECK_EQUAL(0U, comm.q.size());
+//   BOOST_CHECK_EQUAL(0U, l.start_index());
+//   BOOST_CHECK_EQUAL(1U, l.last_index());
+// }
+
+  RaftTestBase(bool initializeWithCheckpoint=true)
   {
     cluster_size = 5;
-    // Builder interface only supports creating a checkpoint header in the context of an append_checkpoint_chunk message
-    {
-      append_checkpoint_chunk_builder accb;
-      {
-	auto chb = accb.last_checkpoint_header();
-	{
-	  auto cdb = chb.index(0).last_log_entry_index(0).last_log_entry_term(0).configuration();
-	  {
-	    auto fsb = cdb.from();
-	    fsb.server().id(0).address("192.168.1.1");
-	    fsb.server().id(1).address("192.168.1.2");
-	    fsb.server().id(2).address("192.168.1.3");
-	    fsb.server().id(3).address("192.168.1.4");
-	    fsb.server().id(4).address("192.168.1.5");
-	  }
-	  {
-	    auto fsb = cdb.to();
-	  }
-	}
-      }
-      five_servers = accb.finish();
-    }
-    {
-      append_checkpoint_chunk_builder accb;
-      {
-	auto chb = accb.last_checkpoint_header();
-	{
-	  auto cdb = chb.index(0).last_log_entry_index(0).last_log_entry_term(0).configuration();
-	  {
-	    auto fsb = cdb.from();
-	    fsb.server().id(0).address("192.168.1.1");
-	    fsb.server().id(1).address("192.168.1.2");
-	    fsb.server().id(2).address("192.168.1.3");
-	    fsb.server().id(3).address("192.168.1.4");
-	    fsb.server().id(4).address("192.168.1.5");
-	    fsb.server().id(5).address("192.168.1.6");
-	  }
-	  {
-	    auto fsb = cdb.to();
-	  }
-	}
-      }
-      six_servers = accb.finish();
-    }
-    // cm.set_checkpoint(append_checkpoint_chunk_traits::last_checkpoint_header(acc_msg));
     cm.reset(new typename raft_type::configuration_manager_type(0));
-    cm->set_checkpoint(append_checkpoint_chunk_traits::last_checkpoint_header(five_servers));
-    BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
-    BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
-    BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
-    BOOST_CHECK(cm->configuration().includes_self());
-    s.reset(new raft_type(comm, l, store, *cm.get()));
-    // BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
-    // BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
-    // BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
-    // BOOST_CHECK(cm->configuration().includes_self());
-    BOOST_CHECK_EQUAL(0U, s->current_term());
-    BOOST_CHECK_EQUAL(0U, s->commit_index());
-    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
-    BOOST_CHECK_EQUAL(0U, comm.q.size());
-    // BOOST_CHECK_EQUAL(0U, l.start_index());
-    // BOOST_CHECK_EQUAL(1U, l.last_index());
+    if (initializeWithCheckpoint) {
+      // Builder interface only supports creating a checkpoint header in the context of an append_checkpoint_chunk message
+      {
+	append_checkpoint_chunk_builder accb;
+	{
+	  auto chb = accb.last_checkpoint_header();
+	  {
+	    auto cdb = chb.index(0).last_log_entry_index(0).last_log_entry_term(0).configuration();
+	    {
+	      add_five_servers(cdb.from());
+	    
+	    }
+	    {
+	      auto fsb = cdb.to();
+	    }
+	  }
+	}
+	five_servers = accb.finish();
+      }
+      cm->set_checkpoint(append_checkpoint_chunk_traits::last_checkpoint_header(five_servers));
+      BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
+      BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
+      BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
+      BOOST_CHECK(cm->configuration().includes_self());
+      s.reset(new raft_type(comm, l, store, *cm.get()));
+      // BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
+      // BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
+      // BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
+      // BOOST_CHECK(cm->configuration().includes_self());
+      BOOST_CHECK_EQUAL(0U, s->current_term());
+      BOOST_CHECK_EQUAL(0U, s->commit_index());
+      BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
+      BOOST_CHECK_EQUAL(0U, comm.q.size());
+      // BOOST_CHECK_EQUAL(0U, l.start_index());
+      // BOOST_CHECK_EQUAL(1U, l.last_index());
+    } else {
+      log_entry_builder leb;
+      {	
+	auto cb = leb.term(0).configuration();
+	add_five_servers(cb.from());
+	cb.to();
+      }
+      l.append(leb.finish());
+      l.update_header(0, raft_type::INVALID_PEER_ID);
+      s.reset(new raft_type(comm, l, store, *cm.get()));
+      BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
+      BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
+      BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
+      BOOST_CHECK(cm->configuration().includes_self());
+      BOOST_CHECK_EQUAL(0U, s->current_term());
+      BOOST_CHECK_EQUAL(0U, s->commit_index());
+      BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
+      BOOST_CHECK_EQUAL(0U, comm.q.size());
+      BOOST_CHECK_EQUAL(0U, l.start_index());
+      BOOST_CHECK_EQUAL(1U, l.last_index());
+      //   auto entry = new test_raft_type::log_entry_type();
+      //   entry->type = test_raft_type::log_entry_type::CONFIGURATION;
+      //   entry->term = 0;
+      //   entry->configuration.from = five_servers;
+//   l.append(std::pair<const test_raft_type::log_entry_type *, std::function<void()>>(entry, [entry]() { delete entry; }));
+//   l.update_header(0, test_raft_type::INVALID_PEER_ID);
+//   s.reset(new test_raft_type(comm, l, store, *cm.get()));
+    }
   }
   ~RaftTestBase() {}
 
@@ -1200,8 +1283,8 @@ public:
   void send_client_request_and_commit(uint64_t term, const char * cmd, uint64_t client_index);
   void send_client_request(uint64_t term, const char * cmd, uint64_t client_index, const boost::dynamic_bitset<> & send_responses_from);
   std::size_t num_known_peers() { return cm->configuration().num_known_peers(); }
+  void stage_new_server(uint64_t term, uint64_t commit_index);
 
-  // void stage_new_server(uint64_t term, uint64_t commit_index);
   void AppendEntriesLogSync()
   {
     BOOST_CHECK_EQUAL(0U, this->comm.q.size());
@@ -2023,203 +2106,275 @@ void AppendEntriesCheckpointAbandon()
   s->on_append_checkpoint_chunk_response(std::move(resp));  
 }
 
-// BOOST_FIXTURE_TEST_CASE(JointConsensusAddServer, RaftTestFixture)
-// {
-//   uint64_t term=1;
-//   make_leader(term);
-//   uint64_t commit_index = s->commit_index();
-//   uint64_t client_index=l.last_index();
-//   send_client_request_and_commit(term, "1", client_index++);  
+void JointConsensusAddServer()
+{
+  uint64_t term=1;
+  make_leader(term);
+  uint64_t commit_index = s->commit_index();
+  uint64_t client_index=l.last_index();
+  send_client_request_and_commit(term, "1", client_index++);  
 
-//   BOOST_CHECK_EQUAL(5U, num_known_peers());
-//   stage_new_server(term, commit_index+1);
+  BOOST_CHECK_EQUAL(5U, num_known_peers());
+  stage_new_server(term, commit_index+1);
 
-//   // This should catch up newly added server.  Based on this we should
-//   // move to transitional
-//   send_client_request_and_commit(term, "2", client_index++);
-//   BOOST_CHECK(cm->configuration().staging_servers_caught_up());
-//   BOOST_CHECK_EQUAL(raft_type::log_entry_type::COMMAND, l.entry(l.last_index()-1).type);
-//   // TODO: Should I really have to do this on_timer call to trigger the transitional entry????
-//   s->on_timer();
-//   auto & le(l.entry(l.last_index()-1));
-//   BOOST_CHECK(cm->configuration().is_transitional());
-//   BOOST_CHECK_EQUAL(raft_type::log_entry_type::CONFIGURATION, le.type);
-//   BOOST_CHECK_EQUAL(5U, le.configuration.from.servers.size());
-//   BOOST_CHECK_EQUAL(6U, le.configuration.to.servers.size());
+  // This should catch up newly added server.  Based on this we should
+  // move to transitional
+  send_client_request_and_commit(term, "2", client_index++);
+  BOOST_CHECK(cm->configuration().staging_servers_caught_up());
+  BOOST_CHECK(log_entry_traits::is_command(&l.entry(l.last_index()-1)));
+  // TODO: Should I really have to do this on_timer call to trigger the transitional entry????
+  s->on_timer();
+  auto & le(l.entry(l.last_index()-1));
+  BOOST_CHECK(cm->configuration().is_transitional());
+  BOOST_CHECK(log_entry_traits::is_configuration(&le));
+  BOOST_CHECK_EQUAL(5U, simple_configuration_description_traits::size(&configuration_description_traits::from(&log_entry_traits::configuration(&le))));
+  BOOST_CHECK_EQUAL(6U, simple_configuration_description_traits::size(&configuration_description_traits::to(&log_entry_traits::configuration(&le))));
 
-//   uint64_t expected=1;
-//   BOOST_CHECK_EQUAL(num_known_peers() - 1U, comm.q.size());
-//   while(comm.q.size() > 0) {
-//     BOOST_CHECK_EQUAL(expected, boost::get<append_entry_arg_type>(comm.q.back()).recipient_id);
-//     BOOST_CHECK_EQUAL(1U, boost::get<append_entry_arg_type>(comm.q.back()).term_number);
-//     BOOST_CHECK_EQUAL(0U, boost::get<append_entry_arg_type>(comm.q.back()).leader_id);
-//     BOOST_CHECK_EQUAL(commit_index+2, boost::get<append_entry_arg_type>(comm.q.back()).leader_commit_index);
-//     BOOST_CHECK_EQUAL(3U, boost::get<append_entry_arg_type>(comm.q.back()).previous_log_index);
-//     BOOST_CHECK_EQUAL(1U, boost::get<append_entry_arg_type>(comm.q.back()).previous_log_term);
-//     BOOST_CHECK_EQUAL(1U, boost::get<append_entry_arg_type>(comm.q.back()).entry.size());
-//     auto resp = append_response_builder().recipient_id(expected).term_number(1).request_term_number(1).begin_index(3).last_index(4).success(true).finish();
-//     s->on_append_response(std::move(resp));
-//     comm.q.pop_back();
+  uint64_t expected=1;
+  BOOST_CHECK_EQUAL(num_known_peers() - 1U, comm.q.size());
+  while(comm.q.size() > 0) {
+    BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_entry_traits::term_number(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(commit_index+2, append_entry_traits::leader_commit_index(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(3U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(comm.q.back())));
+    auto resp = append_response_builder().recipient_id(expected).term_number(1).request_term_number(1).begin_index(3).last_index(4).success(true).finish();
+    s->on_append_response(std::move(resp));
+    comm.q.pop_back();
 
-//     // We need quorum from both the old set of 5 servers and the new set of 6
-//     if(expected < 4) {
-//       BOOST_CHECK_EQUAL(commit_index + 2U, s->commit_index());
-//       // Should have the transitional entry in the log.
-//       BOOST_CHECK(cm->configuration().is_transitional());
-//       BOOST_CHECK_EQUAL(6U, num_known_peers());
-//       auto & le(l.entry(l.last_index()-1));
-//       BOOST_CHECK_EQUAL(raft_type::log_entry_type::CONFIGURATION, le.type);
-//       BOOST_CHECK_EQUAL(5U, le.configuration.from.servers.size());
-//       BOOST_CHECK_EQUAL(6U, le.configuration.to.servers.size());
-//     } else {
-//       BOOST_CHECK_EQUAL(commit_index + 3U, s->commit_index());
-//       // Should get a new stable config entry in the log
-//       BOOST_CHECK(cm->configuration().is_stable());
-//       BOOST_CHECK_EQUAL(6U, num_known_peers());
-//       auto & le(l.entry(l.last_index()-1));
-//       BOOST_CHECK_EQUAL(raft_type::log_entry_type::CONFIGURATION, le.type);
-//       BOOST_CHECK_EQUAL(6U, le.configuration.from.servers.size());
-//       BOOST_CHECK_EQUAL(0U, le.configuration.to.servers.size());
-//     }
-//     if(expected != 4) {
-//       BOOST_CHECK_EQUAL(0U, c.configuration_responses.size());
-//     } else {
-//       BOOST_REQUIRE(0U < c.configuration_responses.size());
-//       BOOST_CHECK_EQUAL(1U, c.configuration_responses.size());
-//       BOOST_CHECK_EQUAL(SUCCESS, c.configuration_responses.front().result);
-//       BOOST_CHECK_EQUAL(0U, c.configuration_responses.front().bad_servers.servers.size());
-//       c.configuration_responses.pop_back();
-//     }
-//     expected += 1;
-//   }  
-// }
+    // We need quorum from both the old set of 5 servers and the new set of 6
+    if(expected < 4) {
+      BOOST_CHECK_EQUAL(commit_index + 2U, s->commit_index());
+      // Should have the transitional entry in the log.
+      BOOST_CHECK(cm->configuration().is_transitional());
+      BOOST_CHECK_EQUAL(6U, num_known_peers());
+      auto & le(l.entry(l.last_index()-1));
+      BOOST_CHECK(log_entry_traits::is_configuration(&le));
+      BOOST_CHECK_EQUAL(5U, simple_configuration_description_traits::size(&configuration_description_traits::from(&log_entry_traits::configuration(&le))));
+      BOOST_CHECK_EQUAL(6U, simple_configuration_description_traits::size(&configuration_description_traits::to(&log_entry_traits::configuration(&le))));
+    } else {
+      BOOST_CHECK_EQUAL(commit_index + 3U, s->commit_index());
+      // Should get a new stable config entry in the log
+      BOOST_CHECK(cm->configuration().is_stable());
+      BOOST_CHECK_EQUAL(6U, num_known_peers());
+      auto & le(l.entry(l.last_index()-1));
+      BOOST_CHECK(log_entry_traits::is_configuration(&le));
+      BOOST_CHECK_EQUAL(6U, simple_configuration_description_traits::size(&configuration_description_traits::from(&log_entry_traits::configuration(&le))));
+      BOOST_CHECK_EQUAL(0U, simple_configuration_description_traits::size(&configuration_description_traits::to(&log_entry_traits::configuration(&le))));
+    }
+    if(expected != 4) {
+      BOOST_CHECK_EQUAL(0U, c.configuration_responses.size());
+    } else {
+      BOOST_REQUIRE(0U < c.configuration_responses.size());
+      BOOST_CHECK_EQUAL(1U, c.configuration_responses.size());
+      BOOST_CHECK_EQUAL(raft::native::SUCCESS, c.configuration_responses.front().result);
+      BOOST_CHECK_EQUAL(0U, c.configuration_responses.front().bad_servers.servers.size());
+      c.configuration_responses.pop_back();
+    }
+    expected += 1;
+  }  
+}
 
-// BOOST_FIXTURE_TEST_CASE(JointConsensusAddServerLostLeadershipFailure, RaftTestFixture)
-// {
-//   uint64_t term=1;
-//   make_leader(term);
-//   uint64_t commit_index=s->commit_index();
-//   uint64_t log_index=l.last_index();
-//   send_client_request_and_commit(term, "1", log_index);  
+void JointConsensusAddServerLostLeadershipFailure()
+{
+  uint64_t term=1;
+  make_leader(term);
+  uint64_t commit_index=s->commit_index();
+  uint64_t log_index=l.last_index();
+  send_client_request_and_commit(term, "1", log_index);  
 
-//   BOOST_CHECK_EQUAL(5U, num_known_peers());
-//   stage_new_server(term, commit_index+1U);
+  BOOST_CHECK_EQUAL(5U, num_known_peers());
+  stage_new_server(term, commit_index+1U);
 
-//   // This should catch up newly added server.  Based on this we should
-//   // move to transitional
-//   send_client_request_and_commit(term, "2", log_index+1);
-//   BOOST_CHECK(cm->configuration().staging_servers_caught_up());
-//   // TODO: Should I really have to do this on_timer call to trigger the transitional entry????
-//   s->on_timer();
-//   BOOST_CHECK(cm->configuration().is_transitional());
-//   BOOST_CHECK_EQUAL(0U, c.configuration_responses.size());
+  // This should catch up newly added server.  Based on this we should
+  // move to transitional
+  send_client_request_and_commit(term, "2", log_index+1);
+  BOOST_CHECK(cm->configuration().staging_servers_caught_up());
+  // TODO: Should I really have to do this on_timer call to trigger the transitional entry????
+  s->on_timer();
+  BOOST_CHECK(cm->configuration().is_transitional());
+  BOOST_CHECK_EQUAL(0U, c.configuration_responses.size());
 
-//   // Now lose leadership by sending a log entry that conflicts with the transitional
-//   // configuration.  This triggers a failure in the configuration change and rollback
-//   // to prior configuration
-//   auto msg = append_entry_builder().recipient_id(0).term_number(term+1).leader_id(1).previous_log_index(log_index+2).previous_log_term(term).leader_commit_index(s->commit_index())
-//   msg.entry.push_back(raft_type::log_entry_type());
-//   msg.entry.back().type = raft_type::log_entry_type::COMMAND;
-//   msg.entry.back().term = term+1;
-//   msg.entry.back().data = "1";
-//   s->on_append_entry(std::move(msg));
-//   BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
-//   BOOST_CHECK(s->log_header_sync_required());
-//   s->on_log_header_sync();
-//   BOOST_CHECK(!s->log_header_sync_required());
-//   BOOST_REQUIRE(0U < c.configuration_responses.size());
-//   BOOST_CHECK_EQUAL(FAIL, c.configuration_responses.front().result);
-//   BOOST_CHECK(cm->configuration().is_stable());
-//   BOOST_CHECK_EQUAL(5U, num_known_peers());
-// }
+  // Now lose leadership by sending a log entry that conflicts with the transitional
+  // configuration.  This triggers a failure in the configuration change and rollback
+  // to prior configuration
+  auto le = log_entry_builder().term(term+1).data("1").finish();
+  auto msg = append_entry_builder().recipient_id(0).term_number(term+1).leader_id(1).previous_log_index(log_index+2).previous_log_term(term).leader_commit_index(s->commit_index()).entry(le).finish();
+  s->on_append_entry(std::move(msg));
+  BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
+  BOOST_CHECK(s->log_header_sync_required());
+  s->on_log_header_sync();
+  BOOST_CHECK(!s->log_header_sync_required());
+  BOOST_REQUIRE(0U < c.configuration_responses.size());
+  BOOST_CHECK_EQUAL(raft::native::FAIL, c.configuration_responses.front().result);
+  BOOST_CHECK(cm->configuration().is_stable());
+  BOOST_CHECK_EQUAL(5U, num_known_peers());
+}
 
-// BOOST_FIXTURE_TEST_CASE(JointConsensusAddServerLostLeadershipSuccess, RaftTestFixture)
-// {
-//   uint64_t term=1;
-//   make_leader(term);
-//   uint64_t commit_index=s->commit_index();
-//   uint64_t log_index=l.last_index();
-//   send_client_request_and_commit(term, "1", log_index);  
+void JointConsensusAddServerLostLeadershipSuccess()
+{
+  uint64_t term=1;
+  make_leader(term);
+  uint64_t commit_index=s->commit_index();
+  uint64_t log_index=l.last_index();
+  send_client_request_and_commit(term, "1", log_index);  
 
-//   BOOST_CHECK_EQUAL(5U, num_known_peers());
-//   stage_new_server(term, commit_index+1U);
+  BOOST_CHECK_EQUAL(5U, num_known_peers());
+  stage_new_server(term, commit_index+1U);
 
-//   // This should catch up newly added server.  Based on this we should
-//   // move to transitional
-//   send_client_request_and_commit(term, "2", log_index+1);
-//   BOOST_CHECK(cm->configuration().staging_servers_caught_up());
-//   // TODO: Should I really have to do this on_timer call to trigger the transitional entry????
-//   s->on_timer();
-//   BOOST_CHECK(cm->configuration().is_transitional());
-//   BOOST_CHECK_EQUAL(0U, c.configuration_responses.size());
+  // This should catch up newly added server.  Based on this we should
+  // move to transitional
+  send_client_request_and_commit(term, "2", log_index+1);
+  BOOST_CHECK(cm->configuration().staging_servers_caught_up());
+  // TODO: Should I really have to do this on_timer call to trigger the transitional entry????
+  s->on_timer();
+  BOOST_CHECK(cm->configuration().is_transitional());
+  BOOST_CHECK_EQUAL(0U, c.configuration_responses.size());
 
-//   // Now lose leadership by sending a log entry that is consistent with the transitional
-//   // configuration and in fact tells the former leader the transitional config is committed.
-//   // This triggers a successful completion of the configuration change.  Since I am not the leader
-//   // I don't log the new stable config (the new leader does that).
-//   auto msg = append_entry_builder().recipient_id(0).term_number(term+1).leader_id(1).previous_log_index(log_index+3).previous_log_term(term).leader_commit_index(commit_index+3)
-//   msg.entry.push_back(raft_type::log_entry_type());
-//   msg.entry.back().type = raft_type::log_entry_type::COMMAND;
-//   msg.entry.back().term = term+1;
-//   msg.entry.back().data = "1";
-//   s->on_append_entry(std::move(msg));
-//   BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
-//   BOOST_CHECK(s->log_header_sync_required());
-//   s->on_log_header_sync();
-//   BOOST_CHECK(!s->log_header_sync_required());
-//   BOOST_REQUIRE(0U < c.configuration_responses.size());
-//   BOOST_CHECK_EQUAL(SUCCESS, c.configuration_responses.front().result);
-// }
+  // Now lose leadership by sending a log entry that is consistent with the transitional
+  // configuration and in fact tells the former leader the transitional config is committed.
+  // This triggers a successful completion of the configuration change.  Since I am not the leader
+  // I don't log the new stable config (the new leader does that).
+  auto le = log_entry_builder().term(term+1).data("1").finish();
+  auto msg = append_entry_builder().recipient_id(0).term_number(term+1).leader_id(1).previous_log_index(log_index+3).previous_log_term(term).leader_commit_index(commit_index+3).entry(le).finish();
+  s->on_append_entry(std::move(msg));
+  BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
+  BOOST_CHECK(s->log_header_sync_required());
+  s->on_log_header_sync();
+  BOOST_CHECK(!s->log_header_sync_required());
+  BOOST_REQUIRE(0U < c.configuration_responses.size());
+  BOOST_CHECK_EQUAL(raft::native::SUCCESS, c.configuration_responses.front().result);
+}
 
-// BOOST_FIXTURE_TEST_CASE(CandidateVoteRequestAtSameTerm, RaftTestFixture)
-// {
-//   BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
-//   std::this_thread::sleep_for(std::chrono::milliseconds(500));
-//   s->on_timer();
-//   BOOST_CHECK_EQUAL(raft_type::CANDIDATE, s->get_state());
-//   BOOST_CHECK(s->log_header_sync_required());
-//   BOOST_CHECK_EQUAL(1U, s->current_term());
+void CandidateVoteRequestAtSameTerm()
+{
+  BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  s->on_timer();
+  BOOST_CHECK_EQUAL(raft_type::CANDIDATE, s->get_state());
+  BOOST_CHECK(s->log_header_sync_required());
+  BOOST_CHECK_EQUAL(1U, s->current_term());
 
-//   // Vote request from old term gets immediate negative response
-//   {
-//     auto msg = request_vote_builder().recipient_id(0).term_number(0).candidate_id(1).last_log_index(0).last_log_term(0).finish();
-//     s->on_request_vote(std::move(msg));
-//     BOOST_CHECK_EQUAL(1U, comm.q.size());
-//     BOOST_CHECK_EQUAL(0U, vote_response_traits::peer_id(boost::get<vote_response_arg_type>(comm.q.back())));
-//     BOOST_CHECK_EQUAL(1U, vote_response_traits::term_number(boost::get<vote_response_arg_type>(comm.q.back())));
-//     BOOST_CHECK_EQUAL(0U, vote_response_traits::request_term_number(boost::get<vote_response_arg_type>(comm.q.back())));
-//     BOOST_CHECK(!vote_response_traits::granted(boost::get<vote_response_arg_type>(comm.q.back())));
-//     comm.q.pop_back();
-//   }
+  // Vote request from old term gets immediate negative response
+  {
+    auto msg = request_vote_builder().recipient_id(0).term_number(0).candidate_id(1).last_log_index(0).last_log_term(0).finish();
+    s->on_request_vote(std::move(msg));
+    BOOST_CHECK_EQUAL(1U, comm.q.size());
+    BOOST_CHECK_EQUAL(0U, vote_response_traits::peer_id(boost::get<vote_response_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, vote_response_traits::term_number(boost::get<vote_response_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, vote_response_traits::request_term_number(boost::get<vote_response_arg_type>(comm.q.back())));
+    BOOST_CHECK(!vote_response_traits::granted(boost::get<vote_response_arg_type>(comm.q.back())));
+    comm.q.pop_back();
+  }
 
-//   // Now another server independently gets to term 1 and asks for a vote
-//   // we'll get response after a header sync but it won't be granted.  This server
-//   // will also send out vote requests to all other peers upon the header sync.
-//   {
-//     auto msg = request_vote_builder().recipient_id(0).term_number(1).candidate_id(1).last_log_index(0).last_log_term(0).finish();
-//     s->on_request_vote(std::move(msg));
-//     BOOST_CHECK_EQUAL(0U, comm.q.size());
-//   }
+  // Now another server independently gets to term 1 and asks for a vote
+  // we'll get response after a header sync but it won't be granted.  This server
+  // will also send out vote requests to all other peers upon the header sync.
+  {
+    auto msg = request_vote_builder().recipient_id(0).term_number(1).candidate_id(1).last_log_index(0).last_log_term(0).finish();
+    s->on_request_vote(std::move(msg));
+    BOOST_CHECK_EQUAL(0U, comm.q.size());
+  }
 
-//   // We use a brittle implementation detail here; vote response generated before vote requests.
-//   // Don't be surprised if this breaks some day.
-//   s->on_log_header_sync();
-//   BOOST_CHECK(!s->log_header_sync_required());
-//   BOOST_CHECK_EQUAL(num_known_peers(), comm.q.size());
-//   BOOST_CHECK_EQUAL(0U, vote_response_traits::peer_id(boost::get<vote_response_arg_type>(comm.q.back())));
-//   BOOST_CHECK_EQUAL(1U, vote_response_traits::term_number(boost::get<vote_response_arg_type>(comm.q.back())));
-//   BOOST_CHECK_EQUAL(1U, vote_response_traits::request_term_number(boost::get<vote_response_arg_type>(comm.q.back())));
-//   BOOST_CHECK(!vote_response_traits::granted(boost::get<vote_response_arg_type>(comm.q.back())));
-//   comm.q.pop_back();
-//   uint32_t expected = 1;
-//   while(comm.q.size() > 0) {
-//     BOOST_CHECK_EQUAL(expected, boost::get<request_vote_arg_type>(comm.q.back()).recipient_id);
-//     BOOST_CHECK_EQUAL(0U, boost::get<request_vote_arg_type>(comm.q.back()).candidate_id);
-//     BOOST_CHECK_EQUAL(1U, boost::get<request_vote_arg_type>(comm.q.back()).term_number);
-//     expected += 1;
-//     comm.q.pop_back();
-//   }
-// }
+  // We use a brittle implementation detail here; vote response generated before vote requests.
+  // Don't be surprised if this breaks some day.
+  s->on_log_header_sync();
+  BOOST_CHECK(!s->log_header_sync_required());
+  BOOST_CHECK_EQUAL(num_known_peers(), comm.q.size());
+  BOOST_CHECK_EQUAL(0U, vote_response_traits::peer_id(boost::get<vote_response_arg_type>(comm.q.back())));
+  BOOST_CHECK_EQUAL(1U, vote_response_traits::term_number(boost::get<vote_response_arg_type>(comm.q.back())));
+  BOOST_CHECK_EQUAL(1U, vote_response_traits::request_term_number(boost::get<vote_response_arg_type>(comm.q.back())));
+  BOOST_CHECK(!vote_response_traits::granted(boost::get<vote_response_arg_type>(comm.q.back())));
+  comm.q.pop_back();
+  uint32_t expected = 1;
+  while(comm.q.size() > 0) {
+    BOOST_CHECK_EQUAL(expected, request_vote_traits::recipient_id(boost::get<request_vote_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, request_vote_traits::candidate_id(boost::get<request_vote_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, request_vote_traits::term_number(boost::get<request_vote_arg_type>(comm.q.back())));
+    expected += 1;
+    comm.q.pop_back();
+  }
+}
+void JointConsensusAddServerNewLeaderFinishesCommit()
+{
+  // As FOLLOWER, get a transitional config from the leader
+  BOOST_CHECK(cm->configuration().is_stable());
+  uint64_t term=0;
+  uint64_t log_index=l.last_index();
+  uint64_t commit_index=s->commit_index();
+  append_entry_builder aeb;
+  aeb.recipient_id(0).term_number(term).leader_id(1).previous_log_index(log_index).previous_log_term(term).leader_commit_index(commit_index);
+  {
+    log_entry_builder leb;
+    {	
+      auto cb = leb.term(term).configuration();
+      add_five_servers(cb.from());
+      add_six_servers(cb.to());
+    }
+    aeb.entry(leb.finish());
+  }
+  // msg.entry.push_back(test_raft_type::log_entry_type());
+  // msg.entry.back().type = test_raft_type::log_entry_type::CONFIGURATION;
+  // msg.entry.back().term = term;
+  // msg.entry.back().configuration.from = five_servers;
+  // msg.entry.back().configuration.to = six_servers;
+  auto msg = aeb.finish();
+  s->on_append_entry(std::move(msg));
+  BOOST_CHECK(cm->configuration().is_transitional());
+  auto & le(l.entry(l.last_index()-1));
+  BOOST_CHECK(log_entry_traits::is_configuration(&le));
+  BOOST_CHECK_EQUAL(5U, simple_configuration_description_traits::size(&configuration_description_traits::from(&log_entry_traits::configuration(&le))));
+  BOOST_CHECK_EQUAL(6U, simple_configuration_description_traits::size(&configuration_description_traits::to(&log_entry_traits::configuration(&le))));
+
+  make_leader(term+1, false);
+
+  // Now leader and have the config entry so should try to replicate it but a new leader
+  // is optimistic and assumes that all peers have its log entries.  It will append a NOOP
+  // and replicate that.
+  s->on_timer();
+  uint64_t expected=1;
+  BOOST_CHECK_EQUAL(num_known_peers() - 1U, comm.q.size());
+  while(comm.q.size() > 0) {
+    BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(term+1, append_entry_traits::term_number(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(commit_index, append_entry_traits::leader_commit_index(boost::get<append_entry_arg_type>(comm.q.back())));
+    // Assumes peer also has the transitional config log entry
+    BOOST_CHECK_EQUAL(log_index+1U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(comm.q.back())));
+    auto resp = append_response_builder().recipient_id(expected).term_number(term+1).request_term_number(term+1).begin_index(log_index+1).last_index(log_index+2).success(true).finish();
+    s->on_append_response(std::move(resp));
+    comm.q.pop_back();
+
+    // We need quorum from both the old set of 5 servers and the new set of 6.
+    // When we do commit, we'll commit the transitional entry and the NOOP
+    if(expected < 4) {
+      BOOST_CHECK_EQUAL(commit_index, s->commit_index());
+      // Should have the transitional entry in the log.
+      BOOST_CHECK(cm->configuration().is_transitional());
+      BOOST_CHECK_EQUAL(6U, num_known_peers());
+      auto & le(l.entry(l.last_index()-1));
+      BOOST_CHECK(log_entry_traits::is_noop(&le));
+    } else {
+      // The log should be fully committed up through the NOOP entry  regardless of where
+      // commit_index started
+      BOOST_CHECK_EQUAL(log_index+2, s->commit_index());
+      // Should get a new stable config entry in the log
+      BOOST_CHECK(cm->configuration().is_stable());
+      BOOST_CHECK_EQUAL(6U, num_known_peers());
+      auto & le(l.entry(l.last_index()-1));
+      BOOST_CHECK(log_entry_traits::is_configuration(&le));
+      BOOST_CHECK_EQUAL(6U, simple_configuration_description_traits::size(&configuration_description_traits::from(&log_entry_traits::configuration(&le))));
+      BOOST_CHECK_EQUAL(0U, simple_configuration_description_traits::size(&configuration_description_traits::to(&log_entry_traits::configuration(&le))));
+    }
+    // Did not initiate the config change so should not send a response
+    BOOST_CHECK_EQUAL(0U, c.configuration_responses.size());
+    expected += 1;
+  }  
+}
 };
 
 template<typename _TestType>
@@ -2330,36 +2485,39 @@ void RaftTestBase<_TestType>::become_follower_with_vote_request(uint64_t term)
   comm.q.pop_back();
 }
 
-// template<typename _TestType>
-// void RaftTestBase<_TestType>::stage_new_server(uint64_t term, uint64_t commit_index)
-// {
-//   // Assumes that leader is 0
-//   uint64_t leader_id=0;
-//   // Assumes that everything in leader log is committed
-//   test_raft_type::messages_type::set_configuration_request_type req;
-//   req.old_id = 0;
-//   req.new_configuration = six_servers;
-//   s->on_set_configuration(c, req);
-//   BOOST_CHECK_EQUAL(req.new_configuration.servers.size(), num_known_peers());
+template<typename _TestType>
+void RaftTestBase<_TestType>::stage_new_server(uint64_t term, uint64_t commit_index)
+{
+  // Assumes that leader is 0
+  uint64_t leader_id=0;
+  // Assumes that everything in leader log is committed
+  {
+    set_configuration_request_builder bld;
+    add_six_servers(bld.old_id(0).new_configuration());
+    auto req = bld.finish();
+    BOOST_CHECK_EQUAL(6U, simple_configuration_description_traits::size(&set_configuration_request_traits::new_configuration(req)));
+    s->on_set_configuration(c, std::move(req));
+    BOOST_CHECK_EQUAL(6U, num_known_peers());
+  }
+  auto new_server_id = num_known_peers()-1;
   
-//   // Run timer then we should get append_entries for the newly added server
-//   s->on_timer();
-//   BOOST_CHECK_EQUAL(1U, comm.q.size());
-//   while(comm.q.size() > 0) {
-//     BOOST_CHECK_EQUAL(2U, comm.q.back().which());
-//     BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(comm.q.back())));
-//     BOOST_CHECK_EQUAL(leader_id, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(comm.q.back())));
-//     BOOST_CHECK_EQUAL(commit_index, append_entry_traits::leader_commit_index(boost::get<append_entry_arg_type>(comm.q.back())));
-//     BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(comm.q.back())));
-//     BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(comm.q.back())));
-//     BOOST_CHECK_EQUAL(commit_index, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(comm.q.back())));
-//     auto resp = append_response_builder().recipient_id(req.new_configuration.servers.size()-1).term_number(term).request_term_number(term).begin_index(0).last_index(commit_index).success(true).finish();
-//     s->on_append_response(std::move(resp));
-//     comm.q.pop_back();
-//   }
-//   BOOST_CHECK(!cm->configuration().staging_servers_caught_up());
-//   BOOST_CHECK(cm->configuration().is_staging());
-// }
+  // Run timer then we should get append_entries for the newly added server
+  s->on_timer();
+  BOOST_CHECK_EQUAL(1U, comm.q.size());
+  while(comm.q.size() > 0) {
+    BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(leader_id, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(commit_index, append_entry_traits::leader_commit_index(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(commit_index, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(comm.q.back())));
+    auto resp = append_response_builder().recipient_id(new_server_id).term_number(term).request_term_number(term).begin_index(0).last_index(commit_index).success(true).finish();
+    s->on_append_response(std::move(resp));
+    comm.q.pop_back();
+  }
+  BOOST_CHECK(!cm->configuration().staging_servers_caught_up());
+  BOOST_CHECK(cm->configuration().is_staging());
+}
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedBasicOnVoteRequestTest, _TestType, test_types)
 {
@@ -2431,6 +2589,30 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesCheckpointAbandon, _TestType
 {
   RaftTestBase<_TestType> t;
   t.AppendEntriesCheckpointAbandon();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedJointConsensusAddServer, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.JointConsensusAddServer();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedJointConsensusAddServerLostLeadershipFailure, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.JointConsensusAddServerLostLeadershipFailure();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedJointConsensusAddServerLostLeadershipSuccesss, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.JointConsensusAddServerLostLeadershipSuccess();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedJointConsensusAddServerNewLeaderFinishesCommit, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t(false);
+  t.JointConsensusAddServerNewLeaderFinishesCommit();
 }
 
 class RaftTestFixtureBase
