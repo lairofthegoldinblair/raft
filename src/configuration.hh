@@ -2,6 +2,7 @@
 #define __RAFTCONFIGURATION_HH__
 
 #include <chrono>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
