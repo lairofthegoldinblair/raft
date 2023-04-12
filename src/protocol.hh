@@ -1226,7 +1226,7 @@ namespace raft {
       }
     }
 
-    void on_set_configuration(client_type & client, set_configuration_request_arg_type req)
+    void on_set_configuration(client_type & client, set_configuration_request_arg_type && req)
     {
       typedef set_configuration_request_traits_type scr;
       if (LEADER != state_) {
@@ -1465,6 +1465,12 @@ namespace raft {
 	    ". Ignoring append_response message";
 	}
 	return;
+      }
+      if (!configuration().is_valid_peer(ae::recipient_id(resp))) {
+        BOOST_LOG_TRIVIAL(error) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+          " received append_response from unknown peer " << ae::recipient_id(resp) <<
+          ". Ignoring append_response message";
+        return;
       }
       peer_type & p(peer_from_id(ae::recipient_id(resp)));
       if (ae::success(resp)) {

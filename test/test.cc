@@ -15,6 +15,7 @@
 #include <boost/log/expressions.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/log/sinks/text_file_backend.hpp>
+#include <boost/mpl/list.hpp>
 
 #include <deque>
 #include "boost/variant.hpp"
@@ -375,6 +376,7 @@ public:
   typedef typename builders_type::append_response_builder_type append_response_builder;
   typedef typename builders_type::append_checkpoint_chunk_builder_type append_checkpoint_chunk_builder;
   typedef typename builders_type::append_checkpoint_chunk_response_builder_type append_checkpoint_chunk_response_builder;
+  typedef typename _Messages::checkpoint_header_traits_type checkpoint_header_traits;
   
   typedef size_t endpoint;
   template<typename _T>
@@ -448,8 +450,13 @@ public:
   {
     append_checkpoint_chunk_builder bld;
     bld.recipient_id(recipient_id).term_number(term_number).leader_id(leader_id).checkpoint_begin(checkpoint_begin).checkpoint_end(checkpoint_end).checkpoint_done(checkpoint_done).data(std::move(data));
-    // TODO:
-    //.last_checkpoint_header(last_checkpoint_header)
+    {
+      auto chb = bld.last_checkpoint_header();
+      chb.last_log_entry_index(checkpoint_header_traits::last_log_entry_index(&last_checkpoint_header));
+      chb.last_log_entry_term(checkpoint_header_traits::last_log_entry_index(&last_checkpoint_header));
+      chb.index(checkpoint_header_traits::index(&last_checkpoint_header));
+      chb.configuration(checkpoint_header_traits::configuration(&last_checkpoint_header));
+    }
     q.push_front(bld.finish());
   }		       
   
@@ -710,7 +717,6 @@ public:
   typedef raft::fbs::builders builders_type;
 };
 
-// typedef boost::mpl::list<native_test_type> test_types;
 typedef boost::mpl::list<native_test_type, flatbuffers_test_type> test_types;
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(BasicTemplatedStateMachineTests, _TestType, test_types)
@@ -1114,6 +1120,7 @@ public:
   typedef typename _TestType::messages_type::checkpoint_header_traits_type checkpoint_header_traits;
   typedef typename _TestType::messages_type::log_entry_traits_type log_entry_traits;
   typedef typename _TestType::builders_type::client_request_builder_type client_request_builder;
+  typedef typename _TestType::messages_type::server_description_traits_type server_description_traits;
   typedef typename _TestType::messages_type::simple_configuration_description_traits_type simple_configuration_description_traits;
   typedef typename _TestType::messages_type::configuration_description_traits_type configuration_description_traits;
   typedef typename _TestType::messages_type::set_configuration_request_traits_type set_configuration_request_traits;
@@ -1949,6 +1956,19 @@ public:
     BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_traits::checkpoint_begin(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(2U, append_checkpoint_chunk_traits::checkpoint_end(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_index(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_term(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, checkpoint_header_traits::index(&append_checkpoint_chunk_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back()))));
+    {
+      const auto & cfg(checkpoint_header_traits::configuration(&append_checkpoint_chunk_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back()))));
+      BOOST_CHECK_EQUAL(0U, simple_configuration_description_traits::size(&configuration_description_traits::to(&cfg)));
+      BOOST_REQUIRE_EQUAL(5U, simple_configuration_description_traits::size(&configuration_description_traits::from(&cfg)));
+      for(std::size_t i=0; i<5; ++i) {
+	BOOST_CHECK_EQUAL(i, server_description_traits::id(&simple_configuration_description_traits::get(&configuration_description_traits::from(&cfg), i)));
+	BOOST_CHECK_EQUAL(0, server_description_traits::address(&simple_configuration_description_traits::get(&configuration_description_traits::from(&cfg), i)).compare((boost::format("192.168.1.%1%") % (i+1)).str()));
+      }
+    }
+    
     comm.q.pop_back();
 
     // Ack with bytes_stored=2 twice to validate the checkpoint protocol will resend data if requested
@@ -1961,6 +1981,9 @@ public:
       BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
       BOOST_CHECK_EQUAL(2U, append_checkpoint_chunk_traits::checkpoint_begin(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
       BOOST_CHECK_EQUAL(4U, append_checkpoint_chunk_traits::checkpoint_end(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_index(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_term(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, checkpoint_header_traits::index(&append_checkpoint_chunk_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back()))));
       comm.q.pop_back();
     }
 
@@ -1972,6 +1995,9 @@ public:
     BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(4U, append_checkpoint_chunk_traits::checkpoint_begin(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(5U, append_checkpoint_chunk_traits::checkpoint_end(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_index(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_term(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, checkpoint_header_traits::index(&append_checkpoint_chunk_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back()))));
     comm.q.pop_back();
 
     resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(1U).request_term_number(1U).bytes_stored(5U).finish();
@@ -2020,6 +2046,9 @@ public:
     BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_traits::checkpoint_begin(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(2U, append_checkpoint_chunk_traits::checkpoint_end(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_index(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_term(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, checkpoint_header_traits::index(&append_checkpoint_chunk_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back()))));
     comm.q.pop_back();
 
     auto resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(2U).request_term_number(1U).bytes_stored(2U).finish();

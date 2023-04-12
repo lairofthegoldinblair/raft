@@ -69,7 +69,7 @@ namespace raft {
 	pimpl_->operator()();
       }
 
-      operator bool()
+      operator bool() const
       {
 	return !!pimpl_;
       }
@@ -109,6 +109,9 @@ namespace raft {
 
       call_on_delete& operator=(call_on_delete && rhs)
       {
+	if (fun_) {
+	  fun_();
+	}
 	fun_ = std::move(rhs.fun_);
 	return *this;
       }
@@ -118,6 +121,11 @@ namespace raft {
 	if (fun_) {
 	  fun_();
 	}
+      }
+
+      operator bool() const
+      {
+	return fun_;
       }
     };
 }

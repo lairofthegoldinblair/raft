@@ -5,9 +5,8 @@
 #include <string_view>
 
 #include "raft_generated.h"
-
-#include "../util/call_on_delete.hh"
-#include "../slice.hh"
+#include "slice.hh"
+#include "util/call_on_delete.hh"
 
 namespace raft {
   namespace fbs {
@@ -75,6 +74,15 @@ namespace raft {
       }
     };
 
+    struct client_response_traits
+    {
+      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
+      typedef const arg_type & const_arg_type;
+      static const client_response *  get_client_response(const_arg_type ae)
+      {
+	return  ae.first->message_as_client_response();
+      }
+    };
     // Returns a reference to the first bytes of data in raft::fbs::entries
     // struct get_log_entries_data
     // {
@@ -301,7 +309,7 @@ namespace raft {
       // }
       // auto to_config = Createsimple_configuration_description(*fbb, fbb->CreateVector(servers));
       // auto cfg = Createconfiguration_description(*fbb, from_config, to_config);
-      auto cfg = fbb->CreateVector<uint8_t>(c, *reinterpret_cast<const flatbuffers::uoffset_t *>(c)+sizeof(::flatbuffers::uoffset_t));
+      auto cfg = fbb->CreateVector<uint8_t>(c, ::flatbuffers::GetPrefixedSize(c)+sizeof(::flatbuffers::uoffset_t));
       
       raft::fbs::log_entryBuilder leb(*fbb);
       leb.add_term(term);
@@ -587,11 +595,12 @@ namespace raft {
     class set_configuration_response_traits
     {
     public:
-      typedef const raft_message * const_arg_type;    
+      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
+      typedef const arg_type & const_arg_type;
     
       static const raft::fbs::set_configuration_response * scr(const_arg_type msg)
       {
-	return msg->message_as_set_configuration_response();
+	return msg.first->message_as_set_configuration_response();
       }
     
       static raft::fbs::client_result result(const_arg_type msg)
@@ -620,6 +629,8 @@ namespace raft {
       typedef log_entry_traits log_entry_traits_type;
       typedef client_request client_request_type;
       typedef client_request_traits client_request_traits_type;
+      typedef client_response client_response_type;
+      typedef client_response_traits client_response_traits_type;
       typedef request_vote request_vote_type;
       typedef request_vote_traits request_vote_traits_type;
       typedef vote_response vote_response_type;
@@ -677,8 +688,9 @@ namespace raft {
 	static_cast<_Derived *>(this)->initialize(&bld);
 	auto rv = bld.Finish();
 	auto m = Createraft_message(fbb(), raft::fbs::any_messageTraits<fbs_type>::enum_value, rv.Union());
-	fbb().Finish(m);
-	auto obj = Getraft_message(fbb().GetBufferPointer());
+	fbb().FinishSizePrefixed(m);
+	auto obj = GetSizePrefixedraft_message(fbb().GetBufferPointer());
+	BOOST_ASSERT(fbb().GetBufferPointer()+sizeof(::flatbuffers::uoffset_t) == ::flatbuffers::GetBufferStartFromRootPointer(obj));
 	auto ret = std::pair<const raft::fbs::raft_message *, raft::util::call_on_delete>(obj, [fbb = fbb_.release()]() { delete fbb; });
 	return ret;
       }
@@ -943,7 +955,7 @@ simple_configuration_description_builder to()
 	// Configuration descriptions are nested flatbuffers so we can just memcpy them into message
 	// We use size prefixed buffers so the first uoffset_t is the size of the flatbuffer
 	// (does not include the size of the size prefix itself)
-	configuration_ = fbb().CreateVector<uint8_t>(&e, *reinterpret_cast<const flatbuffers::uoffset_t *>(&e)+sizeof(::flatbuffers::uoffset_t));
+	configuration_ = fbb().CreateVector<uint8_t>(&e, ::flatbuffers::GetPrefixedSize(&e)+sizeof(::flatbuffers::uoffset_t));
 	return *this;
       }
       checkpoint_header_builder & configuration(const std::pair<configuration_description_traits::const_arg_type, raft::util::call_on_delete > & val)
@@ -1077,6 +1089,40 @@ simple_configuration_description_builder to()
       }
     };
 
+    class client_response_builder : public raft_message_builder_base<client_response_builder, raft::fbs::client_response>
+    {
+    private:
+      client_result result_= client_result_FAIL;
+      uint64_t index_ = 0;
+      uint64_t leader_id_ = 0;
+    public:
+      void preinitialize()
+      {
+      }
+      
+      void initialize(fbs_builder_type * bld)
+      {
+	bld->add_result(result_);
+	bld->add_index(index_);
+	bld->add_leader_id(leader_id_);
+      }
+      client_response_builder & result(client_result val)
+      {
+	result_ = val;
+	return *this;
+      }
+      client_response_builder & index(uint64_t val)
+      {
+	index_ = val;
+	return *this;
+      }
+      client_response_builder & leader_id(uint64_t val)
+      {
+	leader_id_ = val;
+	return *this;
+      }
+    };
+
     class append_entry_builder : public raft_message_builder_base<append_entry_builder, raft::fbs::append_entry>
     {
     private:
@@ -1140,7 +1186,7 @@ simple_configuration_description_builder to()
 	// Log entries are nested flatbuffers so we can just memcpy them into message
 	  // We use size prefixed buffers so the first uoffset_t is the size of the flatbuffer
 	  // (does not include the size of the size prefix itself)
-	auto v = fbb().CreateVector<uint8_t>(&e, *reinterpret_cast<const flatbuffers::uoffset_t *>(&e)+sizeof(::flatbuffers::uoffset_t));
+	auto v = fbb().CreateVector<uint8_t>(&e, ::flatbuffers::GetPrefixedSize(&e)+sizeof(::flatbuffers::uoffset_t));
 	raft::fbs::log_entriesBuilder leb(fbb());
 	leb.add_entry(v);
 	entries_vec_.push_back(leb.Finish());
@@ -1353,6 +1399,37 @@ simple_configuration_description_builder to()
       }
     };
 
+    class set_configuration_response_builder : public raft_message_builder_base<set_configuration_response_builder, raft::fbs::set_configuration_response>
+    {
+    private:
+      client_result result_ = client_result_FAIL;
+      ::flatbuffers::Offset<raft::fbs::simple_configuration_description> bad_servers_;
+    public:
+      void preinitialize()
+      {
+      }
+      
+      void initialize(fbs_builder_type * bld)
+      {
+	  bld->add_result(result_);
+	  bld->add_bad_servers(bad_servers_);
+      }	
+      set_configuration_response_builder & result(client_result val)
+      {
+	result_ = val;
+	return *this;
+      }
+      set_configuration_response_builder & bad_servers(::flatbuffers::Offset<raft::fbs::simple_configuration_description> val)
+      {
+	bad_servers_ = val;
+	return *this;
+      }
+      simple_configuration_description_builder bad_servers()
+      {
+	return simple_configuration_description_builder(fbb(), [this](::flatbuffers::Offset<raft::fbs::simple_configuration_description> val) { this->bad_servers(val); });
+      }
+    };
+
     class log_entry_builder
     {
     private:
@@ -1397,7 +1474,7 @@ simple_configuration_description_builder to()
 	// We use size prefixed buffers so the first uoffset_t is the size of the flatbuffer
 	// (does not include the size of the size prefix itself)
 	type_ = raft::fbs::log_entry_type_CONFIGURATION;
-	configuration_ = fbb().CreateVector<uint8_t>(&e, *reinterpret_cast<const flatbuffers::uoffset_t *>(&e)+sizeof(::flatbuffers::uoffset_t));
+	configuration_ = fbb().CreateVector<uint8_t>(&e, ::flatbuffers::GetPrefixedSize(&e)+sizeof(::flatbuffers::uoffset_t));
 	return *this;
       }
       log_entry_builder & configuration(const std::pair<configuration_description_traits::const_arg_type, raft::util::call_on_delete > & val)
@@ -1432,11 +1509,13 @@ simple_configuration_description_builder to()
       typedef request_vote_builder request_vote_builder_type; 
       typedef vote_response_builder vote_response_builder_type;
       typedef client_request_builder client_request_builder_type;
+      typedef client_response_builder client_response_builder_type;
       typedef append_entry_builder append_entry_builder_type;
       typedef append_response_builder append_response_builder_type;
       typedef append_checkpoint_chunk_builder append_checkpoint_chunk_builder_type;
       typedef append_checkpoint_chunk_response_builder append_checkpoint_chunk_response_builder_type;
       typedef set_configuration_request_builder set_configuration_request_builder_type;
+      typedef set_configuration_response_builder set_configuration_response_builder_type;
       typedef log_entry_builder log_entry_builder_type;
     };
 
@@ -1474,7 +1553,7 @@ simple_configuration_description_builder to()
 	  // Log entries are nested flatbuffers so we can just memcpy them into message
 	  // We use size prefixed buffers so the first uoffset_t is the size of the flatbuffer
 	  // (does not include the size of the size prefix itself)
-	  auto v = fbb->CreateVector<uint8_t>(e, *reinterpret_cast<const flatbuffers::uoffset_t *>(e)+sizeof(::flatbuffers::uoffset_t));
+	  auto v = fbb->CreateVector<uint8_t>(e, ::flatbuffers::GetPrefixedSize(e)+sizeof(::flatbuffers::uoffset_t));
 	  raft::fbs::log_entriesBuilder leb(*fbb);
 	  leb.add_entry(v);
 	  entries_vec.push_back(leb.Finish());

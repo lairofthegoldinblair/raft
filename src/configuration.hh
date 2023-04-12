@@ -383,6 +383,11 @@ namespace raft {
       return *cluster_[cluster_idx_];
     }
 
+    bool is_valid_peer(uint64_t peer_id) const
+    {
+      return peer_id < cluster_.size() && !!cluster_[peer_id];
+    }
+
     peer_type & peer_from_id(uint64_t peer_id)
     {
       return *cluster_[peer_id];

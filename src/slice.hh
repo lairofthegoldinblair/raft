@@ -1,6 +1,11 @@
 #ifndef __SLICE_HH__
 #define __SLICE_HH__
 
+#include <iomanip>
+#include <iostream>
+#include "boost/io/ios_state.hpp"
+
+
 namespace raft {
 
   class slice
@@ -12,6 +17,13 @@ namespace raft {
     // Non-copyable only moveable
     slice(const slice & s) = delete;
     const slice & operator=(const slice & s) = delete;
+
+    slice()
+      :
+      buffer(nullptr),
+      sz(0)
+    {
+    }
 
     slice(const uint8_t * b, std::size_t s)
       :
@@ -61,6 +73,22 @@ namespace raft {
     {
       buffer += len;
       sz -= len;
+    }
+
+    slice & operator+=(std::size_t len)
+    {
+      trim_prefix(len);
+      return *this;
+    }
+    
+    const void * data() const
+    {
+      return buffer;
+    }
+
+    size_t size() const
+    {
+      return sz;
     }
 
     static slice create(const std::string & str)
@@ -130,6 +158,112 @@ namespace raft {
       }	
     }
   };
+
+  class mutable_slice
+  {
+  private:
+    uint8_t * buffer;
+    std::size_t sz;
+  public:
+    // Non-copyable only moveable
+    mutable_slice(const mutable_slice & s) = delete;
+    const mutable_slice & operator=(const mutable_slice & s) = delete;
+
+    mutable_slice(uint8_t * b, std::size_t s)
+      :
+      buffer(b),
+      sz(s)
+    {
+    }
+
+    mutable_slice(mutable_slice && s)
+      :
+      buffer(s.buffer),
+      sz(s.sz)
+    {
+      s.buffer = nullptr;
+      s.sz = 0;
+    }
+
+    mutable_slice & operator=(mutable_slice && s)
+    {
+      buffer = s.buffer;
+      sz = s.sz;
+      s.buffer = nullptr;
+      s.sz = 0;
+      return *this;
+    }
+
+    void clear()
+    {
+      buffer = nullptr;
+      sz = 0;
+    }
+
+    mutable_slice share() const
+    {
+      return mutable_slice(buffer, sz);
+    }
+
+    void trim_prefix(std::size_t len)
+    {
+      buffer += len;
+      sz -= len;
+    }
+
+    mutable_slice & operator+=(std::size_t len)
+    {
+      trim_prefix(len);
+      return *this;
+    }
+    
+    void * data()
+    {
+      return buffer;
+    }
+
+    size_t size() const
+    {
+      return sz;
+    }
+
+    static std::size_t buffer_size(const mutable_slice & s)
+    {
+      return s.sz;
+    }
+  };
+
+  inline std::size_t buffer_copy(mutable_slice && target, slice && source)
+  {
+    auto to_copy = (std::min)(mutable_slice::buffer_size(target), slice::buffer_size(source));
+    ::memcpy(target.data(), source.data(), to_copy);
+    return to_copy;
+  }
+
+  inline slice operator+(const slice & s, std::size_t len)
+  {
+    slice ret = s.share();
+    ret.trim_prefix(len);
+    return ret;
+  }
+
+  inline mutable_slice operator+(const mutable_slice & s, std::size_t len)
+  {
+    mutable_slice ret = s.share();
+    ret.trim_prefix(len);
+    return ret;
+  }
+
+  inline std::ostream & operator<<(std::ostream & ostr, const slice &  s)
+  {
+    boost::io::ios_flags_saver ifs(ostr);
+    ostr << "0x" << std::hex << std::setfill ('0');
+    auto d = reinterpret_cast<const uint8_t *>(s.data());
+    for(std::size_t i=0; i<s.size(); ++i) {
+      ostr << std::setw (2) << (unsigned) d[i];
+    }
+    return ostr;
+  }
 }
 
 #endif

@@ -135,9 +135,17 @@ namespace raft {
     public:
       client_result result;
       uint64_t index;
-      std::size_t leader_id;
+      uint64_t leader_id;
     };
 
+    class client_response_traits
+    {
+    public:
+      typedef client_response value_type;
+      typedef client_response arg_type;
+      typedef const value_type& const_arg_type;
+    };
+    
     class set_configuration_request
     {
     public:
@@ -173,6 +181,7 @@ namespace raft {
     {
     public:
       typedef set_configuration_response value_type;
+      typedef set_configuration_request arg_type;
       typedef const value_type& const_arg_type;
     
       static client_result result(const_arg_type msg)
@@ -687,6 +696,7 @@ namespace raft {
       typedef client_request client_request_type;
       typedef client_request_traits client_request_traits_type;
       typedef client_response client_response_type;
+      typedef client_response_traits client_response_traits_type;
       typedef request_vote_traits request_vote_traits_type;
       typedef request_vote_traits::value_type request_vote_type;
       typedef vote_response_traits::value_type vote_response_type;
@@ -892,14 +902,14 @@ namespace raft {
 	get_object()->configuration.index = val;
 	return *this;
       }
-      checkpoint_header_builder & configuration(configuration_description && val)
+      checkpoint_header_builder & configuration(const configuration_description & val)
       {
-	get_object()->configuration.description = std::move(val);
+	get_object()->configuration.description = val;
 	return *this;
       }
       configuration_description_builder configuration()
       {
-	return configuration_description_builder([this](configuration_description && val) { this->configuration(std::move(val)); });
+	return configuration_description_builder([this](configuration_description && val) { this->configuration(val); });
       }
     };
 
@@ -1003,6 +1013,26 @@ namespace raft {
       {
 	get_object()->command.assign(raft::slice::buffer_cast<const char *>(val),
 				     raft::slice::buffer_size(val));
+	return *this;
+      }
+    };
+
+    class client_response_builder : public builder_base<client_response>
+    {
+    public:
+      client_response_builder & result(client_result val)
+      {
+	get_object()->result = val;
+	return *this;
+      }
+      client_response_builder & index(uint64_t val)
+      {
+	get_object()->index = val;
+	return *this;
+      }
+      client_response_builder & leader_id(uint64_t val)
+      {
+	get_object()->leader_id = val;
 	return *this;
       }
     };
@@ -1258,6 +1288,41 @@ namespace raft {
       }
     };
 
+    class set_configuration_response_builder
+    {
+    private:
+      std::unique_ptr<set_configuration_response> obj_;
+      set_configuration_response * get_object()
+      {
+	if (nullptr == obj_) {
+	  obj_ = std::make_unique<set_configuration_response>();
+	  obj_->result = FAIL;
+	}
+	return obj_.get();
+      }
+    public:
+      set_configuration_response_builder & result(client_result val)
+      {
+	get_object()->result = val;
+	return *this;
+      }
+      set_configuration_response_builder & bad_servers(simple_configuration_description && val)
+      {
+	get_object()->bad_servers = std::move(val);
+	return *this;
+      }
+      simple_configuration_description_builder bad_servers()
+      {
+	return simple_configuration_description_builder([this](simple_configuration_description && val) { this->bad_servers(std::move(val)); });
+      }
+      set_configuration_response finish()
+      {
+	auto obj = *get_object();
+	obj_.reset();
+	return obj;
+      }
+    };
+
     class log_entry_builder
     {
     private:
@@ -1316,11 +1381,13 @@ namespace raft {
       typedef request_vote_builder request_vote_builder_type;
       typedef vote_response_builder vote_response_builder_type;
       typedef client_request_builder client_request_builder_type;
+      typedef client_response_builder client_response_builder_type;
       typedef append_entry_builder<messages::log_entry_type> append_entry_builder_type;
       typedef append_response_builder append_response_builder_type;
       typedef append_checkpoint_chunk_builder append_checkpoint_chunk_builder_type;
       typedef append_checkpoint_chunk_response_builder append_checkpoint_chunk_response_builder_type;
       typedef set_configuration_request_builder set_configuration_request_builder_type;
+      typedef set_configuration_response_builder set_configuration_response_builder_type;
       typedef log_entry_builder log_entry_builder_type;
     };
 

@@ -1,6 +1,8 @@
 #ifndef __RAFT_ASIO_SERVER_HH__
 #define __RAFT_ASIO_SERVER_HH__
 
+#include <set>
+
 #include "boost/asio.hpp"
 #include "boost/lexical_cast.hpp"
 #include "boost/log/trivial.hpp"
@@ -10,8 +12,8 @@
 #include "asio/basic_file_object.hh"
 #include "asio/disk_io_service.hh"
 #include "leveldb_log.hh"
-#include "../native/messages.hh"
 #include "protocol.hh"
+#include "slice.hh"
 
 namespace raft {
   namespace asio {
@@ -39,11 +41,20 @@ namespace raft {
     // trying to avoid baking in such an assumption therefore I am passing all of the data in a
     // somewhat functional manner to avoid control flow issues.  Presumably there are high brow ways of handling
     // this such as expression templates.
-    template<typename _Messages>
+    template<typename _Messages, typename _Builders, typename _Serialization>
     class asio_tcp_communicator
     {
     public:
       typedef size_t endpoint;    
+      typedef serialization<_Messages, _Serialization> serialization_type;
+      typedef _Builders builders_type;
+      typedef typename builders_type::request_vote_builder_type request_vote_builder;
+      typedef typename builders_type::vote_response_builder_type vote_response_builder;
+      typedef typename builders_type::append_entry_builder_type append_entry_builder;
+      typedef typename builders_type::append_response_builder_type append_response_builder;
+      typedef typename builders_type::append_checkpoint_chunk_builder_type append_checkpoint_chunk_builder;
+      typedef typename builders_type::append_checkpoint_chunk_response_builder_type append_checkpoint_chunk_response_builder;
+      typedef typename _Messages::checkpoint_header_traits_type checkpoint_header_traits;
 
       boost::asio::io_service & io_service_;
       boost::asio::ip::tcp::endpoint endpoint_;
@@ -58,11 +69,14 @@ namespace raft {
       }
 
       template<typename _T>
-      void send(endpoint ep, const std::string & addr, const _T & msg)
+      void send(endpoint ep, const std::string & addr, _T && msg)
       {
 	  uint8_t * mem = new uint8_t [128*1024];
-	  auto buf = serialization::serialize(boost::asio::buffer(mem, 128*1024), msg);
-	  send_buffer(ep, addr, buf);
+	  auto buf = serialization_type::serialize(boost::asio::buffer(mem, 128*1024), std::move(msg));
+          for(const auto & b : buf.first) {
+            BOOST_LOG_TRIVIAL(trace) << "asio_tcp_commmunicator at " << endpoint_ << " sending to Server(" << ep << ") at address " << addr << " : " << raft::slice(reinterpret_cast<const uint8_t *>(b.data()), b.size());
+          }
+	  send_buffer(ep, addr, buf.first, std::move(buf.second));
       }
 
       void vote_request(endpoint ep, const std::string & address,
@@ -72,13 +86,8 @@ namespace raft {
 			uint64_t last_log_index,
 			uint64_t last_log_term)
       {
-	typename _Messages::request_vote_type msg;
-	msg.recipient_id=recipient_id;
-	msg.term_number=term_number;
-	msg.candidate_id=candidate_id;
-	msg.last_log_index=last_log_index;
-	msg.last_log_term=last_log_term;
-	send(ep, address, msg);	
+	auto msg = request_vote_builder().recipient_id(recipient_id).term_number(term_number).candidate_id(candidate_id).last_log_index(last_log_index).last_log_term(last_log_term).finish();
+	send(ep, address, std::move(msg));	
       }
 
       template<typename EntryProvider>
@@ -92,19 +101,15 @@ namespace raft {
 			uint64_t num_entries,
 			EntryProvider entries)
       {
-	typename _Messages::append_entry_type msg;
-	msg.set_recipient_id(recipient_id);
-	msg.set_term_number(term_number);
-	msg.set_leader_id(leader_id);
-	msg.set_previous_log_index(previous_log_index);
-	msg.set_previous_log_term(previous_log_term);
-	msg.set_leader_commit_index(leader_commit_index);
+	append_entry_builder bld;
+	bld.recipient_id(recipient_id).term_number(term_number).leader_id(leader_id).previous_log_index(previous_log_index).previous_log_term(previous_log_term).leader_commit_index(leader_commit_index);
 	for(uint64_t i=0; i<num_entries; ++i) {
-	  msg.add_entry(entries(i));
+	  bld.entry(entries(i));
 	}
-	send(ep, address, msg);
+	auto msg = bld.finish();
+	send(ep, address, std::move(msg));	
       }
-
+	
       void append_entry_response(endpoint ep, const std::string& address,
 				 uint64_t recipient_id,
 				 uint64_t term_number,
@@ -113,14 +118,8 @@ namespace raft {
 				 uint64_t last_index,
 				 bool success)
       {
-	typename _Messages::append_entry_response_type msg;
-	msg.recipient_id = recipient_id;
-	msg.term_number = term_number;
-	msg.request_term_number = request_term_number;
-	msg.begin_index = begin_index;
-	msg.last_index = last_index;
-	msg.success = success;
-	send(ep, address, msg);
+	auto msg = append_response_builder().recipient_id(recipient_id).term_number(term_number).request_term_number(request_term_number).begin_index(begin_index).last_index(last_index).success(success).finish();
+	send(ep, address, std::move(msg));	
       }
 
       void vote_response(endpoint ep, const std::string& address,
@@ -129,35 +128,31 @@ namespace raft {
 			 uint64_t request_term_number,
 			 bool granted)
       {
-	typename _Messages::vote_response_type msg;
-	msg.peer_id = peer_id;
-	msg.term_number = term_number;
-	msg.request_term_number = request_term_number;
-	msg.granted = granted;
-	send(ep, address, msg);
+	auto msg = vote_response_builder().peer_id(peer_id).term_number(term_number).request_term_number(request_term_number).granted(granted).finish();
+	send(ep, address, std::move(msg));	
       }
 
       void append_checkpoint_chunk(endpoint ep, const std::string& address,
 				   uint64_t recipient_id,
 				   uint64_t term_number,
 				   uint64_t leader_id,
-				   const raft::native::checkpoint_header & last_checkpoint_header,
+				   const typename _Messages::checkpoint_header_type & last_checkpoint_header,
 				   uint64_t checkpoint_begin,
 				   uint64_t checkpoint_end,
 				   bool checkpoint_done,
-				   raft::slice data)
+				   raft::slice && data)
       {
-	typename _Messages::append_checkpoint_chunk_type msg;
-	msg.recipient_id=recipient_id;
-	msg.term_number=term_number;
-	msg.leader_id=leader_id;
-	msg.last_checkpoint_header=last_checkpoint_header;
-	msg.checkpoint_begin=checkpoint_begin;
-	msg.checkpoint_end=checkpoint_end;
-	msg.checkpoint_done=checkpoint_done;
-	msg.data.assign(raft::slice::buffer_cast<const uint8_t *>(data),
-			raft::slice::buffer_cast<const uint8_t *>(data) + raft::slice::buffer_size(data));
-	send(ep, address, msg);
+	append_checkpoint_chunk_builder bld;
+	bld.recipient_id(recipient_id).term_number(term_number).leader_id(leader_id).checkpoint_begin(checkpoint_begin).checkpoint_end(checkpoint_end).checkpoint_done(checkpoint_done).data(std::move(data));
+	{
+	  auto chb = bld.last_checkpoint_header();
+	  chb.last_log_entry_index(checkpoint_header_traits::last_log_entry_index(&last_checkpoint_header));
+	  chb.last_log_entry_term(checkpoint_header_traits::last_log_entry_index(&last_checkpoint_header));
+	  chb.index(checkpoint_header_traits::index(&last_checkpoint_header));
+	  chb.configuration(checkpoint_header_traits::configuration(&last_checkpoint_header));
+	}
+	auto msg = bld.finish();
+	send(ep, address, std::move(msg));	
       }		       
   
       void append_checkpoint_chunk_response(endpoint ep, const std::string& address,
@@ -166,157 +161,12 @@ namespace raft {
 					    uint64_t request_term_number,
 					    uint64_t bytes_stored)
       {
-	typename _Messages::append_checkpoint_chunk_response_type msg;    
-	msg.recipient_id = recipient_id;
-	msg.term_number = term_number;
-	msg.request_term_number = request_term_number;
-	msg.bytes_stored = bytes_stored;
-	send(ep, address, msg);
+	auto msg = append_checkpoint_chunk_response_builder().recipient_id(recipient_id).term_number(term_number).request_term_number(request_term_number).bytes_stored(bytes_stored).finish();
+	send(ep, address, std::move(msg));	
       }
-      
-      // Don't use with boost::asio::const_buffers_1 since that doesn't have
-      // the right move semantics
-      template<typename ConstBufferSequence>
-      class owned_buffer_sequence
-      {
-      private:
-	ConstBufferSequence seq_;
-	owned_buffer_sequence(const owned_buffer_sequence& ) = delete;
-	owned_buffer_sequence & operator=(const owned_buffer_sequence &) = delete;
-      public:
-	owned_buffer_sequence(owned_buffer_sequence&& seq)
-	  :
-	  seq_(std::move(seq))
-	{
-	}
-
-	~owned_buffer_sequence()
-	{
-	  for(auto b : seq_) {
-	    delete [] boost::asio::buffer_cast<const uint8_t *>(b);
-	  }
-	}
-	
-	owned_buffer_sequence & operator=(owned_buffer_sequence && seq)
-	{
-	  seq_ = std::move(seq);
-	}
-
-	operator const ConstBufferSequence & ()
-	{
-	  return seq_;
-	}
-      };
-      
-      template<typename OwnedConstBufferSequence>
-      class write_handler
-      {
-      private:
-	asio_tcp_communicator * comm_;
-	OwnedConstBufferSequence buf_;
-      public:
-	write_handler(asio_tcp_communicator * comm,
-		      OwnedConstBufferSequence && buf)
-	  :
-	  comm_(comm),
-	  buf_(std::move(buf))
-	{
-	}
-
-	write_handler(write_handler && rhs)
-	  :
-	  comm_(rhs.comm_),
-	  buf_(std::move(rhs.buf_))
-	{
-	}
-
-	write_handler(const write_handler & rhs) = delete;
-	const write_handler & operator=(const write_handler & rhs) = delete;
-
-	~write_handler() = default;
-	
-	void operator()(boost::system::error_code ec, std::size_t bytes_transferred)
-	{
-	}
-      };
-      
-      template<typename OwnedConstBufferSequence>
-      class connect_and_write_handler
-      {
-      private:
-	asio_tcp_communicator * comm_;
-	OwnedConstBufferSequence buf_;
-	const std::string & addr_copy_;
-      public:
-	connect_and_write_handler(asio_tcp_communicator * comm,
-				  OwnedConstBufferSequence && buf,
-				  const std::string & addr_copy)
-	  :
-	  comm_(comm),
-	  buf_(std::move(buf)),
-	  addr_copy_(addr_copy)
-	{
-	}
-
-	connect_and_write_handler(connect_and_write_handler && rhs)
-	  :
-	  comm_(rhs.comm_),
-	  buf_(std::move(rhs.buf_)),
-	  addr_copy_(rhs.addr_copy_)
-	{
-	}
-
-	connect_and_write_handler(const connect_and_write_handler & rhs) = delete;
-	const connect_and_write_handler & operator=(const connect_and_write_handler & rhs) = delete;
-
-	~connect_and_write_handler() = default;
-	
-	void operator ()(boost::system::error_code ec)
-	{
-	  if (ec) {
-	    BOOST_LOG_TRIVIAL(warning) << "asio_tcp_communicator " << this->endpoint_ << " failed to connect to " << addr_copy_ <<
-	      ": " << ec;
-	    return;
-	  }
-	  BOOST_LOG_TRIVIAL(info) << "asio_tcp_communicator " << this->endpoint_ << " connected to " << addr_copy_;
-	  BOOST_LOG_TRIVIAL(debug) << "asio_tcp_communicator " << this->endpoint_ << " sending " << boost::asio::buffer_size(buf_) <<
-	    " bytes for operation " << boost::asio::buffer_cast<const rpc_header *>(buf_)->operation <<
-	    " to " << this->sockets_[addr_copy_]->peer_endpoint;
-	  boost::asio::async_write(this->sockets_[addr_copy_]->peer_socket,
-				   buf_,
-				   write_handler<OwnedConstBufferSequence>(this, buf_));
-	}
-      };
-      
-      template<typename OwnedConstBufferSequence>
-      void send_owned_buffer(endpoint ep, const std::string & addr, OwnedConstBufferSequence && buf)
-      {
-	BOOST_LOG_TRIVIAL(trace) << "Entering asio_tcp_communicator::send on " << endpoint_;
-	// TODO: Make sure at most one send outstanding on each socket?
-	auto sit = sockets_.find(addr);
-	if (sit == sockets_.end()) {
-	  // Only handling v4 addresses
-	  auto pos = addr.find_last_of(':');
-	  auto v4address = boost::asio::ip::address_v4::from_string(addr.substr(0, pos));
-	  auto port = boost::lexical_cast<unsigned short>(addr.substr(pos+1));
-	  auto ins_it = sockets_.emplace(addr, std::shared_ptr<communicator_peer>(new communicator_peer(io_service_)));
-	  const std::string & addr_copy(ins_it.first->first);
-	  ins_it.first->second->peer_endpoint.address(v4address);
-	  ins_it.first->second->peer_endpoint.port(port);	  
-	  ins_it.first->second->peer_socket.async_connect(sockets_[addr]->peer_endpoint, connect_and_write_handler<OwnedConstBufferSequence>(this, buf, addr_copy));	  
-	} else {
-	  BOOST_LOG_TRIVIAL(debug) << "asio_tcp_communicator " << endpoint_ << " sending " << boost::asio::buffer_size(buf) <<
-	    " bytes for operation " << boost::asio::buffer_cast<const rpc_header *>(buf)->operation <<
-	    " to " << sit->second->peer_endpoint;
-	  boost::asio::async_write(sit->second->peer_socket,
-				   buf,
-				   write_handler<OwnedConstBufferSequence>(this, buf));
-	}
-	BOOST_LOG_TRIVIAL(trace) << "Exiting asio_tcp_communicator::send on " << endpoint_;
-      }      
 
       template<typename ConstBufferSequence>
-      void send_buffer(endpoint ep, const std::string & addr, ConstBufferSequence buf)
+      void send_buffer(endpoint ep, const std::string & addr, ConstBufferSequence buf, raft::util::call_on_delete && deleter)
       {
 	BOOST_LOG_TRIVIAL(trace) << "Entering asio_tcp_communicator::send on " << endpoint_;
 	// TODO: Make sure at most one send outstanding on each socket?
@@ -331,107 +181,66 @@ namespace raft {
 	  ins_it.first->second->peer_endpoint.address(v4address);
 	  ins_it.first->second->peer_endpoint.port(port);	  
 	  ins_it.first->second->peer_socket.async_connect(sockets_[addr]->peer_endpoint,
-							  [this, buf, addr_copy](boost::system::error_code ec) mutable {
+							  [this, buf, addr_copy, deleter = std::move(deleter)](boost::system::error_code ec) mutable {
 							    if (ec) {
 							      BOOST_LOG_TRIVIAL(warning) << "asio_tcp_communicator " << endpoint_ << " failed to connect to " << addr_copy <<
 								": " << ec;
-							      for(auto b : buf) {
-								delete [] boost::asio::buffer_cast<const uint8_t *>(b);
-							      }
 							      return;
 							    }
 							    BOOST_LOG_TRIVIAL(info) << "asio_tcp_communicator " << endpoint_ << " connected to " << addr_copy;
 							    BOOST_LOG_TRIVIAL(debug) << "asio_tcp_communicator " << endpoint_ << " sending " << boost::asio::buffer_size(buf) <<
-							      " bytes for operation " << boost::asio::buffer_cast<const rpc_header *>(buf)->operation <<
+							      " bytes for operation " << reinterpret_cast<const rpc_header *>(buf[0].data())->operation <<
 							      " to " << sockets_[addr_copy]->peer_endpoint;
 							    boost::asio::async_write(this->sockets_[addr_copy]->peer_socket,
 										     buf,
-										     [buf](boost::system::error_code ec, std::size_t bytes_transferred) {
-										       for(auto b : buf) {
-											 delete [] boost::asio::buffer_cast<const uint8_t *>(b);
-										       }
+										     [buf, deleter = std::move(deleter)](boost::system::error_code ec, std::size_t bytes_transferred) {
 										     });
 						    });
 	  
 	} else {
 	  BOOST_LOG_TRIVIAL(debug) << "asio_tcp_communicator " << endpoint_ << " sending " << boost::asio::buffer_size(buf) <<
-	    " bytes for operation " << boost::asio::buffer_cast<const rpc_header *>(buf)->operation <<
-	    " to " << sit->second->peer_endpoint;
+	      " bytes for operation " << reinterpret_cast<const rpc_header *>(buf[0].data())->operation <<
+	      " to " << sit->second->peer_endpoint;
 	  boost::asio::async_write(sit->second->peer_socket,
 				   buf,
-				   [buf](boost::system::error_code ec, std::size_t bytes_transferred) {
-				     for(auto b : buf) {
-				       delete [] boost::asio::buffer_cast<const uint8_t *>(b);
-				     }
+				   [buf, deleter = std::move(deleter)](boost::system::error_code ec, std::size_t bytes_transferred) {
 				   });
 	}
 	BOOST_LOG_TRIVIAL(trace) << "Exiting asio_tcp_communicator::send on " << endpoint_;
       }      
     };
 
+    template<typename _Builders, typename _Serialization>
     struct asio_tcp_communicator_metafunction
     {
       template <typename _Messages>
       struct apply
       {
-	typedef asio_tcp_communicator<_Messages> type;
+	typedef asio_tcp_communicator<_Messages, _Builders, _Serialization> type;
       };
     };
-
-    struct native_client_metafunction
-    {
-      template <typename _Messages>
-      struct apply
-      {
-	typedef raft::native::client<_Messages> type;
-      };
-    };
-
-    typedef raft::protocol<asio_tcp_communicator_metafunction, native_client_metafunction, raft::native::messages> raft_protocol_type;
     
+    template<typename _Dispatcher>
     class raft_receiver
     {
-    private:
+    public:
+      typedef _Dispatcher dispatcher_type;
+    protected:
       boost::asio::ip::tcp::socket socket_;
       boost::asio::ip::tcp::endpoint endpoint_;
-      std::array<uint8_t, 128*1024> buffer_;
-      raft_protocol_type & protocol_;
+      rpc_header header_;
+      uint8_t * buffer_;
+      raft::util::call_on_delete deleter_;
+      dispatcher_type dispatcher_;
 
       
-      void dispatch(const rpc_header & header, boost::asio::const_buffer buf)
+      void dispatch(boost::asio::const_buffer buf)
       {
-	switch(header.operation) {
-	case 0:
-	  {
-	    raft::native::request_vote req;
-	    serialization::deserialize(buf, req);
-	    protocol_.on_request_vote(std::move(req));
-	    break;
-	  }
-	case 1:
-	  {
-	    raft::native::vote_response resp;
-	    serialization::deserialize(buf, resp);
-	    protocol_.on_vote_response(std::move(resp));
-	    break;
-	  }
-	case 2:
-	  {
-	    raft::native::messages::append_entry_type req;
-	    serialization::deserialize(buf, req);
-	    protocol_.on_append_entry(std::move(req));
-	    break;
-	  }
-	case 3:
-	  {
-	    raft::native::messages::append_entry_response_type req;
-	    serialization::deserialize(buf, req);
-	    protocol_.on_append_response(std::move(req));
-	    break;
-	  }
-	default:
-	  BOOST_LOG_TRIVIAL(warning) << "raft_receiver at " << endpoint_ << " received unsupported operation " << header.operation;
-	  break;
+	uint16_t op = header_.operation;
+	dispatcher_(op, buf, std::move(deleter_));
+	if (!deleter_) {
+	  buffer_ = new uint8_t [1024*128];
+	  deleter_ = [ptr = buffer_](){ delete [] ptr; };
 	}
       }
 
@@ -441,11 +250,13 @@ namespace raft {
 	  // TODO: handle error
 	  return;
 	}
-	BOOST_LOG_TRIVIAL(trace) << "raft_receiver at " << endpoint_ << " handle_header_read";
-	dispatch(*reinterpret_cast<const rpc_header *>(&buffer_[0]),
-		 boost::asio::const_buffer(&buffer_[sizeof(rpc_header)], bytes_transferred));
+        
+	BOOST_LOG_TRIVIAL(trace) << "raft_receiver at " << endpoint_ << " handle_body_read : " << raft::slice(&buffer_[0], bytes_transferred);
+	dispatch(boost::asio::const_buffer(&buffer_[0], bytes_transferred));
+	header_.magic = rpc_header::POISON;
+	header_.payload_length = 0;
 	boost::asio::async_read(socket_,
-				boost::asio::buffer(&buffer_[0], sizeof(rpc_header)),
+				boost::asio::buffer(&header_, sizeof(rpc_header)),
 				std::bind(&raft_receiver::handle_header_read, this, std::placeholders::_1, std::placeholders::_2));
       }
 
@@ -455,40 +266,244 @@ namespace raft {
 	  // TODO: handle error
 	  return;
 	}
-	BOOST_LOG_TRIVIAL(trace) << "raft_receiver at " << endpoint_ << " handle_header_read";
+	BOOST_LOG_TRIVIAL(trace) << "raft_receiver at " << endpoint_ << " handle_header_read : "  << raft::slice(reinterpret_cast<const uint8_t *>(&header_), bytes_transferred);
 	BOOST_ASSERT(bytes_transferred == sizeof(rpc_header));
-	rpc_header * header = reinterpret_cast<rpc_header *>(&buffer_[0]);
-	BOOST_ASSERT(header->magic == rpc_header::MAGIC);
-	BOOST_ASSERT(header->payload_length > 0);
+	BOOST_ASSERT(header_.magic == rpc_header::MAGIC);
+	BOOST_ASSERT(header_.payload_length > 0);
 	boost::asio::async_read(this->socket_,
-				boost::asio::buffer(&buffer_[sizeof(rpc_header)], header->payload_length),
+				boost::asio::buffer(&buffer_[0], header_.payload_length),
 				std::bind(&raft_receiver::handle_body_read, this, std::placeholders::_1, std::placeholders::_2));
       }
       
     public:
-      raft_receiver(boost::asio::ip::tcp::socket && s, boost::asio::ip::tcp::endpoint && e, raft_protocol_type & protocol)
+      raft_receiver(boost::asio::ip::tcp::socket && s, boost::asio::ip::tcp::endpoint && e, dispatcher_type && dispatcher)
 	:
 	socket_(std::move(s)),
 	endpoint_(std::move(e)),
-	protocol_(protocol)
+	buffer_(new uint8_t [1024*128]),
+	deleter_([ptr = buffer_](){ delete [] ptr; }),
+	dispatcher_(std::move(dispatcher))
       {
+	header_.magic = rpc_header::POISON;
+	header_.payload_length = 0;
 	boost::asio::async_read(socket_,
-				boost::asio::buffer(&buffer_[0], sizeof(rpc_header)),
+				boost::asio::buffer(&header_, sizeof(rpc_header)),
 				std::bind(&raft_receiver::handle_header_read, this, std::placeholders::_1, std::placeholders::_2));
       }
     };
 
+    template<typename _Messages, typename _Builders, typename _Serialization, typename _Protocol, typename _Client>
+    class client_dispatcher
+    {
+    public:
+      typedef serialization<_Messages, _Serialization> serialization_type;
+      typedef _Messages messages_type;
+      typedef _Builders builders_type;
+      typedef _Protocol protocol_type;
+      typedef _Client client_type;
+    private:
+      protocol_type & protocol_;
+      client_type * client_;
+    public:
+      client_dispatcher(protocol_type & protocol)
+    	:
+    	protocol_(protocol),
+    	client_(nullptr)
+      {
+      }
+      void set_client(client_type * client)
+      {
+	client_ = client;
+      }
+      void operator()(uint16_t op, boost::asio::const_buffer buf, raft::util::call_on_delete && deleter)
+      {
+    	switch(op) {
+    	case 4:
+    	  {
+    	    protocol_.on_client_request(*client_, serialization_type::deserialize_client_request(buf, std::move(deleter)));
+    	    break;
+    	  }
+    	case 6:
+    	  {
+    	    protocol_.on_set_configuration(*client_, serialization_type::deserialize_set_configuration_request(buf, std::move(deleter)));
+    	    break;
+    	  }
+    	default:
+    	  BOOST_LOG_TRIVIAL(warning) << "client_dispatcher received unsupported operation " << op;
+    	  break;
+    	}
+      }
+    };
+
+    // Ugh since client depends on the protocol type and protocol depends on the client type
+    // I have to break the cycle.   There are some pure template solutions out there but they
+    // seem to rely on partial specializaiton which entails copying a ton of code so I am using
+    // inheritence here.   TODO: think about this some more
+    template<typename _Messages>
+    class raft_client_base
+    {
+    public:
+      typedef typename _Messages::client_result_type client_result_type;
+      virtual void on_client_response(client_result_type result,
+				      uint64_t index,
+				      std::size_t leader_id) = 0;
+      virtual void on_configuration_response(client_result_type result) = 0;
+      virtual void on_configuration_response(client_result_type result, const std::vector<std::pair<uint64_t, std::string>> & bad_servers) = 0;
+    };
+    
+    struct raft_client_metafunction
+    {
+      template <typename _Messages>
+      struct apply
+      {
+	typedef raft_client_base<_Messages> type;
+      };
+    };
+
+    // This is both a client communicator and receiver
+    template<typename _Messages, typename _Builders, typename _Serialization, typename _Protocol>
+    class raft_client : public raft_receiver<client_dispatcher<_Messages, _Builders, _Serialization, _Protocol, raft_client<_Messages, _Builders, _Serialization, _Protocol>>>, public raft_client_base<_Messages>
+    {
+    public:
+      typedef client_dispatcher<_Messages, _Builders, _Serialization, _Protocol, raft_client<_Messages, _Builders, _Serialization, _Protocol>> dispatcher_type;
+      typedef typename dispatcher_type::messages_type::client_result_type client_result_type;
+      typedef typename dispatcher_type::serialization_type serialization_type;
+      typedef typename dispatcher_type::builders_type::client_response_builder_type client_response_builder;
+      typedef typename dispatcher_type::builders_type::set_configuration_response_builder_type set_configuration_response_builder;
+      raft_client(boost::asio::ip::tcp::socket && s, boost::asio::ip::tcp::endpoint && e, dispatcher_type && dispatcher)
+	:
+	raft_receiver<dispatcher_type>(std::move(s), std::move(e), std::move(dispatcher))
+      {
+	// This is grotesque; set the dispatcher to know that this is the client
+	this->dispatcher_.set_client(this);
+      }
+
+      template<typename _T>
+      void send(_T && msg)
+      {
+	  uint8_t * mem = new uint8_t [128*1024];
+	  auto buf = serialization_type::serialize(boost::asio::buffer(mem, 128*1024), std::move(msg));
+	  BOOST_LOG_TRIVIAL(debug) << "raft_client sending " << boost::asio::buffer_size(buf.first) <<
+	      " bytes for operation " << reinterpret_cast<const rpc_header *>(buf.first[0].data())->operation <<
+	      " to " << this->endpoint_;
+	  boost::asio::async_write(this->socket_,
+				   buf.first,
+				   [deleter = std::move(buf.second)](boost::system::error_code ec, std::size_t bytes_transferred) {
+				   });
+      }
+
+      void on_client_response(client_result_type result,
+			      uint64_t index,
+			      std::size_t leader_id) override
+      {
+	auto resp = client_response_builder().result(result).index(index).leader_id(leader_id).finish();
+	send(std::move(resp));
+      }
+
+      void on_configuration_response(client_result_type result) override
+      {
+	auto resp = set_configuration_response_builder().result(result).finish();
+	send(std::move(resp));
+      }
+    
+      void on_configuration_response(client_result_type result, const std::vector<std::pair<uint64_t, std::string>> & bad_servers) override
+      {
+        set_configuration_response_builder bld;
+	bld.result(result);
+	{
+	  auto scdb = bld.bad_servers();
+	  for(const auto & bs : bad_servers) {
+	    scdb.server().id(bs.first).address(bs.second.c_str());
+	  }
+	}
+	auto resp = bld.finish();
+	send(std::move(resp));	
+      }
+    };
+
+    template<typename _Messages, typename _Builders, typename _Serialization>
+    struct raft_protocol_type_builder
+    {
+      typedef raft::protocol<asio_tcp_communicator_metafunction<_Builders, _Serialization>, raft_client_metafunction, _Messages> type;
+    };
+
+    template<typename _Messages, typename _Builders, typename _Serialization>
+    class peer_dispatcher
+    {
+    public:
+      typedef serialization<_Messages, _Serialization> serialization_type;
+      typedef typename raft_protocol_type_builder<_Messages, _Builders, _Serialization>::type raft_protocol_type;
+    private:
+      raft_protocol_type & protocol_;      
+    public:
+      peer_dispatcher(raft_protocol_type & protocol)
+	:
+	protocol_(protocol)
+      {
+      }
+      void operator()(uint16_t op, boost::asio::const_buffer buf, raft::util::call_on_delete && deleter)
+      {
+	switch(op) {
+	case 0:
+	  {
+	    protocol_.on_request_vote(serialization_type::deserialize_request_vote(buf, std::move(deleter)));
+	    break;
+	  }
+	case 1:
+	  {
+	    protocol_.on_vote_response(serialization_type::deserialize_vote_response(buf, std::move(deleter)));
+	    break;
+	  }
+	case 2:
+	  {
+	    protocol_.on_append_entry(serialization_type::deserialize_append_entry(buf, std::move(deleter)));
+	    break;
+	  }
+	case 3:
+	  {
+	    protocol_.on_append_response(serialization_type::deserialize_append_entry_response(buf, std::move(deleter)));
+	    break;
+	  }
+	case 9:
+	  {
+	    protocol_.on_append_checkpoint_chunk(serialization_type::deserialize_append_checkpoint_chunk(buf, std::move(deleter)));
+	    break;
+	  }
+	case 10:
+	  {
+	    protocol_.on_append_checkpoint_chunk_response(serialization_type::deserialize_append_checkpoint_chunk_response(buf, std::move(deleter)));
+	    break;
+	  }
+	default:
+	  BOOST_LOG_TRIVIAL(warning) << "peer_dispatcher received unsupported operation " << op;
+	  break;
+	}
+      }
+    };
+    
+    template<typename _Messages, typename _Builders, typename _Serialization>
     class tcp_server : public raft::log_header_write
     {
+    public:
+      typedef typename _Messages::log_entry_type log_entry_type;
+      typedef serialization<_Messages, _Serialization> serialization_type;
+      typedef peer_dispatcher<_Messages, _Builders, _Serialization> peer_dispatcher_type;
+      typedef raft_receiver<peer_dispatcher_type> peer_receiver_type;
+      typedef typename raft_protocol_type_builder<_Messages, _Builders, _Serialization>::type raft_protocol_type;
+      typedef raft_client<_Messages, _Builders, _Serialization, raft_protocol_type> raft_client_type;
     private:
       boost::asio::io_service & io_service_;
       boost::asio::deadline_timer timer_;
 
       // Network Infrastructure
-      boost::asio::ip::tcp::acceptor listener_;
-      boost::asio::ip::tcp::socket listen_socket_;
-      boost::asio::ip::tcp::endpoint listen_endpoint_;
-      std::vector<std::shared_ptr<raft_receiver>> receivers_;
+      boost::asio::ip::tcp::acceptor peer_listener_;
+      boost::asio::ip::tcp::socket peer_listen_socket_;
+      boost::asio::ip::tcp::endpoint peer_listen_endpoint_;
+      std::vector<std::shared_ptr<peer_receiver_type>> receivers_;
+      boost::asio::ip::tcp::acceptor client_listener_;
+      boost::asio::ip::tcp::socket client_listen_socket_;
+      boost::asio::ip::tcp::endpoint client_listen_endpoint_;
+      std::set<std::unique_ptr<raft_client_type>> clients_;
 
       // Log Disk Infrastructure
       int log_header_fd_;
@@ -502,11 +517,10 @@ namespace raft {
       uint64_t last_log_index_written_;
       bool log_sync_in_progress_;
 
-      raft_protocol_type::communicator_type comm_;
-      raft_protocol_type::client_type c_;
-      raft_protocol_type::log_type l_;
-      raft_protocol_type::checkpoint_data_store_type store_;
-      raft_protocol_type::configuration_manager_type config_manager_;
+      typename raft_protocol_type::communicator_type comm_;
+      typename raft_protocol_type::log_type l_;
+      typename raft_protocol_type::checkpoint_data_store_type store_;
+      typename raft_protocol_type::configuration_manager_type config_manager_;
       std::shared_ptr<raft_protocol_type> protocol_;
 
       void handle_timer(boost::system::error_code ec)
@@ -524,9 +538,12 @@ namespace raft {
 	      last_log_index_written_ = l_.start_index();
 	    }
 	    for(;last_log_index_written_ < l_.last_index(); ++last_log_index_written_) {
-	      auto serialize_buf = serialization::serialize(boost::asio::buffer(tmp_buf), l_.entry(last_log_index_written_));
-	      log_writer_->append_record(boost::asio::buffer_cast<const uint8_t *>(serialize_buf),
-					 boost::asio::buffer_size(serialize_buf));
+	      auto serialize_bufs = serialization_type::serialize(boost::asio::buffer(tmp_buf), l_.entry(last_log_index_written_));
+	      for(auto it = boost::asio::buffer_sequence_begin(serialize_bufs.first), e = boost::asio::buffer_sequence_end(serialize_bufs.first);
+		  it != e; ++it) {
+		log_writer_->append_record(boost::asio::buffer_cast<const uint8_t *>(*it),
+					   boost::asio::buffer_size(*it));
+	      }
 	    }
 
 	    // Sync to disk and let the protocol know when it's done
@@ -543,30 +560,48 @@ namespace raft {
 	}
       }
       
-      void handle_accept(boost::system::error_code ec)
+      void peer_handle_accept(boost::system::error_code ec)
       {
 	if (ec) {
 	  BOOST_LOG_TRIVIAL(warning) << "raft::asio::tcp_server failed accepting connection: " << ec;
 	  return;
 	}
 	
-	BOOST_LOG_TRIVIAL(info) << "raft::asio::tcp_server got connection on " << listen_endpoint_;
-	receivers_.push_back(std::make_shared<raft_receiver>(std::move(listen_socket_), std::move(listen_endpoint_), *protocol_.get()));
-	BOOST_LOG_TRIVIAL(info) << "raft::asio::tcp_server listening on " << listener_.local_endpoint();
-	listener_.async_accept(listen_socket_, listen_endpoint_,
-			       std::bind(&tcp_server::handle_accept, this, std::placeholders::_1));
+	BOOST_LOG_TRIVIAL(info) << "Server(" << config_manager_.configuration().my_cluster_id() << ") raft::asio::tcp_server got connection on " << peer_listen_endpoint_;
+	receivers_.push_back(std::make_shared<peer_receiver_type>(std::move(peer_listen_socket_), std::move(peer_listen_endpoint_), *protocol_.get()));
+	BOOST_LOG_TRIVIAL(info) << "Server(" << config_manager_.configuration().my_cluster_id() << ") raft::asio::tcp_server listening on " << peer_listener_.local_endpoint();
+	peer_listener_.async_accept(peer_listen_socket_, peer_listen_endpoint_,
+			       std::bind(&tcp_server::peer_handle_accept, this, std::placeholders::_1));
       }
+
+      void client_handle_accept(boost::system::error_code ec)
+      {
+	if (ec) {
+	  BOOST_LOG_TRIVIAL(warning) << "raft::asio::tcp_server failed accepting connection: " << ec;
+	  return;
+	}
+	
+	BOOST_LOG_TRIVIAL(info) << "Server(" << config_manager_.configuration().my_cluster_id() << ") raft::asio::tcp_server got connection on " << client_listen_endpoint_;
+	clients_.insert(std::make_unique<raft_client_type>(std::move(client_listen_socket_), std::move(client_listen_endpoint_), *protocol_.get()));
+	BOOST_LOG_TRIVIAL(info) << "Server(" << config_manager_.configuration().my_cluster_id() << ") raft::asio::tcp_server listening on " << client_listener_.local_endpoint();
+	client_listener_.async_accept(client_listen_socket_, client_listen_endpoint_,
+			       std::bind(&tcp_server::client_handle_accept, this, std::placeholders::_1));
+      }
+
     public:
       tcp_server(boost::asio::io_service & ios,
 		 uint64_t server_id,
 		 const boost::asio::ip::tcp::endpoint & e,
-		 const raft::native::simple_configuration_description & config,
+		 const boost::asio::ip::tcp::endpoint & client_endpoint,
+		 std::pair<const log_entry_type *, raft::util::call_on_delete> && config,
 		 const std::string & log_directory)
 	:
 	io_service_(ios),
 	timer_(io_service_),
-	listener_(io_service_, e),
-	listen_socket_(io_service_),
+	peer_listener_(io_service_, e),
+	peer_listen_socket_(io_service_),
+	client_listener_(io_service_, client_endpoint),
+	client_listen_socket_(io_service_),
 	comm_(io_service_, e),
 	config_manager_(server_id),
 	last_log_index_synced_(0),
@@ -578,14 +613,14 @@ namespace raft {
 	log_header_file += std::string("/log_header.bin");
 	log_header_fd_ = ::open(log_header_file.c_str(), O_CREAT | O_WRONLY);
 	if (-1 == log_header_fd_) {
-	  BOOST_LOG_TRIVIAL(error) << "Failed to open log header file " << log_header_file << ": " << ::strerror(errno);
+	  BOOST_LOG_TRIVIAL(error) << "Server(" << config_manager_.configuration().my_cluster_id() << ") Failed to open log header file " << log_header_file << ": " << ::strerror(errno);
 	}
 	log_header_file_.reset(new basic_file_object<disk_io_service>(io_service_, log_header_fd_));
 	std::string log_file(log_directory);
 	log_file += std::string("/log.bin");
 	log_fd_ = ::open(log_file.c_str(), O_CREAT | O_WRONLY | O_APPEND);
 	if (-1 == log_fd_) {
-	  BOOST_LOG_TRIVIAL(error) << "Failed to open log header file " << log_file << ": " << ::strerror(errno);
+	  BOOST_LOG_TRIVIAL(error) << "Server(" << config_manager_.configuration().my_cluster_id() << ") Failed to open log header file " << log_file << ": " << ::strerror(errno);
 	}
 	
 	log_file_.reset(new raft::asio::writable_file(io_service_, log_fd_));
@@ -594,12 +629,7 @@ namespace raft {
 	// Set sync callback in the log (TODO: Fix this is dumb way of doing things)
 	l_.set_log_header_writer(this);
 
-	// TODO: Make this work with flatbuffers
-	auto entry = new raft_protocol_type::log_entry_type();
-	entry->type = raft_protocol_type::log_entry_type::CONFIGURATION;
-	entry->term = 0;
-	entry->configuration.from = config;
-	l_.append(std::pair<const raft_protocol_type::log_entry_type *, std::function<void()>>(entry, [entry]() { delete entry; }));
+	l_.append(std::move(config));
 	l_.update_header(0, raft_protocol_type::INVALID_PEER_ID);
 	protocol_.reset(new raft_protocol_type(comm_, l_, store_, config_manager_));
 
@@ -609,10 +639,14 @@ namespace raft {
 
 	// Setup listener for interprocess communication
 	if (config_manager_.configuration().includes_self()) {
-	  BOOST_LOG_TRIVIAL(info) << "Server(" << config_manager_.configuration().my_cluster_id() << ") raft::asio::tcp_server listening on " << listener_.local_endpoint();
-	  // TODO: Handle v6, selecting a specific interface on multihomed servers
-	  listener_.async_accept(listen_socket_, listen_endpoint_,
-				  std::bind(&tcp_server::handle_accept, this, std::placeholders::_1));
+	  // TODO: Handle v6
+	  BOOST_LOG_TRIVIAL(info) << "Server(" << config_manager_.configuration().my_cluster_id() << ") raft::asio::tcp_server listening for peers on " << peer_listener_.local_endpoint();
+	  peer_listener_.async_accept(peer_listen_socket_, peer_listen_endpoint_,
+				  std::bind(&tcp_server::peer_handle_accept, this, std::placeholders::_1));
+	  // TODO: Handle v6
+	  BOOST_LOG_TRIVIAL(info) << "Server(" << config_manager_.configuration().my_cluster_id() << ") raft::asio::tcp_server listening for clients on " << client_listener_.local_endpoint();
+	  client_listener_.async_accept(client_listen_socket_, client_listen_endpoint_,
+				  std::bind(&tcp_server::client_handle_accept, this, std::placeholders::_1));
 	}
       }
 
@@ -620,7 +654,7 @@ namespace raft {
       {
 	// Use error code to prevent exception
 	boost::system::error_code ec;
-	listener_.close(ec);
+	peer_listener_.close(ec);
 
 	::close(log_header_fd_);
 	::close(log_fd_);

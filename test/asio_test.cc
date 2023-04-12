@@ -9,11 +9,15 @@
 #include <boost/log/expressions.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/log/sinks/text_file_backend.hpp>
+#include <boost/mpl/list.hpp>
 
 #include "asio/asio_server.hh"
 #include "asio/asio_block_device.hh"
 #include "leveldb_log.hh"
 #include "native/messages.hh"
+#include "native/serialization.hh"
+#include "flatbuffers/raft_flatbuffer_messages.hh"
+#include "flatbuffers/serialization.hh"
 #include "posix_file.hh"
 #include "protocol.hh"
 
@@ -245,50 +249,102 @@ BOOST_AUTO_TEST_CASE(LevelDBMiddleFragmentManySlicesTest)
   }
 }
 
-BOOST_AUTO_TEST_CASE(RaftAsioSerializationTest)
+// Test types corresponding to native and flatbuffers
+class native_test_type
 {
-  raft::native::messages::append_entry_type msg;
-  msg.recipient_id = 9032345;
-  msg.term_number = 99234;
-  msg.leader_id = 23445234;
-  msg.previous_log_index = 734725345;
-  msg.previous_log_term = 3492385345;
-  msg.leader_commit_index = 3483458;
-  raft::native::messages::append_entry_type::log_entry_type e;
-  e.term = 93443434542;
-  e.type = raft::native::messages::append_entry_type::log_entry_type::COMMAND;
-  e.data = "fjasdjfa;sldfjalsdjfldskfjsdlkfjasldfjl";
-  msg.entry.push_back(std::move(e));
-  e.term = 93443434534;
-  e.type = raft::native::messages::append_entry_type::log_entry_type::CONFIGURATION;
-  raft::native::server_description s;
-  s.id = 333334323;
-  s.address = "127.0.0.1:7777";
-  e.configuration.from.servers.push_back(std::move(s));
-  msg.entry.push_back(std::move(e));
+public:
+  typedef raft::native::messages messages_type;
+  typedef raft::native::builders builders_type;
+  typedef raft::native::serialization serialization_type;
+};
 
-  std::array<uint8_t, 64*1024> buf;
-  auto result = raft::asio::serialization::serialize(boost::asio::buffer(buf), msg);
-  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result);
-  BOOST_CHECK_EQUAL(2U, header->operation);
-  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result), header->payload_length+sizeof(raft::asio::rpc_header));
-  raft::native::messages::append_entry_type msg1;
-  raft::asio::serialization::deserialize(result+sizeof(raft::asio::rpc_header), msg1);
-  BOOST_CHECK_EQUAL(msg.recipient_id, msg1.recipient_id);
-  BOOST_CHECK_EQUAL(2U, msg1.entry.size());
+class flatbuffers_test_type
+{
+public:
+  typedef raft::fbs::messages messages_type;
+  typedef raft::fbs::builders builders_type;
+  typedef raft::fbs::serialization serialization_type;
+};
+
+// typedef boost::mpl::list<flatbuffers_test_type> test_types;
+typedef boost::mpl::list<native_test_type, flatbuffers_test_type> test_types;
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftVoteResponseSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::vote_response_traits_type vote_response_traits;
+  typedef typename _TestType::builders_type::vote_response_builder_type vote_response_builder;
+  typedef typename _TestType::serialization_type serialization_type;
+  
+  auto msg = vote_response_builder().peer_id(1).term_number(1).request_term_number(1).granted(false).finish();
+
+  auto result = serialization_type::serialize(std::move(msg));
+
+  auto msg2 = serialization_type::deserialize_vote_response(std::move(result));
+  BOOST_CHECK_EQUAL(1U, vote_response_traits::peer_id(msg2));
+  BOOST_CHECK_EQUAL(1U, vote_response_traits::term_number(msg2));
+  BOOST_CHECK_EQUAL(1U, vote_response_traits::request_term_number(msg2));
+  BOOST_CHECK(!vote_response_traits::granted(msg2));
 }
 
-BOOST_AUTO_TEST_CASE(RaftAsioTest)
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioSerializationTest, _TestType, test_types)
 {
+  typedef typename _TestType::messages_type::append_entry_traits_type append_entry_traits;
+  typedef typename _TestType::builders_type::append_entry_builder_type append_entry_builder;
+  typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  
+  log_entry_builder leb1;
+  {	
+    auto cb = leb1.term(0).configuration();
+    cb.from().server().id(333334323).address("127.0.0.1:7777");
+    cb.to();
+  }
+  auto le1 = leb1.finish();
+  auto le2 = log_entry_builder().term(93443434542).data("fjasdjfa;sldfjalsdjfldskfjsdlkfjasldfjl").finish();
+
+  uint64_t recipient_id = 9032345;
+  auto msg = append_entry_builder().recipient_id(recipient_id).term_number(99234).leader_id(23445234).previous_log_index(734725345).previous_log_term(3492385345).leader_commit_index(3483458).entry(le1).entry(le2).finish();
+
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_CHECK_EQUAL(2U, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg1 = serialization_type::deserialize_append_entry(result.first[1], std::move(result.second));
+  BOOST_CHECK_EQUAL(recipient_id, append_entry_traits::recipient_id(msg1));
+  BOOST_CHECK_EQUAL(2U, append_entry_traits::num_entries(msg1));
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioTest, _TestType, test_types)
+{
+  typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
+  typedef raft::asio::tcp_server<typename _TestType::messages_type, typename _TestType::builders_type, typename _TestType::serialization_type> tcp_server_type;
   boost::asio::io_service ios;
-  raft::native::simple_configuration_description config;
-  config.servers = {{0, "127.0.0.1:9133"}, {1, "127.0.0.1:9134"}, {2, "127.0.0.1:9135"}};
+  auto make_config = []() {
+    log_entry_builder leb;
+    {	
+      auto cb = leb.term(0).configuration();
+      {
+	auto scb = cb.from();
+	scb.server().id(0).address("127.0.0.1:9133");
+	scb.server().id(1).address("127.0.0.1:9134");
+	scb.server().id(2).address("127.0.0.1:9135");
+      }
+      cb.to();
+    }
+    return leb.finish();
+  };
+
+  // 913x ports are for peers to connect to one another
+  // 813x ports are for clients to connect
   boost::asio::ip::tcp::endpoint ep1(boost::asio::ip::tcp::v4(), 9133);
-  raft::asio::tcp_server s1(ios, 0, ep1, config, "/Users/dblair/tmp/raft_log_dir_1");
+  boost::asio::ip::tcp::endpoint cep1(boost::asio::ip::tcp::v4(), 8133);
+  tcp_server_type s1(ios, 0, ep1, cep1, make_config(), (boost::format("%1%/tmp/raft_log_dir_1") % ::getenv("HOME")).str());
   boost::asio::ip::tcp::endpoint ep2(boost::asio::ip::tcp::v4(), 9134);
-  raft::asio::tcp_server s2(ios, 1, ep2, config, "/Users/dblair/tmp/raft_log_dir_2");
+  boost::asio::ip::tcp::endpoint cep2(boost::asio::ip::tcp::v4(), 8134);
+  tcp_server_type s2(ios, 1, ep2, cep2, make_config(), (boost::format("%1%/tmp/raft_log_dir_2") % ::getenv("HOME")).str());
   boost::asio::ip::tcp::endpoint ep3(boost::asio::ip::tcp::v4(), 9135);
-  raft::asio::tcp_server s3(ios, 2, ep3, config, "/Users/dblair/tmp/raft_log_dir_3");
+  boost::asio::ip::tcp::endpoint cep3(boost::asio::ip::tcp::v4(), 8135);
+  tcp_server_type s3(ios, 2, ep3, cep3, make_config(), (boost::format("%1%/tmp/raft_log_dir_3") % ::getenv("HOME")).str());
 
   for(std::size_t i=0; i<1000; ++i) {
     boost::system::error_code ec;
@@ -297,9 +353,6 @@ BOOST_AUTO_TEST_CASE(RaftAsioTest)
   // ios.run();
   
 }
-
-#include "flatbuffers/raft_generated.h"
-#include "flatbuffers/raft_flatbuffer_messages.hh"
 
 BOOST_AUTO_TEST_CASE(CallOnDeleteVectorTest)
 {
