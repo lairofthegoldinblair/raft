@@ -24,6 +24,13 @@
 #define BOOST_TEST_MODULE RaftTests
 #include <boost/test/unit_test.hpp>
 
+// Helper for comparing results
+static int32_t string_slice_compare(std::string_view str, raft::slice && sl)
+{
+  std::string_view tmp(raft::slice::buffer_cast<const char *>(sl), raft::slice::buffer_size(sl));
+  return str.compare(tmp);
+}
+
 BOOST_AUTO_TEST_CASE(LevelDBLogWriterTest)
 {
   raft::posix::writable_file device("raft_test_log.bin");
@@ -312,6 +319,91 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioSerializationTest, _TestType, test_types)
   auto msg1 = serialization_type::deserialize_append_entry(result.first[1], std::move(result.second));
   BOOST_CHECK_EQUAL(recipient_id, append_entry_traits::recipient_id(msg1));
   BOOST_CHECK_EQUAL(2U, append_entry_traits::num_entries(msg1));
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftOpenSessionRequestSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::builders_type::open_session_request_builder_type open_session_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  
+  open_session_builder bld;
+  auto msg = bld.finish();
+
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_CHECK_EQUAL(serialization_type::OPEN_SESSION_REQUEST, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg1 = serialization_type::deserialize_open_session_request(result.first[1], std::move(result.second));
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftOpenSessionResponseSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::open_session_response_traits_type open_session_response_traits;
+  typedef typename _TestType::builders_type::open_session_response_builder_type open_session_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  
+  open_session_builder bld;
+  auto msg = bld.session_id(9975314).finish();
+
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_CHECK_EQUAL(serialization_type::OPEN_SESSION_RESPONSE, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg1 = serialization_type::deserialize_open_session_response(result.first[1], std::move(result.second));
+  BOOST_CHECK_EQUAL(9975314U, open_session_response_traits::session_id(msg1));
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftCloseSessionRequestSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::close_session_request_traits_type close_session_request_traits;
+  typedef typename _TestType::builders_type::close_session_request_builder_type close_session_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  
+  close_session_builder bld;
+  auto msg = bld.session_id(8886234).finish();
+
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_CHECK_EQUAL(serialization_type::CLOSE_SESSION_REQUEST, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg1 = serialization_type::deserialize_close_session_request(result.first[1], std::move(result.second));
+  BOOST_CHECK_EQUAL(8886234U, close_session_request_traits::session_id(msg1));
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftCloseSessionResponseSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::builders_type::close_session_response_builder_type close_session_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  
+  close_session_builder bld;
+  auto msg = bld.finish();
+
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_CHECK_EQUAL(serialization_type::CLOSE_SESSION_RESPONSE, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg1 = serialization_type::deserialize_close_session_response(result.first[1], std::move(result.second));
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftLinearizableCommandSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::linearizable_command_traits_type linearizable_command_traits;
+  typedef typename _TestType::builders_type::linearizable_command_builder_type linearizable_command_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  
+  linearizable_command_builder bld;
+  std::string command_str("This is a command");
+  auto msg = bld.session_id(8886234).first_unacknowledged_sequence_number(62355342).sequence_number(823545).command(raft::slice::create(command_str)).finish();
+
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_CHECK_EQUAL(serialization_type::LINEARIZABLE_COMMAND, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg1 = serialization_type::deserialize_linearizable_command(result.first[1], std::move(result.second));
+  BOOST_CHECK_EQUAL(8886234U, linearizable_command_traits::session_id(msg1));
+  BOOST_CHECK_EQUAL(62355342U, linearizable_command_traits::first_unacknowledged_sequence_number(msg1));
+  BOOST_CHECK_EQUAL(823545U, linearizable_command_traits::sequence_number(msg1));
+  BOOST_CHECK_EQUAL(0, string_slice_compare(command_str, linearizable_command_traits::command(msg1)));
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioTest, _TestType, test_types)

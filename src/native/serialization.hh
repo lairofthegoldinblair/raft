@@ -95,6 +95,36 @@ namespace raft {
       boost::endian::little_uint64_t bytes_stored;
     };
 
+    class little_open_session_request
+    {
+    public:
+    };
+
+    class little_open_session_response
+    {
+    public:
+      boost::endian::little_uint64_t session_id;
+    };    
+
+    class little_close_session_request
+    {
+    public:
+      boost::endian::little_uint64_t session_id;
+    };
+
+    class little_close_session_response
+    {
+    public:
+    };
+
+    class little_linearizable_command
+    {
+    public:
+      boost::endian::little_uint64_t session_id;
+      boost::endian::little_uint64_t first_unacknowledged_sequence_number;
+      boost::endian::little_uint64_t sequence_number;
+    };
+
     class little_checkpoint_header
     {
     public:
@@ -393,6 +423,51 @@ namespace raft {
 	return msg;
       }
     
+      static raft::native::messages::open_session_request_type deserialize_open_session_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	raft::native::messages::open_session_request_type msg;
+	BOOST_ASSERT(b.first.size() >= sizeof(little_open_session_request));
+	return msg;
+      }
+    
+      static raft::native::messages::open_session_response_type deserialize_open_session_response(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	raft::native::messages::open_session_response_type msg;
+	BOOST_ASSERT(b.first.size() >= sizeof(little_open_session_response));
+	auto buf = reinterpret_cast<const little_open_session_response *>(b.first.data());
+	msg.session_id = buf->session_id;
+	return msg;
+      }
+    
+      static raft::native::messages::close_session_request_type deserialize_close_session_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	raft::native::messages::close_session_request_type msg;
+	BOOST_ASSERT(b.first.size() >= sizeof(little_close_session_request));
+	auto buf = reinterpret_cast<const little_close_session_request *>(b.first.data());
+	msg.session_id = buf->session_id;
+	return msg;
+      }
+    
+      static raft::native::messages::close_session_response_type deserialize_close_session_response(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	raft::native::messages::close_session_response_type msg;
+	BOOST_ASSERT(b.first.size() >= sizeof(little_close_session_response));
+	return msg;
+      }
+    
+      static raft::native::messages::linearizable_command_type deserialize_linearizable_command(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	raft::native::messages::linearizable_command_type msg;
+	BOOST_ASSERT(b.first.size() >= sizeof(little_linearizable_command));
+	auto buf = reinterpret_cast<const little_linearizable_command *>(b.first.data());
+	msg.session_id = buf->session_id;
+	msg.first_unacknowledged_sequence_number = buf->first_unacknowledged_sequence_number;
+	msg.sequence_number = buf->sequence_number;
+	std::size_t sz = sizeof(little_linearizable_command);
+	sz += deserialize_helper(b.first+sz, msg.command);
+	return msg;
+      }
+    
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::request_vote_type && msg)
       {
 	auto buf = new little_request_vote();
@@ -520,6 +595,49 @@ namespace raft {
 	buf->bytes_stored = msg.bytes_stored;
 	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_append_checkpoint_chunk_response)),
 								  [buf]() { delete buf; });
+      }
+
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::open_session_request_type && msg)
+      {
+	auto buf = new little_open_session_request();
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_open_session_request)),
+								  [buf]() { delete buf; });
+      }
+
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::open_session_response_type && msg)
+      {
+	auto buf = new little_open_session_response();
+	buf->session_id = msg.session_id;
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_open_session_response)),
+								  [buf]() { delete buf; });
+      }
+
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::close_session_request_type && msg)
+      {
+	auto buf = new little_close_session_request();
+	buf->session_id = msg.session_id;
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_close_session_request)),
+								  [buf]() { delete buf; });
+      }
+
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::close_session_response_type && msg)
+      {
+	auto buf = new little_close_session_response();
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_open_session_response)),
+								  [buf]() { delete buf; });
+      }
+
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::linearizable_command_type && msg)
+      {
+	raft::mutable_slice b(new uint8_t [1024], 1024);
+	auto * buf = reinterpret_cast<little_linearizable_command *>(b.data());
+	buf->session_id = msg.session_id;
+	buf->first_unacknowledged_sequence_number = msg.first_unacknowledged_sequence_number;
+	buf->sequence_number = msg.sequence_number;
+	std::size_t sz = sizeof(little_linearizable_command);
+	sz += serialize_helper(b+sz, msg.command);
+	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
       }
     };
     

@@ -63,6 +63,26 @@ namespace raft {
       {
 	return deserialize(std::move(b));
       }
+      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_open_session_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	return deserialize(std::move(b));
+      }
+      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_open_session_response(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	return deserialize(std::move(b));
+      }
+      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_close_session_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	return deserialize(std::move(b));
+      }
+      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_close_session_response(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	return deserialize(std::move(b));
+      }
+      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_linearizable_command(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	return deserialize(std::move(b));
+      }
 
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(const uint8_t & entry)
       {

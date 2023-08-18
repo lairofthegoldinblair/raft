@@ -557,6 +557,103 @@ namespace raft {
       }
     };
 
+    // These classes are necessary for transforming the at-least-once semantics of
+    // the raw Raft protocol into linearizable semantics
+    class open_session_request
+    {
+    public:
+    };
+
+    class open_session_request_traits
+    {
+    public:
+      typedef open_session_request value_type;
+      typedef open_session_request arg_type;
+      typedef const value_type & const_arg_type;
+    };
+    
+    class open_session_response
+    {
+    public:
+      uint64_t session_id;
+    };
+
+    class open_session_response_traits
+    {
+    public:
+      typedef open_session_response value_type;
+      typedef open_session_response arg_type;
+      typedef const value_type & const_arg_type;
+      static uint64_t session_id(const_arg_type ae)
+      {
+	return ae.session_id;
+      }
+    };
+    
+    class close_session_request
+    {
+    public:
+      uint64_t session_id;
+    };
+
+    class close_session_request_traits
+    {
+    public:
+      typedef close_session_request value_type;
+      typedef close_session_request arg_type;
+      typedef const value_type & const_arg_type;
+      static uint64_t session_id(const_arg_type ae)
+      {
+	return ae.session_id;
+      }
+    };
+    
+    class close_session_response
+    {
+    public:
+    };
+
+    class close_session_response_traits
+    {
+    public:
+      typedef close_session_response value_type;
+      typedef close_session_response arg_type;
+      typedef const value_type & const_arg_type;
+    };
+    
+    class linearizable_command
+    {
+    public:
+      uint64_t session_id;
+      uint64_t first_unacknowledged_sequence_number;
+      uint64_t sequence_number;
+      std::string command;
+    };
+
+    class linearizable_command_traits
+    {
+    public:
+      typedef linearizable_command value_type;
+      typedef linearizable_command arg_type;
+      typedef const value_type & const_arg_type;
+      static uint64_t session_id(const_arg_type ae)
+      {
+	return ae.session_id;
+      }
+      static uint64_t first_unacknowledged_sequence_number(const_arg_type ae)
+      {
+	return ae.first_unacknowledged_sequence_number;
+      }
+      static uint64_t sequence_number(const_arg_type ae)
+      {
+	return ae.sequence_number;
+      }
+      static slice command(const_arg_type ae)
+      {
+	return slice::create(ae.command);
+      }
+    };
+
     template <typename _Description>
     struct log_entry
     {
@@ -724,6 +821,16 @@ namespace raft {
       typedef configuration_checkpoint_traits configuration_checkpoint_traits_type;
       typedef checkpoint_header checkpoint_header_type;
       typedef checkpoint_header_traits checkpoint_header_traits_type;
+      typedef open_session_request open_session_request_type;
+      typedef open_session_request_traits open_session_request_traits_type;
+      typedef open_session_response open_session_response_type;
+      typedef open_session_response_traits open_session_response_traits_type;
+      typedef close_session_request close_session_request_type;
+      typedef close_session_request_traits close_session_request_traits_type;
+      typedef close_session_response close_session_response_type;
+      typedef close_session_response_traits close_session_response_traits_type;
+      typedef linearizable_command linearizable_command_type;
+      typedef linearizable_command_traits linearizable_command_traits_type;
 
       typedef client_result client_result_type;
       static client_result client_result_success() { return SUCCESS; }
@@ -1375,6 +1482,155 @@ namespace raft {
       }
     };
 
+    class open_session_request_builder : public builder_base<open_session_request>
+    {
+    private:
+      std::unique_ptr<std::function<void(open_session_request && )>> finisher_;
+      
+    public:
+      open_session_request_builder() = default;
+
+      template<typename _Function>
+      open_session_request_builder(_Function && finisher)
+	:
+	finisher_(new std::function<void(open_session_request && )>(std::move(finisher)))
+      {
+      }
+      
+      ~open_session_request_builder()
+      {
+	if(finisher_) {
+	  (*finisher_)(finish());
+	}
+      }
+    };
+
+    class open_session_response_builder : public builder_base<open_session_response>
+    {
+    private:
+      std::unique_ptr<std::function<void(open_session_response && )>> finisher_;
+      
+    public:
+      open_session_response_builder() = default;
+
+      template<typename _Function>
+      open_session_response_builder(_Function && finisher)
+	:
+	finisher_(new std::function<void(open_session_response && )>(std::move(finisher)))
+      {
+      }
+      
+      ~open_session_response_builder()
+      {
+	if(finisher_) {
+	  (*finisher_)(finish());
+	}
+      }
+
+      open_session_response_builder & session_id(uint64_t val)
+      {
+	get_object()->session_id = val;
+	return *this;
+      }
+    };
+
+    class close_session_request_builder : public builder_base<close_session_request>
+    {
+    private:
+      std::unique_ptr<std::function<void(close_session_request && )>> finisher_;
+      
+    public:
+      close_session_request_builder() = default;
+
+      template<typename _Function>
+      close_session_request_builder(_Function && finisher)
+	:
+	finisher_(new std::function<void(close_session_request && )>(std::move(finisher)))
+      {
+      }
+      
+      ~close_session_request_builder()
+      {
+	if(finisher_) {
+	  (*finisher_)(finish());
+	}
+      }
+
+      close_session_request_builder & session_id(uint64_t val)
+      {
+	get_object()->session_id = val;
+	return *this;
+      }
+    };
+
+    class close_session_response_builder : public builder_base<close_session_response>
+    {
+    private:
+      std::unique_ptr<std::function<void(close_session_response && )>> finisher_;
+      
+    public:
+      close_session_response_builder() = default;
+
+      template<typename _Function>
+      close_session_response_builder(_Function && finisher)
+	:
+	finisher_(new std::function<void(close_session_response && )>(std::move(finisher)))
+      {
+      }
+      
+      ~close_session_response_builder()
+      {
+	if(finisher_) {
+	  (*finisher_)(finish());
+	}
+      }
+    };
+
+    class linearizable_command_builder : public builder_base<linearizable_command>
+    {
+    private:
+      std::unique_ptr<std::function<void(linearizable_command && )>> finisher_;
+      
+    public:
+      linearizable_command_builder() = default;
+
+      template<typename _Function>
+      linearizable_command_builder(_Function && finisher)
+	:
+	finisher_(new std::function<void(linearizable_command && )>(std::move(finisher)))
+      {
+      }
+      
+      ~linearizable_command_builder()
+      {
+	if(finisher_) {
+	  (*finisher_)(finish());
+	}
+      }
+
+      linearizable_command_builder & session_id(uint64_t val)
+      {
+	get_object()->session_id = val;
+	return *this;
+      }
+      linearizable_command_builder & first_unacknowledged_sequence_number(uint64_t val)
+      {
+	get_object()->first_unacknowledged_sequence_number = val;
+	return *this;
+      }
+      linearizable_command_builder & sequence_number(uint64_t val)
+      {
+	get_object()->sequence_number = val;
+	return *this;
+      }
+      linearizable_command_builder & command(raft::slice && val)
+      {
+	get_object()->command.assign(raft::slice::buffer_cast<const char *>(val),
+				     raft::slice::buffer_size(val));
+	return *this;
+      }
+    };
+
     class builders
     {
     public:
@@ -1389,6 +1645,11 @@ namespace raft {
       typedef set_configuration_request_builder set_configuration_request_builder_type;
       typedef set_configuration_response_builder set_configuration_response_builder_type;
       typedef log_entry_builder log_entry_builder_type;
+      typedef open_session_request_builder open_session_request_builder_type;
+      typedef open_session_response_builder open_session_response_builder_type;
+      typedef close_session_request_builder close_session_request_builder_type;
+      typedef close_session_response_builder close_session_response_builder_type;
+      typedef linearizable_command_builder linearizable_command_builder_type;
     };
 
     // TODO: Develop some usable code for a state_machine

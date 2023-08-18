@@ -622,6 +622,102 @@ namespace raft {
       }
     };
 
+    class open_session_request_traits
+    {
+    public:
+      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
+      typedef const arg_type & const_arg_type;
+      // typedef const raft_message * const_arg_type;    
+    
+      static const raft::fbs::open_session_request * acc(const_arg_type msg)
+      {
+	return msg.first->message_as_open_session_request();
+      }
+    };
+    
+    class open_session_response_traits
+    {
+    public:
+      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
+      typedef const arg_type & const_arg_type;
+      // typedef const raft_message * const_arg_type;    
+    
+      static const raft::fbs::open_session_response * acc(const_arg_type msg)
+      {
+	return msg.first->message_as_open_session_response();
+      }
+    
+      static uint64_t session_id(const_arg_type msg)
+      {
+	return acc(msg)->session_id();
+      }
+    };
+    
+    class close_session_request_traits
+    {
+    public:
+      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
+      typedef const arg_type & const_arg_type;
+      // typedef const raft_message * const_arg_type;    
+    
+      static const raft::fbs::close_session_request * acc(const_arg_type msg)
+      {
+	return msg.first->message_as_close_session_request();
+      }
+    
+      static uint64_t session_id(const_arg_type msg)
+      {
+	return acc(msg)->session_id();
+      }
+    };
+    
+    class close_session_response_traits
+    {
+    public:
+      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
+      typedef const arg_type & const_arg_type;
+      // typedef const raft_message * const_arg_type;    
+    
+      static const raft::fbs::close_session_response * acc(const_arg_type msg)
+      {
+	return msg.first->message_as_close_session_response();
+      }
+    };
+    
+    class linearizable_command_traits
+    {
+    public:
+      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
+      typedef const arg_type & const_arg_type;
+      // typedef const raft_message * const_arg_type;    
+    
+      static const raft::fbs::linearizable_command * acc(const_arg_type msg)
+      {
+	return msg.first->message_as_linearizable_command();
+      }
+    
+      static uint64_t session_id(const_arg_type msg)
+      {
+	return acc(msg)->session_id();
+      }
+    
+      static uint64_t first_unacknowledged_sequence_number(const_arg_type msg)
+      {
+	return acc(msg)->first_unacknowledged_sequence_number();
+      }
+    
+      static uint64_t sequence_number(const_arg_type msg)
+      {
+	return acc(msg)->sequence_number();
+      }
+
+      static slice command(const_arg_type msg)
+      {
+	return slice(reinterpret_cast<const uint8_t *>(acc(msg)->command()->c_str()),
+		     acc(msg)->command()->size());
+      }
+    };
+    
     class messages
     {
     public:
@@ -657,6 +753,17 @@ namespace raft {
       typedef configuration_checkpoint_traits configuration_checkpoint_traits_type;
       typedef checkpoint_header checkpoint_header_type;
       typedef checkpoint_header_traits checkpoint_header_traits_type;
+
+      typedef open_session_request open_session_request_type;
+      typedef open_session_request_traits open_session_request_traits_type;
+      typedef open_session_response open_session_response_type;
+      typedef open_session_response_traits open_session_response_traits_type;
+      typedef close_session_request close_session_request_type;
+      typedef close_session_request_traits close_session_request_traits_type;
+      typedef close_session_response close_session_response_type;
+      typedef close_session_response_traits close_session_response_traits_type;
+      typedef linearizable_command linearizable_command_type;
+      typedef linearizable_command_traits linearizable_command_traits_type;
 
       typedef raft::fbs::client_result client_result_type;
       static raft::fbs::client_result client_result_success() { return raft::fbs::client_result_SUCCESS; }
@@ -1503,6 +1610,120 @@ simple_configuration_description_builder to()
       }
     };
 
+    class open_session_request_builder : public raft_message_builder_base<open_session_request_builder, raft::fbs::open_session_request>
+    {
+    public:
+      void preinitialize()
+      {
+      }
+      
+      void initialize(fbs_builder_type * bld)
+      {
+      }	
+    };
+
+    class open_session_response_builder : public raft_message_builder_base<open_session_response_builder, raft::fbs::open_session_response>
+    {
+    private:
+      uint64_t session_id_ = 0;
+
+    public:
+      void preinitialize()
+      {
+      }
+      
+      void initialize(fbs_builder_type * bld)
+      {
+        bld->add_session_id(session_id_);
+      }	
+
+      open_session_response_builder & session_id(uint64_t val)
+      {
+	session_id_ = val;
+	return *this;
+      }
+    };
+
+    class close_session_request_builder : public raft_message_builder_base<close_session_request_builder, raft::fbs::close_session_request>
+    {
+    private:
+      uint64_t session_id_ = 0;
+
+    public:
+      void preinitialize()
+      {
+      }
+      
+      void initialize(fbs_builder_type * bld)
+      {
+        bld->add_session_id(session_id_);
+      }	
+
+      close_session_request_builder & session_id(uint64_t val)
+      {
+	session_id_ = val;
+	return *this;
+      }
+    };
+
+    class close_session_response_builder : public raft_message_builder_base<close_session_response_builder, raft::fbs::close_session_response>
+    {
+    public:
+      void preinitialize()
+      {
+      }
+      
+      void initialize(fbs_builder_type * bld)
+      {
+      }	
+    };
+
+    class linearizable_command_builder : public raft_message_builder_base<linearizable_command_builder, raft::fbs::linearizable_command>
+    {
+    private:
+      uint64_t session_id_ = 0;
+      uint64_t first_unacknowledged_sequence_number_ = 0;
+      uint64_t sequence_number_ = 0;
+      ::flatbuffers::Offset<::flatbuffers::String> command_;
+    public:
+      void preinitialize()
+      {
+      }
+      
+      void initialize(fbs_builder_type * bld)
+      {
+        bld->add_session_id(session_id_);
+        bld->add_first_unacknowledged_sequence_number(first_unacknowledged_sequence_number_);
+        bld->add_sequence_number(sequence_number_);
+	bld->add_command(command_);
+      }	
+
+      linearizable_command_builder & session_id(uint64_t val)
+      {
+	session_id_ = val;
+	return *this;
+      }
+
+      linearizable_command_builder & first_unacknowledged_sequence_number(uint64_t val)
+      {
+	first_unacknowledged_sequence_number_ = val;
+	return *this;
+      }
+
+      linearizable_command_builder & sequence_number(uint64_t val)
+      {
+	sequence_number_ = val;
+	return *this;
+      }
+
+      linearizable_command_builder & command(raft::slice && val)
+      {
+	command_ = fbb().CreateString(raft::slice::buffer_cast<const char *>(val),
+				      raft::slice::buffer_size(val));
+	return *this;
+      }
+    };
+
     class builders
     {
     public:
@@ -1517,6 +1738,11 @@ simple_configuration_description_builder to()
       typedef set_configuration_request_builder set_configuration_request_builder_type;
       typedef set_configuration_response_builder set_configuration_response_builder_type;
       typedef log_entry_builder log_entry_builder_type;
+      typedef open_session_request_builder open_session_request_builder_type;
+      typedef open_session_response_builder open_session_response_builder_type;
+      typedef close_session_request_builder close_session_request_builder_type;
+      typedef close_session_response_builder close_session_response_builder_type;
+      typedef linearizable_command_builder linearizable_command_builder_type;
     };
 
     template<typename _Communicator>

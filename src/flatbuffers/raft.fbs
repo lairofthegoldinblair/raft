@@ -158,7 +158,33 @@ table set_configuration_response
   bad_servers:simple_configuration_description;
 }
 
-union any_message { request_vote, vote_response, append_entry, append_response, client_request, client_response, set_configuration_request, set_configuration_response, configuration_checkpoint, append_checkpoint_chunk, append_checkpoint_chunk_response }
+table open_session_request
+{
+}
+
+table open_session_response
+{
+  session_id:ulong;
+}
+
+table close_session_request
+{
+  session_id:ulong;
+}
+
+table close_session_response
+{
+}
+
+table linearizable_command
+{
+  session_id:ulong;
+  first_unacknowledged_sequence_number:ulong;
+  sequence_number:ulong;
+  command:string;
+}
+
+union any_message { request_vote, vote_response, append_entry, append_response, client_request, client_response, set_configuration_request, set_configuration_response, configuration_checkpoint, append_checkpoint_chunk, append_checkpoint_chunk_response, open_session_request, open_session_response, close_session_request, close_session_response, linearizable_command }
 
 table raft_message
 {
