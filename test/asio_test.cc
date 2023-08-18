@@ -920,7 +920,7 @@ BOOST_AUTO_TEST_CASE(RaftFlatBufferConstructProtocolTest)
   five_servers.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"},  {4, "192.168.1.5"}};
   test_raft_type::configuration_manager_type cm(0);
   
-  l.append(raft::fbs::log_entry_traits::create_configuration(0, configuration_description_view(five_servers)));
+  l.append(raft::fbs::log_entry_traits::create_configuration(0, 0, configuration_description_view(five_servers)));
   l.update_header(0, test_raft_type::INVALID_PEER_ID);
   test_raft_type proto(comm, l, store, cm);
 

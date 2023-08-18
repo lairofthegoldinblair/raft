@@ -107,12 +107,30 @@ namespace raft {
       return traits_type::term(entries_.at(i - start_index()).first);
     }
 
+    uint64_t cluster_time(index_type i) const
+    {
+      return traits_type::cluster_time(entries_.at(i - start_index()).first);
+    }
+
     /**
      * Only call if !empty().  Returns term(last_index()-1)
      */
     uint64_t last_entry_term() const
     {
       return traits_type::term(entries_.back().first);
+    }
+
+    uint64_t current_time(index_type i) const
+    {
+      return traits_type::current_time(entries_.at(i - start_index()).first);
+    }
+
+    /**
+     * Only call if !empty().  Returns cluster_time(last_index()-1)
+     */
+    uint64_t last_entry_cluster_time() const
+    {
+      return traits_type::cluster_time(entries_.back().first);
     }
 
     /**

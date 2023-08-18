@@ -14,6 +14,63 @@
 
 namespace raft {
 
+  /**
+   * cluster_clock - A consistent cluster-wide clock
+   *
+   * The cluster clock is used as part of the implementation of linearizable semantics.   Part of that implementation
+   * requires that we be able to timeout and garbage collect dead clients.   It is crucial that all protocol instances
+   * agree on when a client is timed out, otherwise state will not be consistent.   
+   *
+   * The intuition behind the cluster_clock is that it represents the number of nanoseconds that there has been a leader
+   * in the cluster.   The cluster_clock is advanced in the leader and is shared among followers in log_entries.   
+   */
+  class cluster_clock
+  {
+  private:
+    // This is the cluster time at the current time point
+    uint64_t cluster_time_;
+    // This is the local time at the current time point
+    std::chrono::steady_clock::time_point local_time_;
+  public:
+
+    cluster_clock(std::chrono::steady_clock::time_point now)
+      :
+      cluster_time_(0),
+      local_time_(now)
+    {
+    }
+    
+    // Set the cluster clock to this cluster_time
+    void set(uint64_t cluster_time,
+             std::chrono::steady_clock::time_point local_now)
+    {
+      cluster_time_ = cluster_time;
+      local_time_ = local_now;
+    }
+
+    // Used for testing purposes not for the algorithm
+    uint64_t cluster_time() const
+    {
+      return cluster_time_;
+    }
+
+    // Advance the cluster_clock and return the current cluster_time
+    uint64_t advance(std::chrono::steady_clock::time_point local_now)
+    {
+      uint64_t elapsed = std::chrono::nanoseconds(local_now - local_time_).count();
+      cluster_time_ += elapsed;
+      local_time_ = local_now;
+      return cluster_time_;
+    }
+
+    // Return the current cluster_time but do not update it
+    uint64_t now(std::chrono::steady_clock::time_point local_now) const
+    {
+      uint64_t elapsed = std::chrono::nanoseconds(local_now - local_time_).count();
+      return cluster_time_ + elapsed;
+    }
+  };
+
   class append_entry_continuation
   {
   public:
@@ -55,6 +112,8 @@ namespace raft {
     uint64_t last_checkpoint_index_;
     // Term of last checkpoint
     uint64_t last_checkpoint_term_;
+    // Cluster time of last checkpoint
+    uint64_t last_checkpoint_cluster_time_;
     // continuations depending on checkpoint sync events
     std::vector<append_checkpoint_chunk_response_continuation > checkpoint_chunk_response_sync_continuations_;
     // Object to manage receiving a new checkpoint from a leader and writing it to a reliable
@@ -69,6 +128,10 @@ namespace raft {
     
     uint64_t last_checkpoint_term() const {
       return last_checkpoint_term_;
+    }
+    
+    uint64_t last_checkpoint_cluster_time() const {
+      return last_checkpoint_cluster_time_;
     }
     
     void sync(const append_checkpoint_chunk_response_continuation & resp) {
@@ -90,6 +153,7 @@ namespace raft {
       :
       last_checkpoint_index_(0),
       last_checkpoint_term_(0),
+      last_checkpoint_cluster_time_(0),
       store_(store)
     {
     }
@@ -223,6 +287,9 @@ namespace raft {
     // State related to checkpoint processing
     server_checkpoint_type checkpoint_;
 
+    // The consistent cluster wide clock
+    cluster_clock cluster_clock_;
+
     // Common log state
     log_type & log_;
 
@@ -285,6 +352,12 @@ namespace raft {
       // of the checkpoint.
       return log_.empty() ? checkpoint_.last_checkpoint_term_ : log_.last_entry_term();
     }
+    uint64_t last_log_entry_cluster_time() const {
+      // Something subtle with snapshots/checkpoints occurs here.  
+      // After a checkpoint we may have no log entries so the cluster time has to be recorded at the time
+      // of the checkpoint.
+      return log_.empty() ? checkpoint_.last_checkpoint_cluster_time_ : log_.last_entry_cluster_time();
+    }
     uint64_t last_log_entry_index() const {
       return log_.last_index();
     }        
@@ -295,12 +368,12 @@ namespace raft {
     // Used by FOLLOWER and CANDIDATE to decide when to initiate a new election.
     std::chrono::time_point<std::chrono::steady_clock> election_timeout_;
 
-    std::chrono::time_point<std::chrono::steady_clock> new_election_timeout() const
+    std::chrono::time_point<std::chrono::steady_clock> new_election_timeout(std::chrono::time_point<std::chrono::steady_clock> clock_now) const
     {
       std::default_random_engine generator;
       std::uniform_int_distribution<std::chrono::milliseconds::rep> dist(election_timeout_min_.count(), 
 									 election_timeout_max_.count());
-      return std::chrono::steady_clock::now() + std::chrono::milliseconds(dist(generator));
+      return clock_now + std::chrono::milliseconds(dist(generator));
     }
 
     std::chrono::time_point<std::chrono::steady_clock> new_heartbeat_timeout(std::chrono::time_point<std::chrono::steady_clock> clock_now) const
@@ -445,6 +518,7 @@ namespace raft {
 	const checkpoint_header_type & header(configuration_.get_checkpoint());
 	BOOST_ASSERT(checkpoint_.last_checkpoint_index_ == checkpoint_header_traits_type::last_log_entry_index(&header));
 	BOOST_ASSERT(checkpoint_.last_checkpoint_term_ == checkpoint_header_traits_type::last_log_entry_term(&header));
+	BOOST_ASSERT(checkpoint_.last_checkpoint_cluster_time_ == checkpoint_header_traits_type::last_log_entry_cluster_time(&header));
 	p.checkpoint_.reset(new peer_checkpoint_type(header, checkpoint_.last_checkpoint()));
       }
 
@@ -479,6 +553,7 @@ namespace raft {
 	" peer.match_index=" << p.match_index_ << " peer.next_index_=" << p.next_index_ <<
 	" checkpoint.last_log_entry_index=" << checkpoint_header_traits_type::last_log_entry_index(&p.checkpoint_->checkpoint_last_header_) <<
 	" checkpoint.last_log_entry_term=" << checkpoint_header_traits_type::last_log_entry_term(&p.checkpoint_->checkpoint_last_header_) <<
+	" checkpoint.last_log_entry_cluster_time=" << checkpoint_header_traits_type::last_log_entry_cluster_time(&p.checkpoint_->checkpoint_last_header_) <<
 	" bytes_sent=" << (p.checkpoint_->data_->block_end(p.checkpoint_->last_block_sent_) -
 			   p.checkpoint_->data_->block_begin(p.checkpoint_->last_block_sent_));
 
@@ -486,7 +561,7 @@ namespace raft {
     }
 
     // Based on log sync and/or append_response try to advance the commit point.
-    void try_to_commit()
+    void try_to_commit(std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       if (state_ != LEADER) {
 	return;
@@ -524,7 +599,7 @@ namespace raft {
 	  if (can_become_follower_at_term(current_term_+1)) {
 	    BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	      " is LEADER and committed log entry with configuration that does not include me.  Becoming FOLLOWER";
-	    become_follower(current_term_+1);
+	    become_follower(current_term_+1, clock_now);
 	    BOOST_ASSERT(log_header_sync_required_);
 	    if (log_header_sync_required_) {
 	      log_.sync_header();
@@ -539,7 +614,7 @@ namespace raft {
 
 	if (configuration().is_transitional()) {
 	  // Log the new stable configuration and get rid of old servers
-	  auto indices = log_.append(log_entry_traits_type::create_configuration(current_term_, configuration().get_stable_configuration()));
+	  auto indices = log_.append(log_entry_traits_type::create_configuration(current_term_, cluster_clock_.advance(clock_now), configuration().get_stable_configuration()));
 	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	    " committed transitional configuration at index " << configuration().configuration_id() << 
 	    ".  Logging new stable configuration at index " << indices.first;
@@ -580,7 +655,7 @@ namespace raft {
     }
 
     // Append Entry processing
-    void internal_append_entry(append_entry_arg_type && req)
+    void internal_append_entry(append_entry_arg_type && req, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       typedef append_entry_traits_type ae;
       auto req_leader_id = ae::leader_id(req);
@@ -741,6 +816,7 @@ namespace raft {
 	    BOOST_ASSERT(range.first == entry_log_index);
 	  }
 	}
+        cluster_clock_.set(log_.last_entry_cluster_time(), clock_now);
       } else {
 	// Nothing to append.  We're not returning here because we want to tell leader that we've got all
 	// the entries but we may need to wait for a log sync before doing so (e.g. an overly aggressive leader
@@ -886,6 +962,7 @@ namespace raft {
       // Update server_checkpoint 
       checkpoint_.last_checkpoint_index_ = checkpoint_header_traits_type::last_log_entry_index(&header);
       checkpoint_.last_checkpoint_term_ = checkpoint_header_traits_type::last_log_entry_term(&header);
+      checkpoint_.last_checkpoint_cluster_time_ = checkpoint_header_traits_type::last_log_entry_cluster_time(&header);
 
       // Anything checkpointed must be committed so we learn of commits this way
       // TODO: What if we get asked to load a checkpoint while we still have
@@ -945,7 +1022,7 @@ namespace raft {
     // State Transitions
     ////////////////////////////
     ////////////////////////////
-    void become_follower(uint64_t term)
+    void become_follower(uint64_t term, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       if (term > current_term_) {
 	BOOST_ASSERT(can_become_follower_at_term(term));
@@ -959,7 +1036,7 @@ namespace raft {
 	// before returning.
 	log_header_sync_required_ = true;
 	// ??? Do this now or after the sync completes ???
-	election_timeout_ = new_election_timeout();
+	election_timeout_ = new_election_timeout(clock_now);
 	leader_id_ = INVALID_PEER_ID;
 	log_.update_header(current_term_, INVALID_PEER_ID);
 
@@ -979,12 +1056,12 @@ namespace raft {
       // do about them???  Probably no harm is just letting them linger since the requests are committed.
     }
 
-    void become_candidate()
+    void become_candidate(std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       BOOST_ASSERT(state_ != LEADER);
       if (!configuration().is_valid()) {
 	// No configuration yet, we just wait for one to arrive
-	election_timeout_ = new_election_timeout();
+	election_timeout_ = new_election_timeout(clock_now);
 	return;
       }
     
@@ -1000,7 +1077,7 @@ namespace raft {
       
 	current_term_ += 1;
 	state_ = CANDIDATE;
-	election_timeout_ = new_election_timeout();
+	election_timeout_ = new_election_timeout(clock_now);
 	voted_for_ = &self();
 	// Log and flush
 	log_header_sync_required_ = true;
@@ -1018,7 +1095,7 @@ namespace raft {
       }  
     }
 
-    void become_candidate_on_log_header_sync()
+    void become_candidate_on_log_header_sync(std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       if (send_vote_requests_) {
 	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
@@ -1034,24 +1111,23 @@ namespace raft {
 	  send_vote_requests();
 	  // Special case: single server cluster become_leader without any votes received
 	  if (has_quorum()) {
-	    become_leader();
+	    become_leader(clock_now);
 	  }
 	}
       }
     }
 
-    void become_leader()
+    void become_leader(std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" becoming LEADER";
       BOOST_ASSERT(!log_header_sync_required_);
       state_ = LEADER;
       leader_id_ = my_cluster_id();
-      election_timeout_ = new_election_timeout();
+      election_timeout_ = new_election_timeout(clock_now);
 
       // TODO: Make this relative to the configuration.  I do think this is already correct; send out to all known servers.
       // Send out empty append entries to assert leadership
-      std::chrono::time_point<std::chrono::steady_clock> clock_now = std::chrono::steady_clock::now();
       for(auto peer_it = configuration().begin_peers(), peer_end = configuration().end_peers(); peer_it != peer_end; ++peer_it) {
 	peer_type & p(*peer_it);
 	if (p.peer_id != my_cluster_id()) {
@@ -1083,7 +1159,7 @@ namespace raft {
       // (see Section 3.6.2 from Ongaro's thesis).
       // Another rationale for getting commit index advanced has to do with the protocol for doing non-stale reads (that uses
       // RaftConsensus::getLastCommitIndex in logcabin); I need to understand this protocol.
-      log_.append(log_entry_traits_type::create_noop(current_term_));
+      log_.append(log_entry_traits_type::create_noop(current_term_, cluster_clock_.advance(clock_now)));
       send_append_entries(clock_now);
     
       // TODO: As an optimization cancel any outstanding request_vote since they are not needed
@@ -1093,7 +1169,8 @@ namespace raft {
   public:
     protocol(communicator_type & comm, log_type & l,
 	     checkpoint_data_store_type & store,
-	     configuration_manager_type & config_manager)
+	     configuration_manager_type & config_manager,
+             std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now())
       :
       comm_(comm),
       config_change_client_(nullptr),
@@ -1108,10 +1185,11 @@ namespace raft {
       last_committed_index_(0),
       last_synced_index_(0),
       checkpoint_(store),
+      cluster_clock_(now),
       configuration_(config_manager),
       send_vote_requests_(false)
     {
-      election_timeout_ = new_election_timeout();
+      election_timeout_ = new_election_timeout(now);
 
       // TODO: Read the log if non-empty and apply configuration entries as necessary
       // TODO: This should be async.
@@ -1120,6 +1198,10 @@ namespace raft {
 	if (log_entry_traits_type::is_configuration(&e)) {
 	  configuration_.add_logged_description(idx, e);
 	}
+      }
+
+      if (!log_.empty()) {
+        cluster_clock_.set(log_.last_entry_cluster_time(), now);
       }
 
       // NOTE: We set voted_for_ and current_term_ from the log header so we do not
@@ -1141,8 +1223,11 @@ namespace raft {
     // Events
     void on_timer()
     {
-      std::chrono::time_point<std::chrono::steady_clock> clock_now = std::chrono::steady_clock::now();
+      on_timer(std::chrono::steady_clock::now());
+    }
 
+    void on_timer(std::chrono::time_point<std::chrono::steady_clock> clock_now)
+    {
       // TODO: Add checks for slow writes (log flushes and checkpoint writes).  At a miniumum we want to cry
       // for help in such situations.
       switch(state_) {
@@ -1150,14 +1235,14 @@ namespace raft {
 	if (election_timeout_ < clock_now) {
 	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	    " FOLLOWER lost contact with leader.";
-	  become_candidate();
+	  become_candidate(clock_now);
 	}
 	break;
       case CANDIDATE:
 	if (election_timeout_ < clock_now) {
 	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	    " CANDIDATE timed out election.";
-	  become_candidate();
+	  become_candidate(clock_now);
 	}
 	break;
       case LEADER:
@@ -1179,7 +1264,7 @@ namespace raft {
 	  } else {
 	    // Append a transitional configuration entry to the log
 	    // and wait for it to commit before moving to stable.
-	    auto indices = log_.append(log_entry_traits_type::create_configuration(current_term_, configuration().get_transitional_configuration()));
+	    auto indices = log_.append(log_entry_traits_type::create_configuration(current_term_, cluster_clock_.advance(clock_now), configuration().get_transitional_configuration()));
 	    // This will update the value of configuration() with the transitional config we just logged
 	    configuration_.add_logged_description(indices.first, log_.entry(indices.first));
 	    BOOST_ASSERT(configuration().is_transitional());
@@ -1196,6 +1281,13 @@ namespace raft {
 
     void on_client_request(client_type & client, typename client_request_traits_type::arg_type && req)
     {
+      on_client_request(client, std::move(req), std::chrono::steady_clock::now());
+    }
+    
+    void on_client_request(client_type & client,
+                           typename client_request_traits_type::arg_type && req,
+                           std::chrono::time_point<std::chrono::steady_clock> clock_now)
+    {
       switch(state_) {
       case FOLLOWER:
       case CANDIDATE:
@@ -1211,7 +1303,7 @@ namespace raft {
 	  // the new log entry to be replicated to a majority (TODO: to disk?)/committed before
 	  // returning to the client
 	  // auto indices = log_.append_command(current_term_, req.get_command_data());
-	  auto indices = log_.append(log_entry_traits_type::create_command(current_term_, req));
+	  auto indices = log_.append(log_entry_traits_type::create_command(current_term_, cluster_clock_.advance(clock_now), req));
 	  client_response_continuation cont;
 	  cont.client = &client;
 	  cont.index = indices.second-1;
@@ -1252,6 +1344,11 @@ namespace raft {
 
     void on_request_vote(request_vote_arg_type && req)
     {
+      return on_request_vote(std::move(req), std::chrono::steady_clock::now());
+    }
+    
+    void on_request_vote(request_vote_arg_type && req, std::chrono::time_point<std::chrono::steady_clock> clock_now)
+    {
       typedef request_vote_traits_type rv;
       if (rv::term_number(req) < current_term_) {
 	// Peer is behind the times, let it know
@@ -1283,7 +1380,7 @@ namespace raft {
 	}
 	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " becoming follower due to vote request from " << rv::candidate_id(req) << " at higher term " << rv::term_number(req);
-	become_follower(rv::term_number(req));
+	become_follower(rv::term_number(req), clock_now);
       }
 
       // Remember whether a header sync is outstanding at this point.  Probably better to
@@ -1312,10 +1409,10 @@ namespace raft {
       if (rv::term_number(req) >= current_term_ && candidate_log_more_complete_than_mine && nullptr == voted_for_) {
 	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " voting for " << rv::candidate_id(req) << " at term " << rv::term_number(req);
-	become_follower(rv::term_number(req));
+	become_follower(rv::term_number(req), clock_now);
 	voted_for_ = &peer_from_id(rv::candidate_id(req));
 	log_header_sync_required_ = true;
-	election_timeout_ = new_election_timeout();
+	election_timeout_ = new_election_timeout(clock_now);
 	// Changed voted_for_ and possibly current_term_ ; propagate to log
 	log_.update_header(current_term_, rv::candidate_id(req));
 	// Must sync log header here because we can't have a crash make us vote twice; the
@@ -1345,6 +1442,12 @@ namespace raft {
 
     void on_vote_response(vote_response_arg_type && resp)
     {
+      on_vote_response(std::move(resp), std::chrono::steady_clock::now());
+    }
+    
+    void on_vote_response(vote_response_arg_type && resp,
+                          std::chrono::time_point<std::chrono::steady_clock> now)
+    {
       typedef vote_response_traits_type vr;
       switch(state_) {
       case CANDIDATE:
@@ -1354,7 +1457,7 @@ namespace raft {
 	if (current_term_ == vr::request_term_number(resp)) {
 	  if (current_term_ < vr::term_number(resp)) {
 	    if (can_become_follower_at_term(vr::term_number(resp))) {
-	      become_follower(vr::term_number(resp));
+	      become_follower(vr::term_number(resp), now);
 	      BOOST_ASSERT(log_header_sync_required_);
 	      if (log_header_sync_required_) {
 		BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
@@ -1378,7 +1481,7 @@ namespace raft {
 	    // but with different votes?  Is that a protocol error????
 	    p.vote_ = vr::granted(resp);
 	    if (has_quorum()) {
-	      become_leader();
+	      become_leader(now);
 	    }
 	  }
 	}
@@ -1391,6 +1494,11 @@ namespace raft {
     }
 
     void on_append_entry(append_entry_arg_type && req)
+    {
+      on_append_entry(std::move(req), std::chrono::steady_clock::now());
+    }
+    
+    void on_append_entry(append_entry_arg_type && req, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       typedef append_entry_traits_type ae;
       if (ae::term_number(req) < current_term_) {
@@ -1421,7 +1529,7 @@ namespace raft {
 
       // At this point doesn't really matter what state I'm currently in
       // as I'm going to become a FOLLOWER.
-      become_follower(ae::term_number(req));
+      become_follower(ae::term_number(req), clock_now);
 
       // If we were FOLLOWER we didn't reset election timer in become_follower() so do
       // it here as well
@@ -1434,12 +1542,17 @@ namespace raft {
 	log_.sync_header();
 	append_entry_header_sync_continuations_.push_back(std::move(req));
       } else {
-	election_timeout_ = new_election_timeout();
-	internal_append_entry(std::move(req));
+	election_timeout_ = new_election_timeout(clock_now);
+	internal_append_entry(std::move(req), clock_now);
       }
     }
 
     void on_append_response(append_entry_response_arg_type && resp)
+    {
+      on_append_response(std::move(resp), std::chrono::steady_clock::now());
+    }
+    
+    void on_append_response(append_entry_response_arg_type && resp, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       typedef append_entry_response_traits_type ae;
       if (ae::request_term_number(resp) != current_term_) {
@@ -1454,7 +1567,7 @@ namespace raft {
 
       if (ae::term_number(resp) > current_term_) {
 	if (can_become_follower_at_term(ae::term_number(resp))) {
-	  become_follower(ae::term_number(resp));
+	  become_follower(ae::term_number(resp), clock_now);
 	  // TODO: What do I do here????  Is all the processing below still relevant?
 	} else {
 	  // This may be impossible because if we are waiting for a log header flush
@@ -1488,7 +1601,7 @@ namespace raft {
 	    "," << ae::last_index(resp) << ")";
 	  p.match_index_ = ae::last_index(resp);
 	  // Now figure out whether we have a majority of peers ack'ing and can commit something
-	  try_to_commit();
+	  try_to_commit(clock_now);
 	}
 	// TODO: I suppose if we are pipelining append_entries to a peer then this could cause next_index_
 	// to go backwards.  That wouldn't be a correctness issue merely inefficient because we'd send
@@ -1501,7 +1614,6 @@ namespace raft {
 	// A configuration change is underway, we are tracking how quickly the peers are accepting
 	// log entries in order to decide whether we should allow the peers into a new config.
 	if (p.configuration_change_) {
-	  std::chrono::time_point<std::chrono::steady_clock> clock_now = std::chrono::steady_clock::now();
 	  p.configuration_change_->on_append_response(clock_now, p.match_index_, last_log_entry_index());
 	}
       } else {
@@ -1531,6 +1643,10 @@ namespace raft {
 
     void on_append_checkpoint_chunk(append_checkpoint_chunk_arg_type && req)
     {
+      return on_append_checkpoint_chunk(std::move(req), std::chrono::steady_clock::now());
+    }
+    void on_append_checkpoint_chunk(append_checkpoint_chunk_arg_type && req, std::chrono::time_point<std::chrono::steady_clock> clock_now)
+    {
       typedef append_checkpoint_chunk_traits_type acc;
       if (acc::term_number(req) < current_term_) {
 	// There is a leader out there that needs to know it's been left behind.
@@ -1558,7 +1674,7 @@ namespace raft {
 
       // At this point doesn't really matter what state I'm currently in
       // as I'm going to become a FOLLOWER.
-      become_follower(acc::term_number(req));
+      become_follower(acc::term_number(req), clock_now);
 
       // If we were already FOLLOWER we didn't reset election timer in become_follower() so do
       // it here as well
@@ -1571,12 +1687,18 @@ namespace raft {
 	log_.sync_header();
 	append_checkpoint_chunk_header_sync_continuations_.push_back(std::move(req));
       } else {
-	election_timeout_ = new_election_timeout();
+	election_timeout_ = new_election_timeout(clock_now);
 	internal_append_checkpoint_chunk(std::move(req));
       }
     }
 
     void on_append_checkpoint_chunk_response(append_checkpoint_chunk_response_arg_type && resp)
+    {
+      on_append_checkpoint_chunk_response(std::move(resp), std::chrono::steady_clock::now());
+    }
+    
+    void on_append_checkpoint_chunk_response(append_checkpoint_chunk_response_arg_type && resp,
+                                             std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       typedef append_checkpoint_chunk_response_traits_type acc;
       if (acc::request_term_number(resp) != current_term_) {
@@ -1596,7 +1718,7 @@ namespace raft {
 	  ". Becoming FOLLOWER and abandoning the append_checkpoint process.";
 	BOOST_ASSERT(can_become_follower_at_term(acc::term_number(resp)));
 	if (can_become_follower_at_term(acc::term_number(resp))) {
-	  become_follower(acc::term_number(resp));
+	  become_follower(acc::term_number(resp), clock_now);
 	  BOOST_ASSERT(log_header_sync_required_);
 	  if (log_header_sync_required_) {
 	    log_.sync_header();
@@ -1630,7 +1752,6 @@ namespace raft {
 
       // Send next chunk
       p.checkpoint_->awaiting_ack_ = false;
-      std::chrono::time_point<std::chrono::steady_clock> clock_now = std::chrono::steady_clock::now();
       send_checkpoint_chunk(clock_now, acc::recipient_id(resp));
     }  
 
@@ -1638,11 +1759,16 @@ namespace raft {
     // Called when part of log is synced to disk
     void on_log_sync(uint64_t index)
     {
+      on_log_sync(index, std::chrono::steady_clock::now());
+    }
+    
+    void on_log_sync(uint64_t index, std::chrono::time_point<std::chrono::steady_clock> clock_now)
+    {
       last_synced_index_ = index;
       BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" log synced to " << last_synced_index_ <<
 	" with end of log at " << last_log_entry_index();
-      try_to_commit();
+      try_to_commit(clock_now);
 
       // This is mostly relevant if I am a FOLLOWER (because I can't respond to
       // append_entries until the log entry is sync'd).
@@ -1676,6 +1802,11 @@ namespace raft {
     // Update of log header (current_term_, voted_for_) synced to disk
     void on_log_header_sync()
     {
+      on_log_header_sync(std::chrono::steady_clock::now());
+    }
+    
+    void on_log_header_sync(std::chrono::time_point<std::chrono::steady_clock> clock_now)
+    {
       if (!log_header_sync_required_) {
 	BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	    " received unexpected log header sync event.";
@@ -1703,11 +1834,11 @@ namespace raft {
       }
       append_checkpoint_chunk_header_sync_continuations_.clear();
       for(auto & ae : append_entry_header_sync_continuations_) {
-	internal_append_entry(std::move(ae));
+	internal_append_entry(std::move(ae), clock_now);
       }
       append_entry_header_sync_continuations_.clear();
     
-      become_candidate_on_log_header_sync();
+      become_candidate_on_log_header_sync(clock_now);
     }
   
     // Update of checkpoint file is synced to disk
@@ -1743,18 +1874,22 @@ namespace raft {
 
       uint64_t arg_last_log_entry_index = 0;
       uint64_t arg_last_log_entry_term = 0;
+      uint64_t arg_last_log_entry_cluster_time = 0;
       arg_last_log_entry_index = last_index_in_checkpoint;
       if (last_index_in_checkpoint > log_start_index() &&
 	  last_index_in_checkpoint <= last_log_entry_index()) {
 	// checkpoint index is still in the log
 	arg_last_log_entry_term = log_.term(last_index_in_checkpoint-1);
+	arg_last_log_entry_cluster_time = log_.cluster_time(last_index_in_checkpoint-1);
       } else if (last_index_in_checkpoint == 0) {
 	// Requesting an empty checkpoint, silly but OK
 	arg_last_log_entry_term = 0;      
+	arg_last_log_entry_cluster_time = 0;      
       } else if (last_index_in_checkpoint == checkpoint_.last_checkpoint_index_) {
 	// requesting the checkpoint we've most recently made so we've save the term
 	// and don't need to look at log entries
 	arg_last_log_entry_term = checkpoint_.last_checkpoint_term_;
+	arg_last_log_entry_cluster_time = checkpoint_.last_checkpoint_cluster_time_;
       } else {
 	// we can't perform the requested checkpoint.  for example it is possible that
 	// we've gotten a checkpoint from a leader that is newer than anything the client
@@ -1765,6 +1900,7 @@ namespace raft {
       // Configuration state as of the checkpoint goes in the header...
       return checkpoint_.store_.create(checkpoint_header_traits_type::build(arg_last_log_entry_index,
 									    arg_last_log_entry_term,
+									    arg_last_log_entry_cluster_time,
 									    configuration_.get_configuration_index_at(last_index_in_checkpoint),
 									    configuration_.get_configuration_description_at(last_index_in_checkpoint)));
     }
@@ -1791,9 +1927,11 @@ namespace raft {
 
       BOOST_ASSERT(last_index_in_checkpoint == checkpoint_header_traits_type::last_log_entry_index(&ckpt->header()));
       BOOST_ASSERT(log_.term(last_index_in_checkpoint-1) == checkpoint_header_traits_type::last_log_entry_term(&ckpt->header()));
+      BOOST_ASSERT(log_.cluster_time(last_index_in_checkpoint-1) == checkpoint_header_traits_type::last_log_entry_cluster_time(&ckpt->header()));
 		   
       checkpoint_.last_checkpoint_index_ = checkpoint_header_traits_type::last_log_entry_index(&ckpt->header());
-      checkpoint_.last_checkpoint_term_ = checkpoint_header_traits_type::last_log_entry_index(&ckpt->header());
+      checkpoint_.last_checkpoint_term_ = checkpoint_header_traits_type::last_log_entry_term(&ckpt->header());
+      checkpoint_.last_checkpoint_cluster_time_ = checkpoint_header_traits_type::last_log_entry_cluster_time(&ckpt->header());
       configuration_.set_checkpoint(ckpt->header());
  
       // Discard log entries
@@ -1804,8 +1942,9 @@ namespace raft {
       checkpoint_.store_.commit(ckpt);
     
       BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	" completed checkpoint at index " << checkpoint_.last_checkpoint_index_ << " and term " <<
-	checkpoint_.last_checkpoint_term_ << " current log entries [" << log_start_index() << "," <<
+	" completed checkpoint at index " << checkpoint_.last_checkpoint_index_ << ", term " <<
+	checkpoint_.last_checkpoint_term_ << " and cluster time " << checkpoint_.last_checkpoint_cluster_time_ <<
+        " current log entries [" << log_start_index() << "," <<
 	last_log_entry_index() << ")";
 
       return true;
@@ -1837,6 +1976,9 @@ namespace raft {
     }
     server_checkpoint_type & checkpoint() {
       return checkpoint_;
+    }
+    uint64_t cluster_time() const {
+      return cluster_clock_.cluster_time();
     }
   };
 }

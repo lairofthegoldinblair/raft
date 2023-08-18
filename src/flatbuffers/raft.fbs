@@ -25,6 +25,7 @@ table log_entry
 {
     type:log_entry_type;
     term:ulong;
+    cluster_time:ulong;
     // TODO: Should we use a union here?
     // Populated if type==COMMAND
     data:string;
@@ -99,6 +100,7 @@ table checkpoint_header
 {
   last_log_entry_index:ulong;
   last_log_entry_term:ulong;
+  last_log_entry_cluster_time:ulong;
   configuration:configuration_checkpoint;
 }
 

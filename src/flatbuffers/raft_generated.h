@@ -473,14 +473,18 @@ struct log_entry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_TYPE = 4,
     VT_TERM = 6,
-    VT_DATA = 8,
-    VT_CONFIGURATION = 10
+    VT_CLUSTER_TIME = 8,
+    VT_DATA = 10,
+    VT_CONFIGURATION = 12
   };
   raft::fbs::log_entry_type type() const {
     return static_cast<raft::fbs::log_entry_type>(GetField<int8_t>(VT_TYPE, 0));
   }
   uint64_t term() const {
     return GetField<uint64_t>(VT_TERM, 0);
+  }
+  uint64_t cluster_time() const {
+    return GetField<uint64_t>(VT_CLUSTER_TIME, 0);
   }
   const ::flatbuffers::String *data() const {
     return GetPointer<const ::flatbuffers::String *>(VT_DATA);
@@ -495,6 +499,7 @@ struct log_entry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return VerifyTableStart(verifier) &&
            VerifyField<int8_t>(verifier, VT_TYPE, 1) &&
            VerifyField<uint64_t>(verifier, VT_TERM, 8) &&
+           VerifyField<uint64_t>(verifier, VT_CLUSTER_TIME, 8) &&
            VerifyOffset(verifier, VT_DATA) &&
            verifier.VerifyString(data()) &&
            VerifyOffset(verifier, VT_CONFIGURATION) &&
@@ -513,6 +518,9 @@ struct log_entryBuilder {
   }
   void add_term(uint64_t term) {
     fbb_.AddElement<uint64_t>(log_entry::VT_TERM, term, 0);
+  }
+  void add_cluster_time(uint64_t cluster_time) {
+    fbb_.AddElement<uint64_t>(log_entry::VT_CLUSTER_TIME, cluster_time, 0);
   }
   void add_data(::flatbuffers::Offset<::flatbuffers::String> data) {
     fbb_.AddOffset(log_entry::VT_DATA, data);
@@ -535,9 +543,11 @@ inline ::flatbuffers::Offset<log_entry> Createlog_entry(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     raft::fbs::log_entry_type type = raft::fbs::log_entry_type_COMMAND,
     uint64_t term = 0,
+    uint64_t cluster_time = 0,
     ::flatbuffers::Offset<::flatbuffers::String> data = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> configuration = 0) {
   log_entryBuilder builder_(_fbb);
+  builder_.add_cluster_time(cluster_time);
   builder_.add_term(term);
   builder_.add_configuration(configuration);
   builder_.add_data(data);
@@ -549,6 +559,7 @@ inline ::flatbuffers::Offset<log_entry> Createlog_entryDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     raft::fbs::log_entry_type type = raft::fbs::log_entry_type_COMMAND,
     uint64_t term = 0,
+    uint64_t cluster_time = 0,
     const char *data = nullptr,
     const std::vector<uint8_t> *configuration = nullptr) {
   auto data__ = data ? _fbb.CreateString(data) : 0;
@@ -557,6 +568,7 @@ inline ::flatbuffers::Offset<log_entry> Createlog_entryDirect(
       _fbb,
       type,
       term,
+      cluster_time,
       data__,
       configuration__);
 }
@@ -1055,13 +1067,17 @@ struct checkpoint_header FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table 
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_LAST_LOG_ENTRY_INDEX = 4,
     VT_LAST_LOG_ENTRY_TERM = 6,
-    VT_CONFIGURATION = 8
+    VT_LAST_LOG_ENTRY_CLUSTER_TIME = 8,
+    VT_CONFIGURATION = 10
   };
   uint64_t last_log_entry_index() const {
     return GetField<uint64_t>(VT_LAST_LOG_ENTRY_INDEX, 0);
   }
   uint64_t last_log_entry_term() const {
     return GetField<uint64_t>(VT_LAST_LOG_ENTRY_TERM, 0);
+  }
+  uint64_t last_log_entry_cluster_time() const {
+    return GetField<uint64_t>(VT_LAST_LOG_ENTRY_CLUSTER_TIME, 0);
   }
   const raft::fbs::configuration_checkpoint *configuration() const {
     return GetPointer<const raft::fbs::configuration_checkpoint *>(VT_CONFIGURATION);
@@ -1070,6 +1086,7 @@ struct checkpoint_header FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table 
     return VerifyTableStart(verifier) &&
            VerifyField<uint64_t>(verifier, VT_LAST_LOG_ENTRY_INDEX, 8) &&
            VerifyField<uint64_t>(verifier, VT_LAST_LOG_ENTRY_TERM, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LAST_LOG_ENTRY_CLUSTER_TIME, 8) &&
            VerifyOffset(verifier, VT_CONFIGURATION) &&
            verifier.VerifyTable(configuration()) &&
            verifier.EndTable();
@@ -1085,6 +1102,9 @@ struct checkpoint_headerBuilder {
   }
   void add_last_log_entry_term(uint64_t last_log_entry_term) {
     fbb_.AddElement<uint64_t>(checkpoint_header::VT_LAST_LOG_ENTRY_TERM, last_log_entry_term, 0);
+  }
+  void add_last_log_entry_cluster_time(uint64_t last_log_entry_cluster_time) {
+    fbb_.AddElement<uint64_t>(checkpoint_header::VT_LAST_LOG_ENTRY_CLUSTER_TIME, last_log_entry_cluster_time, 0);
   }
   void add_configuration(::flatbuffers::Offset<raft::fbs::configuration_checkpoint> configuration) {
     fbb_.AddOffset(checkpoint_header::VT_CONFIGURATION, configuration);
@@ -1104,8 +1124,10 @@ inline ::flatbuffers::Offset<checkpoint_header> Createcheckpoint_header(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t last_log_entry_index = 0,
     uint64_t last_log_entry_term = 0,
+    uint64_t last_log_entry_cluster_time = 0,
     ::flatbuffers::Offset<raft::fbs::configuration_checkpoint> configuration = 0) {
   checkpoint_headerBuilder builder_(_fbb);
+  builder_.add_last_log_entry_cluster_time(last_log_entry_cluster_time);
   builder_.add_last_log_entry_term(last_log_entry_term);
   builder_.add_last_log_entry_index(last_log_entry_index);
   builder_.add_configuration(configuration);

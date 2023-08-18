@@ -214,6 +214,10 @@ namespace raft {
       {
 	return msg->last_log_entry_term();
       }
+      static uint64_t last_log_entry_cluster_time(const_arg_type msg)
+      {
+	return msg->last_log_entry_cluster_time();
+      }
       static uint64_t index(const_arg_type msg)
       {
 	return msg->configuration()->index();
@@ -224,6 +228,7 @@ namespace raft {
       }
       static std::pair<const_arg_type, raft::util::call_on_delete> build(uint64_t last_log_entry_index,
 									 uint64_t last_log_entry_term,
+									 uint64_t last_log_entry_cluster_time,
 									 uint64_t configuration_index,
 									 const uint8_t * configuration_description);
     };
@@ -240,6 +245,10 @@ namespace raft {
     static uint64_t term(const_arg_type msg)
     {
       return get_log_entry(msg)->term();
+    }
+    static uint64_t cluster_time(const_arg_type msg)
+    {
+      return get_log_entry(msg)->cluster_time();
     }
     static bool is_command(const_arg_type msg)
     {
@@ -261,7 +270,7 @@ namespace raft {
     {
       return *get_log_entry(msg)->configuration()->Data();
     }
-    static std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete > create_command(uint64_t term, client_request_traits::const_arg_type req)
+    static std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete > create_command(uint64_t term, uint64_t cluster_time, client_request_traits::const_arg_type req)
     {
       auto fbb = new flatbuffers::FlatBufferBuilder();
       // TODO: Would be better to avoid the copy and transfer ownership of the req memory to the log entry
@@ -269,6 +278,7 @@ namespace raft {
       auto data = fbb->CreateString(slice::buffer_cast<const char *>(cmd), slice::buffer_size(cmd));
       raft::fbs::log_entryBuilder leb(*fbb);
       leb.add_term(term);
+      leb.add_cluster_time(cluster_time);
       leb.add_type(log_entry_type_COMMAND);
       leb.add_data(data);
       auto le = leb.Finish();
@@ -280,11 +290,12 @@ namespace raft {
       return std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete >(buf + offset,
 										 [buf]() { delete [] buf; });
     }
-    static std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete > create_noop(uint64_t term)
+    static std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete > create_noop(uint64_t term, uint64_t cluster_time)
     {
       auto fbb = new flatbuffers::FlatBufferBuilder();
       raft::fbs::log_entryBuilder leb(*fbb);
       leb.add_term(term);
+      leb.add_cluster_time(cluster_time);
       leb.add_type(log_entry_type_NOOP);
       auto le = leb.Finish();
       fbb->FinishSizePrefixed(le);
@@ -295,7 +306,7 @@ namespace raft {
       return std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete >(buf + offset,
 										 [buf]() { delete [] buf; });
     }
-    static std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete > create_configuration_from_message(uint64_t term,  const uint8_t * c)
+    static std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete > create_configuration_from_message(uint64_t term, uint64_t cluster_time, const uint8_t * c)
     {
       auto fbb = new flatbuffers::FlatBufferBuilder();
       // std::vector<flatbuffers::Offset<raft::fbs::server_description>> servers;
@@ -313,6 +324,7 @@ namespace raft {
       
       raft::fbs::log_entryBuilder leb(*fbb);
       leb.add_term(term);
+      leb.add_cluster_time(cluster_time);
       leb.add_type(log_entry_type_CONFIGURATION);
       leb.add_configuration(cfg);
       auto le = leb.Finish();
@@ -325,7 +337,7 @@ namespace raft {
 										 [buf]() { delete [] buf; });
     }
     template<typename _ConfigView>
-    static std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete > create_configuration(uint64_t term,  const _ConfigView & config)
+    static std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete > create_configuration(uint64_t term,  uint64_t cluster_time, const _ConfigView & config)
     {
       auto fbb = new flatbuffers::FlatBufferBuilder();
       ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> cfg;
@@ -347,6 +359,7 @@ namespace raft {
       
       raft::fbs::log_entryBuilder leb(*fbb);
       leb.add_term(term);
+      leb.add_cluster_time(cluster_time);
       leb.add_type(log_entry_type_CONFIGURATION);
       leb.add_configuration(cfg);
       auto le = leb.Finish();
@@ -375,6 +388,7 @@ namespace raft {
       
       raft::fbs::log_entryBuilder leb(*fbb);
       leb.add_term(0);
+      leb.add_cluster_time(0);
       leb.add_type(log_entry_type_CONFIGURATION);
       leb.add_configuration(cfg);
       auto le = leb.Finish();
@@ -519,6 +533,10 @@ namespace raft {
       static uint64_t last_checkpoint_term(const_arg_type msg)
       {
 	return acc(msg)->last_checkpoint_header()->last_log_entry_term();
+      }
+      static uint64_t last_checkpoint_cluster_time(const_arg_type msg)
+      {
+	return acc(msg)->last_checkpoint_header()->last_log_entry_cluster_time();
       }
       static const checkpoint_header & last_checkpoint_header(const_arg_type msg)
       {
@@ -1002,6 +1020,7 @@ simple_configuration_description_builder to()
     private:
       uint64_t last_log_entry_index_ = 0;
       uint64_t last_log_entry_term_ = 0;
+      uint64_t last_log_entry_cluster_time_ = 0;
       uint64_t configuration_log_index_ = 0;
       ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> configuration_;
       ::flatbuffers::Offset<raft::fbs::configuration_checkpoint> checkpoint_;
@@ -1040,6 +1059,7 @@ simple_configuration_description_builder to()
       {
 	bld->add_last_log_entry_index(last_log_entry_index_);
 	bld->add_last_log_entry_term(last_log_entry_term_);
+	bld->add_last_log_entry_cluster_time(last_log_entry_cluster_time_);
 	bld->add_configuration(checkpoint_);
       }
       checkpoint_header_builder & last_log_entry_index(uint64_t val)
@@ -1052,6 +1072,13 @@ simple_configuration_description_builder to()
 	last_log_entry_term_ = val;
 	return *this;
       }
+
+      checkpoint_header_builder & last_log_entry_cluster_time(uint64_t val)
+      {
+	last_log_entry_cluster_time_ = val;
+	return *this;
+      }
+
       checkpoint_header_builder & index(uint64_t val)
       {
 	configuration_log_index_ = val;
@@ -1077,11 +1104,12 @@ simple_configuration_description_builder to()
 
     std::pair<checkpoint_header_traits::const_arg_type, raft::util::call_on_delete> checkpoint_header_traits::build(uint64_t last_log_entry_index,
 														    uint64_t last_log_entry_term,
+														    uint64_t last_log_entry_cluster_time,
 														    uint64_t configuration_index,
 														    const uint8_t * configuration_description)
     {
       auto fbb = std::make_unique<::flatbuffers::FlatBufferBuilder>();
-      fbb->Finish(checkpoint_header_builder(*fbb).last_log_entry_index(last_log_entry_index).last_log_entry_term(last_log_entry_term).index(configuration_index).configuration(*configuration_description).finish());
+      fbb->Finish(checkpoint_header_builder(*fbb).last_log_entry_index(last_log_entry_index).last_log_entry_term(last_log_entry_term).last_log_entry_cluster_time(last_log_entry_cluster_time).index(configuration_index).configuration(*configuration_description).finish());
       auto ptr = ::flatbuffers::GetRoot<raft::fbs::checkpoint_header>(fbb->GetBufferPointer());
       return std::pair<checkpoint_header_traits::const_arg_type, raft::util::call_on_delete>(ptr, [f = std::move(fbb)](){});
     }
@@ -1542,6 +1570,7 @@ simple_configuration_description_builder to()
     private:
       std::unique_ptr<flatbuffers::FlatBufferBuilder> fbb_;
       uint64_t term_ = 0;
+      uint64_t cluster_time_ = 0;
       raft::fbs::log_entry_type type_ = raft::fbs::log_entry_type_NOOP;
       ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> configuration_;
       ::flatbuffers::Offset<::flatbuffers::String> data_;
@@ -1557,6 +1586,12 @@ simple_configuration_description_builder to()
       log_entry_builder & term(uint64_t val)
       {
 	term_ = val;
+	return *this;
+      }
+      
+      log_entry_builder & cluster_time(uint64_t val)
+      {
+	cluster_time_ = val;
 	return *this;
       }
       
@@ -1597,6 +1632,7 @@ simple_configuration_description_builder to()
       {
 	raft::fbs::log_entryBuilder leb(fbb());
 	leb.add_term(term_);
+	leb.add_cluster_time(cluster_time_);
 	leb.add_type(type_);
 	leb.add_configuration(configuration_);
 	leb.add_data(data_);

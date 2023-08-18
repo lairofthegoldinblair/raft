@@ -68,6 +68,7 @@ namespace raft {
     public:
       uint64_t last_log_entry_index;
       uint64_t last_log_entry_term;
+      uint64_t last_log_entry_cluster_time;
       configuration_checkpoint configuration;
     };
 
@@ -92,14 +93,20 @@ namespace raft {
       {
 	return cr->last_log_entry_term;
       }
+      static uint64_t last_log_entry_cluster_time(const_arg_type cr)
+      {
+	return cr->last_log_entry_cluster_time;
+      }
       static std::pair<const_arg_type, raft::util::call_on_delete> build(uint64_t last_log_entry_index,
-								    uint64_t last_log_entry_term,
-								    uint64_t configuration_index,
-								    const configuration_description * configuration_description)
+                                                                         uint64_t last_log_entry_term,
+                                                                         uint64_t last_log_entry_cluster_time,
+                                                                         uint64_t configuration_index,
+                                                                         const configuration_description * configuration_description)
       {
 	auto tmp = new checkpoint_header();
 	tmp->last_log_entry_index = last_log_entry_index;
 	tmp->last_log_entry_term = last_log_entry_term;
+	tmp->last_log_entry_cluster_time = last_log_entry_cluster_time;
 	tmp->configuration.index = configuration_index;
 	tmp->configuration.description = *configuration_description;
 	return std::pair<const_arg_type, raft::util::call_on_delete>(tmp, [tmp]() { delete tmp; });
@@ -497,6 +504,10 @@ namespace raft {
       {
 	return ae.last_checkpoint_header.last_log_entry_term;
       }
+      static uint64_t last_checkpoint_cluster_time(const_arg_type ae)
+      {
+	return ae.last_checkpoint_header.last_log_entry_cluster_time;
+      }
       // Ongaro's logcabin does not put the configuration in the message but assumes that it is
       // serialized as part of the data (the actual checkpoint file).
       // I'm not sure I like that model so I am putting it in the chunk message as well;
@@ -662,6 +673,7 @@ namespace raft {
       enum entry_type { COMMAND, CONFIGURATION, NOOP };
       entry_type type;
       uint64_t term;
+      uint64_t cluster_time;
       // Populated if type==COMMAND
       std::string data;
       // Populated if type==CONFIGURATION
@@ -677,6 +689,10 @@ namespace raft {
       static uint64_t term(const_arg_type msg)
       {
 	return msg->term;
+      }
+      static uint64_t cluster_time(const_arg_type msg)
+      {
+	return msg->cluster_time;
       }
       static bool is_command(const_arg_type msg)
       {
@@ -698,35 +714,39 @@ namespace raft {
       {
 	return msg->configuration;
       }
-      static std::pair<const log_entry<_Description> *, raft::util::call_on_delete > create_command(uint64_t term, const client_request & req)
+      static std::pair<const log_entry<_Description> *, raft::util::call_on_delete > create_command(uint64_t term, uint64_t cluster_time, const client_request & req)
       {
 	auto ret = new log_entry<_Description>();
 	ret->type = value_type::COMMAND;
 	ret->term = term;
+        ret->cluster_time = cluster_time;
 	ret->data = req.command;
 	return std::pair<const log_entry<_Description> *, raft::util::call_on_delete>(ret, [ret]() { delete ret; });
       }
-      static std::pair<const log_entry<_Description> *, raft::util::call_on_delete > create_command(uint64_t term, client_request && req)
+      static std::pair<const log_entry<_Description> *, raft::util::call_on_delete > create_command(uint64_t term, uint64_t cluster_time, client_request && req)
       {
 	auto ret = new log_entry<_Description>();
 	ret->type = value_type::COMMAND;
 	ret->term = term;
+        ret->cluster_time = cluster_time;
 	ret->data = std::move(req.command);
 	return std::pair<const log_entry<_Description> *, raft::util::call_on_delete>(ret, [ret]() { delete ret; });
       }
-      static std::pair<const log_entry<_Description> *, raft::util::call_on_delete > create_noop(uint64_t term)
+      static std::pair<const log_entry<_Description> *, raft::util::call_on_delete > create_noop(uint64_t term, uint64_t cluster_time)
       {
 	auto ret = new log_entry<_Description>();
 	ret->type = value_type::NOOP;
 	ret->term = term;
+        ret->cluster_time = cluster_time;
 	return std::pair<const log_entry<_Description> *, raft::util::call_on_delete>(ret, [ret]() { delete ret; });
       }
       template<typename Configuration>
-      static std::pair<const log_entry<_Description> *, raft::util::call_on_delete > create_configuration(uint64_t term, const Configuration & config)
+      static std::pair<const log_entry<_Description> *, raft::util::call_on_delete > create_configuration(uint64_t term, uint64_t cluster_time, const Configuration & config)
       {
 	auto ret = new log_entry<_Description>();
 	ret->type = value_type::CONFIGURATION;
 	ret->term = term;
+        ret->cluster_time = cluster_time;
 	for(auto i=0; i<config.from_size(); ++i) {
 	  ret->configuration.from.servers.push_back({ config.from_id(i), config.from_address(i) });
 	}
@@ -740,6 +760,7 @@ namespace raft {
 	auto ret = new log_entry<_Description>();
 	ret->type = value_type::CONFIGURATION;
 	ret->term = 0;
+        ret->cluster_time = 0;
 	ret->configuration.from.servers.push_back({ id, std::string(address) });
 	return std::pair<const log_entry<_Description> *, raft::util::call_on_delete>(ret, [ret]() { delete ret; });
       }
@@ -1002,6 +1023,11 @@ namespace raft {
       checkpoint_header_builder & last_log_entry_term(uint64_t val)
       {
 	get_object()->last_log_entry_term = val;
+	return *this;
+      }
+      checkpoint_header_builder & last_log_entry_cluster_time(uint64_t val)
+      {
+	get_object()->last_log_entry_cluster_time = val;
 	return *this;
       }
       checkpoint_header_builder & index(uint64_t val)
@@ -1439,6 +1465,7 @@ namespace raft {
 	if (nullptr == obj_) {
 	  obj_ = std::make_unique<log_entry<configuration_description>>();
 	  obj_->term = 0;
+	  obj_->cluster_time = 0;
 	  obj_->type = log_entry<configuration_description>::NOOP;
 	}
 	return obj_.get();
@@ -1447,6 +1474,12 @@ namespace raft {
       log_entry_builder & term(uint64_t val)
       {
 	get_object()->term = val;
+	return *this;
+      }
+
+      log_entry_builder & cluster_time(uint64_t val)
+      {
+	get_object()->cluster_time = val;
 	return *this;
       }
 

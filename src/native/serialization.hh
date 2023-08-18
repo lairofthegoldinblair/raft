@@ -80,6 +80,7 @@ namespace raft {
       boost::endian::little_uint64_t leader_id;
       boost::endian::little_uint64_t last_log_entry_index;
       boost::endian::little_uint64_t last_log_entry_term;
+      boost::endian::little_uint64_t last_log_entry_cluster_time;
       boost::endian::little_uint64_t configuration_index;
       boost::endian::little_uint64_t checkpoint_begin;
       boost::endian::little_uint64_t checkpoint_end;
@@ -401,6 +402,7 @@ namespace raft {
 	msg.leader_id = buf->leader_id;
 	msg.last_checkpoint_header.last_log_entry_index = buf->last_log_entry_index;
 	msg.last_checkpoint_header.last_log_entry_term = buf->last_log_entry_term;
+	msg.last_checkpoint_header.last_log_entry_cluster_time = buf->last_log_entry_cluster_time;
 	msg.last_checkpoint_header.configuration.index = buf->configuration_index;
 	msg.checkpoint_begin = buf->checkpoint_begin;
 	msg.checkpoint_end = buf->checkpoint_end;
@@ -575,6 +577,7 @@ namespace raft {
 	buf->leader_id = msg.leader_id;
 	buf->last_log_entry_index = msg.last_checkpoint_header.last_log_entry_index;
 	buf->last_log_entry_term = msg.last_checkpoint_header.last_log_entry_term;
+	buf->last_log_entry_cluster_time = msg.last_checkpoint_header.last_log_entry_cluster_time;
 	buf->configuration_index = msg.last_checkpoint_header.configuration.index;
 	buf->checkpoint_begin = msg.checkpoint_begin;
 	buf->checkpoint_end = msg.checkpoint_end;
