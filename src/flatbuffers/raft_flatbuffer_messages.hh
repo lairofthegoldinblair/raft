@@ -4,6 +4,8 @@
 #include <memory>
 #include <string_view>
 
+#include <boost/assert.hpp>
+
 #include "raft_generated.h"
 #include "slice.hh"
 #include "util/call_on_delete.hh"
@@ -81,6 +83,23 @@ namespace raft {
       static const client_response *  get_client_response(const_arg_type ae)
       {
 	return  ae.first->message_as_client_response();
+      }
+      static client_result result(const_arg_type cr)
+      {
+        return get_client_response(cr)->result();
+      }
+      static uint64_t index(const_arg_type cr)
+      {
+        return get_client_response(cr)->index();
+      }
+      static uint64_t leader_id(const_arg_type cr)
+      {
+        return get_client_response(cr)->leader_id();
+      }
+      static slice response(const_arg_type msg)
+      {
+	return slice(reinterpret_cast<const uint8_t *>(get_client_response(msg)->response()->c_str()),
+		     get_client_response(msg)->response()->size());
       }
     };
     // Returns a reference to the first bytes of data in raft::fbs::entries
@@ -233,6 +252,7 @@ namespace raft {
 									 const uint8_t * configuration_description);
     };
 
+
   struct log_entry_traits
   {
     // Start of the size prefixed flat buffer 
@@ -276,6 +296,27 @@ namespace raft {
       // TODO: Would be better to avoid the copy and transfer ownership of the req memory to the log entry
       auto cmd = client_request_traits::get_command_data(req);
       auto data = fbb->CreateString(slice::buffer_cast<const char *>(cmd), slice::buffer_size(cmd));
+      raft::fbs::log_entryBuilder leb(*fbb);
+      leb.add_term(term);
+      leb.add_cluster_time(cluster_time);
+      leb.add_type(log_entry_type_COMMAND);
+      leb.add_data(data);
+      auto le = leb.Finish();
+      fbb->FinishSizePrefixed(le);
+
+      std::size_t size, offset;
+      auto buf = fbb->ReleaseRaw(size, offset);
+      delete fbb;
+      return std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete >(buf + offset,
+										 [buf]() { delete [] buf; });
+    }
+    static std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete > create_command(uint64_t term,
+                                                                                                   uint64_t cluster_time,
+                                                                                                   std::pair<raft::slice, raft::util::call_on_delete> && req)
+    {
+      auto fbb = new flatbuffers::FlatBufferBuilder();
+      // TODO: Would be better to avoid the copy and transfer ownership of the req memory to the log entry
+      auto data = fbb->CreateString(slice::buffer_cast<const char *>(req.first), slice::buffer_size(req.first));
       raft::fbs::log_entryBuilder leb(*fbb);
       leb.add_term(term);
       leb.add_cluster_time(cluster_time);
@@ -643,29 +684,39 @@ namespace raft {
     class open_session_request_traits
     {
     public:
-      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
+      typedef std::pair<const log_entry_command *, raft::util::call_on_delete> arg_type;
       typedef const arg_type & const_arg_type;
-      // typedef const raft_message * const_arg_type;    
+      typedef const log_entry_command * const_view_type;
     
       static const raft::fbs::open_session_request * acc(const_arg_type msg)
       {
-	return msg.first->message_as_open_session_request();
+	return msg.first->command_as_open_session_request();
       }
     };
     
     class open_session_response_traits
     {
     public:
-      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
+      typedef std::pair<const log_entry_command *, raft::util::call_on_delete> arg_type;
       typedef const arg_type & const_arg_type;
-      // typedef const raft_message * const_arg_type;    
+      typedef const log_entry_command * const_view_type;
     
       static const raft::fbs::open_session_response * acc(const_arg_type msg)
       {
-	return msg.first->message_as_open_session_response();
+	return msg.first->command_as_open_session_response();
       }
     
       static uint64_t session_id(const_arg_type msg)
+      {
+	return acc(msg)->session_id();
+      }
+
+      static const raft::fbs::open_session_response * acc(const_view_type msg)
+      {
+	return msg->command_as_open_session_response();
+      }
+    
+      static uint64_t session_id(const_view_type msg)
       {
 	return acc(msg)->session_id();
       }
@@ -674,16 +725,26 @@ namespace raft {
     class close_session_request_traits
     {
     public:
-      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
+      typedef std::pair<const log_entry_command *, raft::util::call_on_delete> arg_type;
       typedef const arg_type & const_arg_type;
-      // typedef const raft_message * const_arg_type;    
+      typedef const log_entry_command * const_view_type;
     
       static const raft::fbs::close_session_request * acc(const_arg_type msg)
       {
-	return msg.first->message_as_close_session_request();
+	return msg.first->command_as_close_session_request();
       }
     
       static uint64_t session_id(const_arg_type msg)
+      {
+	return acc(msg)->session_id();
+      }
+    
+      static const raft::fbs::close_session_request * acc(const_view_type msg)
+      {
+	return msg->command_as_close_session_request();
+      }
+    
+      static uint64_t session_id(const_view_type msg)
       {
 	return acc(msg)->session_id();
       }
@@ -692,26 +753,27 @@ namespace raft {
     class close_session_response_traits
     {
     public:
-      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
+      typedef std::pair<const log_entry_command *, raft::util::call_on_delete> arg_type;
       typedef const arg_type & const_arg_type;
+      typedef const log_entry_command * const_view_type;
       // typedef const raft_message * const_arg_type;    
     
       static const raft::fbs::close_session_response * acc(const_arg_type msg)
       {
-	return msg.first->message_as_close_session_response();
+	return msg.first->command_as_close_session_response();
       }
     };
     
     class linearizable_command_traits
     {
     public:
-      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
+      typedef std::pair<const log_entry_command *, raft::util::call_on_delete> arg_type;
       typedef const arg_type & const_arg_type;
-      // typedef const raft_message * const_arg_type;    
+      typedef const log_entry_command * const_view_type;
     
       static const raft::fbs::linearizable_command * acc(const_arg_type msg)
       {
-	return msg.first->message_as_linearizable_command();
+	return msg.first->command_as_linearizable_command();
       }
     
       static uint64_t session_id(const_arg_type msg)
@@ -734,6 +796,68 @@ namespace raft {
 	return slice(reinterpret_cast<const uint8_t *>(acc(msg)->command()->c_str()),
 		     acc(msg)->command()->size());
       }
+
+      static const raft::fbs::linearizable_command * acc(const_view_type msg)
+      {
+	return msg->command_as_linearizable_command();
+      }
+    
+      static uint64_t session_id(const_view_type msg)
+      {
+	return acc(msg)->session_id();
+      }
+    
+      static uint64_t first_unacknowledged_sequence_number(const_view_type msg)
+      {
+	return acc(msg)->first_unacknowledged_sequence_number();
+      }
+    
+      static uint64_t sequence_number(const_view_type msg)
+      {
+	return acc(msg)->sequence_number();
+      }
+
+      static slice command(const_view_type msg)
+      {
+	return slice(reinterpret_cast<const uint8_t *>(acc(msg)->command()->c_str()),
+		     acc(msg)->command()->size());
+      }
+    };
+    
+    struct log_entry_command_traits
+    {
+      // Start of the size prefixed flat buffer 
+      typedef const uint8_t * const_arg_type;
+
+      static const raft::fbs::log_entry_command * get_log_entry_command(const_arg_type ae)
+      {
+        return ::flatbuffers::GetSizePrefixedRoot<raft::fbs::log_entry_command>(ae);
+      }      
+      static bool is_open_session(const_arg_type msg)
+      {
+        return any_log_entry_command_open_session_request == get_log_entry_command(msg)->command_type();
+      }
+      static bool is_close_session(const_arg_type msg)
+      {
+        return any_log_entry_command_close_session_request == get_log_entry_command(msg)->command_type();
+      }
+      static bool is_linearizable_command(const_arg_type msg)
+      {
+        return any_log_entry_command_linearizable_command == get_log_entry_command(msg)->command_type();
+      }
+
+      static open_session_request_traits::const_view_type open_session(const_arg_type msg)
+      {
+        return get_log_entry_command(msg);
+      }
+      static close_session_request_traits::const_view_type close_session(const_arg_type msg)
+      {
+        return get_log_entry_command(msg);
+      }
+      static linearizable_command_traits::const_view_type linearizable_command(const_arg_type msg)
+      {
+        return get_log_entry_command(msg);
+      }
     };
     
     class messages
@@ -741,6 +865,7 @@ namespace raft {
     public:
       typedef uint8_t log_entry_type;
       typedef log_entry_traits log_entry_traits_type;
+      typedef log_entry_command_traits log_entry_command_traits_type;
       typedef client_request client_request_type;
       typedef client_request_traits client_request_traits_type;
       typedef client_response client_response_type;
@@ -788,6 +913,7 @@ namespace raft {
       static raft::fbs::client_result client_result_fail() { return raft::fbs::client_result_FAIL; }
       static raft::fbs::client_result client_result_retry() { return raft::fbs::client_result_RETRY; }
       static raft::fbs::client_result client_result_not_leader() { return raft::fbs::client_result_NOT_LEADER; }
+      static raft::fbs::client_result client_result_session_expired() { return raft::fbs::client_result_SESSION_EXPIRED; }
     };      
 
     template<typename _Derived, typename _FlatType>
@@ -1230,6 +1356,7 @@ simple_configuration_description_builder to()
       client_result result_= client_result_FAIL;
       uint64_t index_ = 0;
       uint64_t leader_id_ = 0;
+      ::flatbuffers::Offset<::flatbuffers::String> response_;
     public:
       void preinitialize()
       {
@@ -1240,6 +1367,7 @@ simple_configuration_description_builder to()
 	bld->add_result(result_);
 	bld->add_index(index_);
 	bld->add_leader_id(leader_id_);
+	bld->add_response(response_);
       }
       client_response_builder & result(client_result val)
       {
@@ -1254,6 +1382,12 @@ simple_configuration_description_builder to()
       client_response_builder & leader_id(uint64_t val)
       {
 	leader_id_ = val;
+	return *this;
+      }
+      client_response_builder & response(raft::slice && val)
+      {
+	response_ = fbb().CreateString(raft::slice::buffer_cast<const char *>(val),
+                                       raft::slice::buffer_size(val));
 	return *this;
       }
     };
@@ -1646,7 +1780,38 @@ simple_configuration_description_builder to()
       }
     };
 
-    class open_session_request_builder : public raft_message_builder_base<open_session_request_builder, raft::fbs::open_session_request>
+    template<typename _Derived, typename _FlatType>
+    class log_entry_command_builder_base
+    {
+    public:
+      typedef _FlatType fbs_type;
+      typedef typename _FlatType::Builder fbs_builder_type;
+    private:
+      std::unique_ptr<flatbuffers::FlatBufferBuilder> fbb_;
+    public:
+      flatbuffers::FlatBufferBuilder & fbb()
+      {
+	if (!fbb_) {
+	  fbb_ = std::make_unique<flatbuffers::FlatBufferBuilder>();
+	}
+	return *fbb_;
+      }
+      std::pair<const raft::fbs::log_entry_command *, raft::util::call_on_delete> finish()
+      {
+	static_cast<_Derived *>(this)->preinitialize();
+	fbs_builder_type bld(fbb());
+	static_cast<_Derived *>(this)->initialize(&bld);
+	auto rv = bld.Finish();
+	auto m = Createlog_entry_command(fbb(), raft::fbs::any_log_entry_commandTraits<fbs_type>::enum_value, rv.Union());
+	fbb().FinishSizePrefixed(m);
+	auto obj = ::flatbuffers::GetSizePrefixedRoot<raft::fbs::log_entry_command>(fbb().GetBufferPointer());
+	BOOST_ASSERT(fbb().GetBufferPointer()+sizeof(::flatbuffers::uoffset_t) == ::flatbuffers::GetBufferStartFromRootPointer(obj));
+	auto ret = std::pair<const raft::fbs::log_entry_command *, raft::util::call_on_delete>(obj, [fbb = fbb_.release()]() { delete fbb; });
+	return ret;
+      }
+    };
+
+    class open_session_request_builder : public log_entry_command_builder_base<open_session_request_builder, raft::fbs::open_session_request>
     {
     public:
       void preinitialize()
@@ -1658,7 +1823,7 @@ simple_configuration_description_builder to()
       }	
     };
 
-    class open_session_response_builder : public raft_message_builder_base<open_session_response_builder, raft::fbs::open_session_response>
+    class open_session_response_builder : public log_entry_command_builder_base<open_session_response_builder, raft::fbs::open_session_response>
     {
     private:
       uint64_t session_id_ = 0;
@@ -1680,7 +1845,7 @@ simple_configuration_description_builder to()
       }
     };
 
-    class close_session_request_builder : public raft_message_builder_base<close_session_request_builder, raft::fbs::close_session_request>
+    class close_session_request_builder : public log_entry_command_builder_base<close_session_request_builder, raft::fbs::close_session_request>
     {
     private:
       uint64_t session_id_ = 0;
@@ -1702,7 +1867,7 @@ simple_configuration_description_builder to()
       }
     };
 
-    class close_session_response_builder : public raft_message_builder_base<close_session_response_builder, raft::fbs::close_session_response>
+    class close_session_response_builder : public log_entry_command_builder_base<close_session_response_builder, raft::fbs::close_session_response>
     {
     public:
       void preinitialize()
@@ -1714,7 +1879,7 @@ simple_configuration_description_builder to()
       }	
     };
 
-    class linearizable_command_builder : public raft_message_builder_base<linearizable_command_builder, raft::fbs::linearizable_command>
+    class linearizable_command_builder : public log_entry_command_builder_base<linearizable_command_builder, raft::fbs::linearizable_command>
     {
     private:
       uint64_t session_id_ = 0;

@@ -126,6 +126,12 @@ namespace raft {
       boost::endian::little_uint64_t sequence_number;
     };
 
+    class little_log_entry_command
+    {
+    public:
+      uint8_t type;
+    };
+
     class little_checkpoint_header
     {
     public:
@@ -138,8 +144,26 @@ namespace raft {
       uint8_t type;
     };
 
+    class log_entry_command_view_deserialization
+    {
+    private:
+      raft::native::log_entry_command cmd_;
+    public:
+      log_entry_command_view_deserialization(messages::log_entry_traits_type::const_arg_type le);
+      log_entry_command_view_deserialization(log_entry_command_view_deserialization &&) = default;
+      log_entry_command_view_deserialization(const log_entry_command_view_deserialization &) = delete;
+      log_entry_command_view_deserialization & operator=(log_entry_command_view_deserialization &&) = default;
+      log_entry_command_view_deserialization & operator=(const log_entry_command_view_deserialization &) = delete;
+      log_entry_command_traits::const_arg_type view() const
+      {
+        return &cmd_;
+      }
+    };
+
     struct serialization
     {
+      typedef log_entry_command_view_deserialization log_entry_command_view_deserialization_type;
+
       static std::size_t serialize_helper(raft::mutable_slice && b, const std::string& str)
       {
 	boost::endian::little_uint32_t * data_size = reinterpret_cast<boost::endian::little_uint32_t *>(b.data());
@@ -199,6 +223,29 @@ namespace raft {
 	return sz;
       }
 
+      static std::size_t serialize_helper(raft::mutable_slice && b, const raft::native::open_session_request & msg)
+      {
+        return sizeof(little_open_session_request);
+      }
+
+      static std::size_t serialize_helper(raft::mutable_slice && b, const raft::native::close_session_request & msg)
+      {
+	auto * buf = reinterpret_cast<little_close_session_request *>(b.data());
+	buf->session_id = msg.session_id;
+        return sizeof(little_close_session_request);
+      }
+      
+      static std::size_t serialize_helper(raft::mutable_slice && b, const raft::native::linearizable_command & msg)
+      {
+	auto * buf = reinterpret_cast<little_linearizable_command *>(b.data());
+	buf->session_id = msg.session_id;
+	buf->first_unacknowledged_sequence_number = msg.first_unacknowledged_sequence_number;
+	buf->sequence_number = msg.sequence_number;
+	std::size_t sz = sizeof(little_linearizable_command);
+	sz += serialize_helper(b+sz, msg.command);
+        return sz;
+      }
+
       static client_result convert_client_result(uint8_t val)
       {
 	switch(val) {
@@ -210,6 +257,8 @@ namespace raft {
 	  return RETRY;
 	case 3:
 	  return NOT_LEADER;
+	case 4:
+	  return SESSION_EXPIRED;
 	default:
 	  throw std::runtime_error("Invalid client result");
 	}
@@ -294,6 +343,56 @@ namespace raft {
 	return sz;
       }
 
+      static std::size_t deserialize_helper(raft::slice && b, raft::native::messages::open_session_request_type & msg)
+      {
+        return sizeof(little_open_session_request);
+      }
+    
+      static std::size_t deserialize_helper(raft::slice && b, raft::native::messages::close_session_request_type & msg)
+      {
+	BOOST_ASSERT(b.size() >= sizeof(little_close_session_request));
+	auto buf = reinterpret_cast<const little_close_session_request *>(b.data());
+	msg.session_id = buf->session_id;
+        return sizeof(little_close_session_request);
+      }
+    
+      static std::size_t deserialize_helper(raft::slice && b, raft::native::messages::linearizable_command_type & msg)
+      {
+	BOOST_ASSERT(b.size() >= sizeof(little_linearizable_command));
+	auto buf = reinterpret_cast<const little_linearizable_command *>(b.data());
+	msg.session_id = buf->session_id;
+	msg.first_unacknowledged_sequence_number = buf->first_unacknowledged_sequence_number;
+	msg.sequence_number = buf->sequence_number;
+	std::size_t sz = sizeof(little_linearizable_command);
+	sz += deserialize_helper(b+sz, msg.command);
+	return sz;
+      }
+    
+      static std::size_t deserialize_helper(raft::slice && b, raft::native::messages::log_entry_command_type & cmd)
+      {
+	BOOST_ASSERT(b.size() >= sizeof(little_log_entry_command));
+	const little_log_entry_command * log_buf = reinterpret_cast<const little_log_entry_command *>(b.data());
+	std::size_t sz = sizeof(little_log_entry_command);
+	switch(log_buf->type) {
+	case 0:
+	  cmd.type = raft::native::log_entry_command::OPEN_SESSION;
+          sz += serialization::deserialize_helper(b+sz, cmd.open_session);
+	  break;
+	case 1:
+	  cmd.type = raft::native::log_entry_command::CLOSE_SESSION;
+          sz += serialization::deserialize_helper(b+sz, cmd.close_session);
+	  break;
+	case 2:
+	  cmd.type = raft::native::log_entry_command::LINEARIZABLE_COMMAND;
+          sz += serialization::deserialize_helper(b+sz, cmd.command);
+	  break;
+	default:
+	  // TODO: error handling
+	  break;
+	}
+	return sz;
+      }
+    
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(const raft::native::log_entry<raft::native::configuration_description>& entry);
 	
       static raft::native::messages::request_vote_type deserialize_request_vote(std::pair<raft::slice, raft::util::call_on_delete> && b)
@@ -367,6 +466,8 @@ namespace raft {
 	msg.result = convert_client_result(buf->result);
 	msg.index = buf->index;
 	msg.leader_id = buf->leader_id;
+	std::size_t sz = sizeof(little_client_response);
+	sz += deserialize_helper(b.first+sz, msg.response);
 	return msg;
       }
     
@@ -535,12 +636,16 @@ namespace raft {
 
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::client_response_type && msg)
       {
-	auto buf = new little_client_response();
+	// TODO: Make sure the msg fits in our buffer; either throw or support by allocating a new buffer
+	raft::mutable_slice b(new uint8_t [1024], 1024);
+	auto * buf = reinterpret_cast<little_client_response *>(b.data());
 	buf->result = msg.result;
 	buf->index = msg.index;
 	buf->leader_id = msg.leader_id;
-	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_client_response)),
-								  [buf]() { delete buf; });
+	auto sz = sizeof(little_client_response);
+	sz += serialize_helper(b+sz, msg.response);
+	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
       }
     
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::set_configuration_request_type && msg)
@@ -633,12 +738,46 @@ namespace raft {
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::linearizable_command_type && msg)
       {
 	raft::mutable_slice b(new uint8_t [1024], 1024);
-	auto * buf = reinterpret_cast<little_linearizable_command *>(b.data());
-	buf->session_id = msg.session_id;
-	buf->first_unacknowledged_sequence_number = msg.first_unacknowledged_sequence_number;
-	buf->sequence_number = msg.sequence_number;
-	std::size_t sz = sizeof(little_linearizable_command);
-	sz += serialize_helper(b+sz, msg.command);
+        auto sz = serialize_helper(b+0, msg);
+	// auto * buf = reinterpret_cast<little_linearizable_command *>(b.data());
+	// buf->session_id = msg.session_id;
+	// buf->first_unacknowledged_sequence_number = msg.first_unacknowledged_sequence_number;
+	// buf->sequence_number = msg.sequence_number;
+	// std::size_t sz = sizeof(little_linearizable_command);
+	// sz += serialize_helper(b+sz, msg.command);
+	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
+      }
+
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize_log_entry_command(raft::native::messages::open_session_request_type && msg)
+      {
+	raft::mutable_slice b(new uint8_t [1024], 1024);
+	auto * buf = reinterpret_cast<little_log_entry_command *>(b.data());
+        buf->type = raft::native::log_entry_command::OPEN_SESSION;
+        std::size_t sz = sizeof(little_log_entry_command);
+        sz += serialize_helper(b+sz, msg);
+	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
+      }
+
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize_log_entry_command(raft::native::messages::close_session_request_type && msg)
+      {
+	raft::mutable_slice b(new uint8_t [1024], 1024);
+	auto * buf = reinterpret_cast<little_log_entry_command *>(b.data());
+        buf->type = raft::native::log_entry_command::CLOSE_SESSION;
+        std::size_t sz = sizeof(little_log_entry_command);
+        sz += serialize_helper(b+sz, msg);
+	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
+      }
+
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize_log_entry_command(raft::native::messages::linearizable_command_type && msg)
+      {
+	raft::mutable_slice b(new uint8_t [1024], 1024);
+	auto * buf = reinterpret_cast<little_log_entry_command *>(b.data());
+        buf->type = raft::native::log_entry_command::LINEARIZABLE_COMMAND;
+        std::size_t sz = sizeof(little_log_entry_command);
+        sz += serialize_helper(b+sz, msg);
 	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
 	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
       }
@@ -649,6 +788,13 @@ namespace raft {
       auto ptr = new uint8_t [1024];
       std::size_t sz = serialize_helper(raft::mutable_slice(ptr, 1024), entry);
       return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
+    }
+
+    inline log_entry_command_view_deserialization::log_entry_command_view_deserialization(messages::log_entry_traits_type::const_arg_type le)
+    {
+      BOOST_ASSERT(messages::log_entry_traits_type::is_command(le));
+      auto s = messages::log_entry_traits_type::data(le);
+      serialization::deserialize_helper(std::move(s), cmd_);
     }
   }
 }

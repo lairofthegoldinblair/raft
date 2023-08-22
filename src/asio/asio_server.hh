@@ -14,6 +14,7 @@
 #include "leveldb_log.hh"
 #include "protocol.hh"
 #include "slice.hh"
+#include "state_machine/session.hh"
 
 namespace raft {
   namespace asio {
@@ -188,7 +189,7 @@ namespace raft {
 							      return;
 							    }
 							    BOOST_LOG_TRIVIAL(info) << "asio_tcp_communicator " << endpoint_ << " connected to " << addr_copy;
-							    BOOST_LOG_TRIVIAL(debug) << "asio_tcp_communicator " << endpoint_ << " sending " << boost::asio::buffer_size(buf) <<
+							    BOOST_LOG_TRIVIAL(trace) << "asio_tcp_communicator " << endpoint_ << " sending " << boost::asio::buffer_size(buf) <<
 							      " bytes for operation " << reinterpret_cast<const rpc_header *>(buf[0].data())->operation <<
 							      " to " << sockets_[addr_copy]->peer_endpoint;
 							    boost::asio::async_write(this->sockets_[addr_copy]->peer_socket,
@@ -198,7 +199,7 @@ namespace raft {
 						    });
 	  
 	} else {
-	  BOOST_LOG_TRIVIAL(debug) << "asio_tcp_communicator " << endpoint_ << " sending " << boost::asio::buffer_size(buf) <<
+	  BOOST_LOG_TRIVIAL(trace) << "asio_tcp_communicator " << endpoint_ << " sending " << boost::asio::buffer_size(buf) <<
 	      " bytes for operation " << reinterpret_cast<const rpc_header *>(buf[0].data())->operation <<
 	      " to " << sit->second->peer_endpoint;
 	  boost::asio::async_write(sit->second->peer_socket,
@@ -268,7 +269,7 @@ namespace raft {
 	}
 	BOOST_LOG_TRIVIAL(trace) << "raft_receiver at " << endpoint_ << " handle_header_read : "  << raft::slice(reinterpret_cast<const uint8_t *>(&header_), bytes_transferred);
 	BOOST_ASSERT(bytes_transferred == sizeof(rpc_header));
-	BOOST_ASSERT(header_.magic == rpc_header::MAGIC);
+	BOOST_ASSERT(header_.magic == rpc_header::MAGIC());
 	BOOST_ASSERT(header_.payload_length > 0);
 	boost::asio::async_read(this->socket_,
 				boost::asio::buffer(&buffer_[0], header_.payload_length),
@@ -276,7 +277,8 @@ namespace raft {
       }
       
     public:
-      raft_receiver(boost::asio::ip::tcp::socket && s, boost::asio::ip::tcp::endpoint && e, dispatcher_type && dispatcher)
+      template<typename _Callback>
+      raft_receiver(boost::asio::ip::tcp::socket && s, boost::asio::ip::tcp::endpoint && e, _Callback && dispatcher)
 	:
 	socket_(std::move(s)),
 	endpoint_(std::move(e)),
@@ -292,7 +294,7 @@ namespace raft {
       }
     };
 
-    template<typename _Messages, typename _Builders, typename _Serialization, typename _Protocol, typename _Client>
+    template<typename _Messages, typename _Builders, typename _Serialization, typename _Protocol, typename _Client, typename _ClientSessionManager>
     class client_dispatcher
     {
     public:
@@ -301,13 +303,16 @@ namespace raft {
       typedef _Builders builders_type;
       typedef _Protocol protocol_type;
       typedef _Client client_type;
+      typedef _ClientSessionManager session_manager_type;
     private:
       protocol_type & protocol_;
+      session_manager_type & session_manager_;
       client_type * client_;
     public:
-      client_dispatcher(protocol_type & protocol)
+      client_dispatcher(protocol_type & protocol, session_manager_type & session_manager)
     	:
     	protocol_(protocol),
+        session_manager_(session_manager),
     	client_(nullptr)
       {
       }
@@ -328,6 +333,21 @@ namespace raft {
     	    protocol_.on_set_configuration(*client_, serialization_type::deserialize_set_configuration_request(buf, std::move(deleter)));
     	    break;
     	  }
+        case serialization_type::OPEN_SESSION_REQUEST:
+          {
+    	    session_manager_.on_open_session(client_, serialization_type::deserialize_open_session_request(buf, std::move(deleter)), std::chrono::steady_clock::now());
+            break;
+          }
+        case serialization_type::CLOSE_SESSION_REQUEST:
+          {
+    	    session_manager_.on_close_session(client_, serialization_type::deserialize_close_session_request(buf, std::move(deleter)), std::chrono::steady_clock::now());
+            break;
+          }
+        case serialization_type::LINEARIZABLE_COMMAND:
+          {
+    	    session_manager_.on_linearizable_command(client_, serialization_type::deserialize_linearizable_command(buf, std::move(deleter)), std::chrono::steady_clock::now());
+            break;
+          }
     	default:
     	  BOOST_LOG_TRIVIAL(warning) << "client_dispatcher received unsupported operation " << op;
     	  break;
@@ -361,15 +381,19 @@ namespace raft {
     };
 
     // This is both a client communicator and receiver
-    template<typename _Messages, typename _Builders, typename _Serialization, typename _Protocol>
-    class raft_client : public raft_receiver<client_dispatcher<_Messages, _Builders, _Serialization, _Protocol, raft_client<_Messages, _Builders, _Serialization, _Protocol>>>, public raft_client_base<_Messages>
+    template<typename _Messages, typename _Builders, typename _Serialization, typename _Protocol, typename _ClientSessionManager>
+    class raft_client : public raft_receiver<client_dispatcher<_Messages, _Builders, _Serialization, _Protocol, raft_client<_Messages, _Builders, _Serialization, _Protocol, _ClientSessionManager>, _ClientSessionManager>>, public raft_client_base<_Messages>
     {
     public:
-      typedef client_dispatcher<_Messages, _Builders, _Serialization, _Protocol, raft_client<_Messages, _Builders, _Serialization, _Protocol>> dispatcher_type;
+      typedef client_dispatcher<_Messages, _Builders, _Serialization, _Protocol, raft_client<_Messages, _Builders, _Serialization, _Protocol, _ClientSessionManager>, _ClientSessionManager> dispatcher_type;
       typedef typename dispatcher_type::messages_type::client_result_type client_result_type;
       typedef typename dispatcher_type::serialization_type serialization_type;
       typedef typename dispatcher_type::builders_type::client_response_builder_type client_response_builder;
       typedef typename dispatcher_type::builders_type::set_configuration_response_builder_type set_configuration_response_builder;
+      typedef typename dispatcher_type::messages_type::open_session_response_traits_type::arg_type open_session_response_arg_type;
+      typedef typename dispatcher_type::messages_type::close_session_response_traits_type::arg_type close_session_response_arg_type;
+      typedef typename dispatcher_type::messages_type::client_response_traits_type::arg_type client_response_arg_type;
+
       raft_client(boost::asio::ip::tcp::socket && s, boost::asio::ip::tcp::endpoint && e, dispatcher_type && dispatcher)
 	:
 	raft_receiver<dispatcher_type>(std::move(s), std::move(e), std::move(dispatcher))
@@ -383,8 +407,8 @@ namespace raft {
       {
 	  uint8_t * mem = new uint8_t [128*1024];
 	  auto buf = serialization_type::serialize(boost::asio::buffer(mem, 128*1024), std::move(msg));
-	  BOOST_LOG_TRIVIAL(debug) << "raft_client sending " << boost::asio::buffer_size(buf.first) <<
-	      " bytes for operation " << reinterpret_cast<const rpc_header *>(buf.first[0].data())->operation <<
+	  BOOST_LOG_TRIVIAL(trace) << "raft_client sending " << boost::asio::buffer_size(buf.first) <<
+	      " bytes for response to operation " << reinterpret_cast<const rpc_header *>(buf.first[0].data())->operation <<
 	      " to " << this->endpoint_;
 	  boost::asio::async_write(this->socket_,
 				   buf.first,
@@ -418,6 +442,19 @@ namespace raft {
 	}
 	auto resp = bld.finish();
 	send(std::move(resp));	
+      }
+
+      void send_open_session_response(open_session_response_arg_type && resp)
+      {
+        send(std::move(resp));
+      }
+      void send_close_session_response(close_session_response_arg_type && resp)
+      {
+        send(std::move(resp));
+      }
+      void send_client_response(client_response_arg_type && resp)
+      {
+        send(std::move(resp));
       }
     };
 
@@ -479,18 +516,22 @@ namespace raft {
 	  break;
 	}
       }
-    };
-    
-    template<typename _Messages, typename _Builders, typename _Serialization>
+    };    
+
+    template<typename _Messages, typename _Builders, typename _Serialization, typename _StateMachine>
     class tcp_server : public raft::log_header_write
     {
     public:
       typedef typename _Messages::log_entry_type log_entry_type;
+      typedef typename _Messages::log_entry_traits_type::const_arg_type log_entry_const_arg_type;
       typedef serialization<_Messages, _Serialization> serialization_type;
       typedef peer_dispatcher<_Messages, _Builders, _Serialization> peer_dispatcher_type;
       typedef raft_receiver<peer_dispatcher_type> peer_receiver_type;
       typedef typename raft_protocol_type_builder<_Messages, _Builders, _Serialization>::type raft_protocol_type;
-      typedef raft_client<_Messages, _Builders, _Serialization, raft_protocol_type> raft_client_type;
+      typedef _StateMachine state_machine_type;
+      typedef ::raft::state_machine::client_session_manager<_Messages, _Builders, _Serialization, raft_protocol_type, tcp_server<_Messages, _Builders, _Serialization, state_machine_type>, state_machine_type> session_manager_type;
+      typedef raft_client<_Messages, _Builders, _Serialization, raft_protocol_type, session_manager_type> raft_client_type;
+      typedef typename raft_client_type::dispatcher_type client_dispatcher_type;
     private:
       boost::asio::io_service & io_service_;
       boost::asio::deadline_timer timer_;
@@ -522,13 +563,20 @@ namespace raft {
       typename raft_protocol_type::checkpoint_data_store_type store_;
       typename raft_protocol_type::configuration_manager_type config_manager_;
       std::shared_ptr<raft_protocol_type> protocol_;
+      std::shared_ptr<session_manager_type> session_manager_;
+      state_machine_type state_machine_;
+      int32_t protocol_timer_downsample_ = 1;
+      
 
       void handle_timer(boost::system::error_code ec)
       {
 	if (!!protocol_) {
-	  protocol_->on_timer();
-	  timer_.expires_from_now(boost::posix_time::milliseconds(1));
-	  timer_.async_wait(std::bind(&tcp_server::handle_timer, this, std::placeholders::_1));
+          if (--protocol_timer_downsample_ <= 0) {
+            // Want the logs to run much faster than the protocol since
+            // I haven't implemented append entry pacing.
+            protocol_->on_timer();
+            protocol_timer_downsample_ = 10;
+          }
 
 	  boost::array<uint8_t, 128*1024> tmp_buf;
 	  if (!l_.empty()) {
@@ -537,6 +585,10 @@ namespace raft {
 	    if (last_log_index_written_ < l_.start_index()) {
 	      last_log_index_written_ = l_.start_index();
 	    }
+            if (last_log_index_written_ < l_.last_index()) {
+              BOOST_LOG_TRIVIAL(info) << "[raft::asio::tcp_server::handle_timer] Server(" << config_manager_.configuration().my_cluster_id()
+                                      << ") writing log records [" << last_log_index_written_ << ", " << l_.last_index() << ")";
+            }
 	    for(;last_log_index_written_ < l_.last_index(); ++last_log_index_written_) {
 	      auto serialize_bufs = serialization_type::serialize(boost::asio::buffer(tmp_buf), l_.entry(last_log_index_written_));
 	      for(auto it = boost::asio::buffer_sequence_begin(serialize_bufs.first), e = boost::asio::buffer_sequence_end(serialize_bufs.first);
@@ -548,16 +600,22 @@ namespace raft {
 
 	    // Sync to disk and let the protocol know when it's done
 	    if (!log_sync_in_progress_ && last_log_index_synced_ < last_log_index_written_) {
+              BOOST_LOG_TRIVIAL(info) << "[raft::asio::tcp_server::handle_timer] Server(" << config_manager_.configuration().my_cluster_id()
+                                      << ") syncing log to disk";
 	      log_sync_in_progress_ = true;
 	      uint64_t idx = last_log_index_written_;
 	      log_file_->flush_and_sync([this,idx](boost::system::error_code) {
-		  this->protocol_->on_log_sync(idx);
-		  this->last_log_index_synced_ = idx;
-		  this->log_sync_in_progress_ = false;
-		});
+                                          BOOST_LOG_TRIVIAL(info) << "[raft::asio::tcp_server::handle_timer] Server(" << config_manager_.configuration().my_cluster_id()
+                                                                  << ") log sync completed up to index " << idx;
+                                          this->protocol_->on_log_sync(idx);
+                                          this->last_log_index_synced_ = idx;
+                                          this->log_sync_in_progress_ = false;
+                                        });
 	    }
 	  }	  
 	}
+        timer_.expires_from_now(boost::posix_time::milliseconds(1));
+        timer_.async_wait(std::bind(&tcp_server::handle_timer, this, std::placeholders::_1));
       }
       
       void peer_handle_accept(boost::system::error_code ec)
@@ -568,7 +626,7 @@ namespace raft {
 	}
 	
 	BOOST_LOG_TRIVIAL(info) << "Server(" << config_manager_.configuration().my_cluster_id() << ") raft::asio::tcp_server got connection on " << peer_listen_endpoint_;
-	receivers_.push_back(std::make_shared<peer_receiver_type>(std::move(peer_listen_socket_), std::move(peer_listen_endpoint_), *protocol_.get()));
+	receivers_.push_back(std::make_shared<peer_receiver_type>(std::move(peer_listen_socket_), std::move(peer_listen_endpoint_), peer_dispatcher_type(*protocol_.get())));
 	BOOST_LOG_TRIVIAL(info) << "Server(" << config_manager_.configuration().my_cluster_id() << ") raft::asio::tcp_server listening on " << peer_listener_.local_endpoint();
 	peer_listener_.async_accept(peer_listen_socket_, peer_listen_endpoint_,
 			       std::bind(&tcp_server::peer_handle_accept, this, std::placeholders::_1));
@@ -582,7 +640,7 @@ namespace raft {
 	}
 	
 	BOOST_LOG_TRIVIAL(info) << "Server(" << config_manager_.configuration().my_cluster_id() << ") raft::asio::tcp_server got connection on " << client_listen_endpoint_;
-	clients_.insert(std::make_unique<raft_client_type>(std::move(client_listen_socket_), std::move(client_listen_endpoint_), *protocol_.get()));
+	clients_.insert(std::make_unique<raft_client_type>(std::move(client_listen_socket_), std::move(client_listen_endpoint_), client_dispatcher_type(*protocol_.get(), *session_manager_.get())));
 	BOOST_LOG_TRIVIAL(info) << "Server(" << config_manager_.configuration().my_cluster_id() << ") raft::asio::tcp_server listening on " << client_listener_.local_endpoint();
 	client_listener_.async_accept(client_listen_socket_, client_listen_endpoint_,
 			       std::bind(&tcp_server::client_handle_accept, this, std::placeholders::_1));
@@ -633,8 +691,12 @@ namespace raft {
 	l_.update_header(0, raft_protocol_type::INVALID_PEER_ID);
 	protocol_.reset(new raft_protocol_type(comm_, l_, store_, config_manager_));
 
+        // Create the session manager and connect it up to the protocol box
+        session_manager_.reset(new session_manager_type(*protocol_.get(), *this, state_machine_));
+        protocol_->set_state_machine([this](log_entry_const_arg_type le, uint64_t idx, size_t leader_id) { this->session_manager_->apply(le, idx, leader_id); });
+        
 	// Setup periodic timer callbacks from ASIO
-	timer_.expires_from_now(boost::posix_time::milliseconds(1));
+	timer_.expires_from_now(boost::posix_time::milliseconds(server_id==0 ? 1 : server_id*100));
 	timer_.async_wait(std::bind(&tcp_server::handle_timer, this, std::placeholders::_1));
 
 	// Setup listener for interprocess communication
@@ -673,6 +735,35 @@ namespace raft {
 					  ") raft::asio::tcp_server completed sync log header sync";
 					this->protocol_->on_log_header_sync();
 				      });
+      }
+
+      ///
+      /// Client Session Communicator
+      ///
+      typedef _Messages messages_type;
+      typedef typename messages_type::open_session_response_traits_type::arg_type open_session_response_arg_type;
+      typedef typename messages_type::close_session_response_traits_type::arg_type close_session_response_arg_type;
+      typedef typename messages_type::client_response_traits_type::arg_type client_response_arg_type;
+      // These make tcp_server a valid client session communicator
+      typedef raft_client_type * endpoint_type;
+
+      void send_open_session_response(open_session_response_arg_type && resp, endpoint_type ep)
+      {
+        ep->send_open_session_response(std::move(resp));
+      }
+      void send_close_session_response(close_session_response_arg_type && resp, endpoint_type ep)
+      {
+        ep->send_close_session_response(std::move(resp));
+      }
+      void send_client_response(client_response_arg_type && resp, endpoint_type ep)
+      {
+        ep->send_client_response(std::move(resp));
+      }
+
+      // For testing
+      const state_machine_type & state_machine() const
+      {
+        return state_machine_;
       }
     };
   }

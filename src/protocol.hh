@@ -1,7 +1,12 @@
 #ifndef __RAFT_PROTOCOL_HH__
 #define __RAFT_PROTOCOL_HH__
 
+#include <functional>
 #include <random>
+#include <tuple>
+
+#include <boost/lexical_cast.hpp>
+#include <boost/log/trivial.hpp>
 
 #include "configuration.hh"
 #include "checkpoint.hh"
@@ -192,12 +197,14 @@ namespace raft {
     // Log types
     typedef typename messages_type::log_entry_type log_entry_type;
     typedef typename messages_type::log_entry_traits_type log_entry_traits_type;
+    typedef typename messages_type::log_entry_traits_type::const_arg_type log_entry_const_arg_type;
     typedef in_memory_log<log_entry_type, log_entry_traits_type> log_type;
     typedef typename log_type::index_type log_index_type;
 
     // Message argument types and traits for looking at them.    We don't have concrete/value types
     // so we can not call c'tors/d'tors etc.   That is quite intentional.
     typedef typename messages_type::client_request_traits_type client_request_traits_type;
+    typedef typename messages_type::client_result_type client_result_type;
     typedef typename messages_type::request_vote_traits_type request_vote_traits_type;
     typedef typename messages_type::request_vote_traits_type::arg_type request_vote_arg_type;
     typedef typename messages_type::vote_response_traits_type vote_response_traits_type;
@@ -237,7 +244,6 @@ namespace raft {
       uint64_t term;
       // TODO: Do we want/need this?  Time when the client request should simply timeout.
     };
-
 
     communicator_type & comm_;
 
@@ -283,6 +289,12 @@ namespace raft {
     // log entry.  When a majority accept the entry, it is committed.
     // N.B.  This points one past the last synced entry in the log.
     uint64_t last_synced_index_;
+
+    // One past the last log index successfully applied to the state machine.
+    uint64_t last_applied_index_;
+
+    // This is the state machine to which committed log entries are applied
+    std::function<void(log_entry_const_arg_type, uint64_t, std::size_t)> state_machine_;
 
     // State related to checkpoint processing
     server_checkpoint_type checkpoint_;
@@ -358,13 +370,16 @@ namespace raft {
       // of the checkpoint.
       return log_.empty() ? checkpoint_.last_checkpoint_cluster_time_ : log_.last_entry_cluster_time();
     }
+    // Inserting this public/private pair to avoid colliding some some subsequent refactoring
+  public:
     uint64_t last_log_entry_index() const {
       return log_.last_index();
-    }        
+    }
+  private:
     uint64_t log_start_index() const {
       return log_.start_index();
     }
-    
+
     // Used by FOLLOWER and CANDIDATE to decide when to initiate a new election.
     std::chrono::time_point<std::chrono::steady_clock> election_timeout_;
 
@@ -591,6 +606,9 @@ namespace raft {
 	"," << committed << ")";
       update_last_committed_index(committed);
 
+      // Now try to apply any newly committed log entries
+      apply_log_entries();
+
       // TODO: Check use of >= vs. >
       if (state_ == LEADER && last_committed_index_ > configuration().configuration_id()) {
 	if (!configuration().includes_self()) {
@@ -623,23 +641,6 @@ namespace raft {
 	  BOOST_ASSERT(configuration().is_stable());
 	}
       }
-    
-      // Based on the new commit point we may be able to complete some client requests/configuration change
-      // if we are leader or we may be able to respond to the leader for some
-      // append entries requests if we are follower
-      auto it = client_response_continuations_.begin();
-      auto e = client_response_continuations_.upper_bound(last_committed_index_);
-      for(; it != e; ++it) {
-	BOOST_ASSERT(it->second.index <= last_committed_index_);
-	// If I lost leadership I can't guarantee that I committed.
-	// TODO: Come up with some interesting test case here (e.g. we
-	// get a quorum to ack the entry but I've lost leadership by then;
-	// is it really not successful???).  Actually the answer is that the
-	// commit of a log entry occurs when a majority of peers have written
-	// the log entry to disk.  
-	it->second.client->on_client_response(it->second.term == current_term_ ? messages_type::client_result_success() : messages_type::client_result_not_leader(), it->second.index, leader_id_);
-      }
-      client_response_continuations_.erase(client_response_continuations_.begin(), e);
     }
 
     // Actually update the commit point and execute any necessary actions
@@ -651,6 +652,47 @@ namespace raft {
 	BOOST_ASSERT(config_change_client_ != nullptr);
 	config_change_client_->on_configuration_response(messages_type::client_result_success());
 	config_change_client_ = nullptr;
+      }
+      // Based on the new commit point we may be able to complete some client requests/configuration change
+      // if we are leader or we may be able to respond to the leader for some
+      // append entries requests if we are follower
+      {
+        auto it = client_response_continuations_.begin();
+        auto e = client_response_continuations_.upper_bound(last_committed_index_);
+        for(; it != e; ++it) {
+          BOOST_ASSERT(it->second.index <= last_committed_index_);
+          // If I lost leadership I can't guarantee that I committed.
+          // TODO: Come up with some interesting test case here (e.g. we
+          // get a quorum to ack the entry but I've lost leadership by then;
+          // is it really not successful???).  Actually the answer is that the
+          // commit of a log entry occurs when a majority of peers have written
+          // the log entry to disk.  
+          it->second.client->on_client_response(it->second.term == current_term_ ? messages_type::client_result_success() : messages_type::client_result_not_leader(), it->second.index, leader_id_);
+        }
+        client_response_continuations_.erase(client_response_continuations_.begin(), e);
+      }
+    }
+
+    const char * log_entry_type_string(log_entry_const_arg_type e)
+    {
+      if (log_entry_traits_type::is_command(e)) {
+        return "COMMAND";
+      } else if (log_entry_traits_type::is_configuration(e)) {
+        return "CONFIGURATION";
+      } else if (log_entry_traits_type::is_noop(e)) {
+        return "NOOP";
+      } else {
+        return "UNKNOWN";
+      }
+    }
+
+    void apply_log_entries()
+    {
+      if (last_applied_index_ < last_committed_index_) {
+        BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+          " initiating application of log entry " << last_applied_index_ << " of type " <<
+          log_entry_type_string(&log_.entry(last_applied_index_)) << " to state machine";
+        state_machine_(&log_.entry(last_applied_index_), last_applied_index_, leader_id_);
       }
     }
 
@@ -778,8 +820,10 @@ namespace raft {
       // TODO: Do we need to wait for log flush to update this?  I don't see why since the leader has determined
       // this value (possibly without our vote).  On the other hand there might be a problem if we allow a state machine
       // to have entries applied without having them be persistent yet; I think this concern would be valid if the state machine was
-      // persisting recoverable state outside of the Raft checkpoint.  Ongaro makes it clear that there is no need
-      // to sync this to disk here.
+      // persisting recoverable state outside of the Raft checkpoint.  I think a state machine persisted data outside of the
+      // checkpoint then it would need database-like functionality to rollback such changes on startup when it realizes that
+      // the committed part of its log is behind (meaning compensation info would have to be persisted outside the checkpoint as well).
+      // In any case, Ongaro makes it clear that there is no need to sync this to disk here.
       if (last_committed_index_ <ae::leader_commit_index(req)) {
 	update_last_committed_index(ae::leader_commit_index(req));
       }
@@ -826,6 +870,9 @@ namespace raft {
 	  "," << (ae::previous_log_index(req) + ae::num_entries(req)) << ") but already had all log entries";
       }
 
+      // Log entries in place, now try to apply the committed ones
+      apply_log_entries();
+
       // N.B. The argument req is no longer valid at this point. It has either been free or has ownership has been passed to the
       // log
 
@@ -833,6 +880,11 @@ namespace raft {
       // the leader.  It is also possible that we already had everything the leader had and that it is already
       // on disk; if that is the case we can respond to the leader right now with success.
       if (entry_end_index > last_synced_index_) {
+	BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+	  " last_synced_index_=" << last_synced_index_ <<
+          ", waiting for log sync before sending append_entry response:  request_term_number=" << req_term_number <<
+	  " begin_index=" << entry_log_index <<
+	  " last_index=" << entry_end_index;
 	// Create a continuation for when the log is flushed to disk
 	// TODO: Better to use lambdas for the continuation?  That way we can include the code right here.
 	// The thing is that I don't know how to get the type of the corresponding lambda to store it.  I should
@@ -846,6 +898,11 @@ namespace raft {
       } else {
 	// TODO: Can I respond to more than what was requested?  Possibly useful idea for pipelined append_entry
 	// requests in which we can sync the log once for multiple append_entries.
+	BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+	  " sending append_entry response:  request_term_number=" << req_term_number <<
+	  " begin_index=" << entry_log_index <<
+	  " last_index=" << last_synced_index_ <<
+          " success=true";
 	comm_.append_entry_response(req_leader_id, get_peer_from_id(req_leader_id).address,
 				    my_cluster_id(),
 				    current_term_,
@@ -974,6 +1031,9 @@ namespace raft {
 	update_last_committed_index(checkpoint_.last_checkpoint_index_);
       }
 
+      // TODO: How to handle the state machine?  We just learned of commits that are incorporated into the
+      // checkpoint state, but we won't get the log entries corresponding to those commits, we can't call apply_log_entries here.
+
       // TODO: Now get the log in order.  If my log is consistent with the checkpoint then I
       // may want to keep some of it around.  For example, if I become leader then I may need to
       // bring some peers up to date and it is likely cheaper to send them some log entries
@@ -985,6 +1045,7 @@ namespace raft {
       if (last_log_entry_index() < checkpoint_.last_checkpoint_index_ ||
 	  (log_start_index() <= checkpoint_.last_checkpoint_index_ &&
 	   log_.term(checkpoint_.last_checkpoint_index_-1) != checkpoint_.last_checkpoint_term_)) {
+        // Now safe to truncate
 	log_.truncate_prefix(checkpoint_.last_checkpoint_index_);
 	log_.truncate_suffix(checkpoint_.last_checkpoint_index_);
 	configuration_.truncate_prefix(checkpoint_.last_checkpoint_index_);
@@ -1039,6 +1100,11 @@ namespace raft {
 	election_timeout_ = new_election_timeout(clock_now);
 	leader_id_ = INVALID_PEER_ID;
 	log_.update_header(current_term_, INVALID_PEER_ID);
+
+        // We do NOT request the log sync here because if we became follower
+        // due to vote request, the voted_for_ part of the header is potentially going
+        // to be updated.  We want to wait for that information before the sync is requested.
+        // That makes is really dangerous that some one forgets to issue the request.
 
 	// Cancel any pending configuration change
 	configuration().reset_staging_servers();
@@ -1184,12 +1250,16 @@ namespace raft {
       log_header_sync_required_(false),
       last_committed_index_(0),
       last_synced_index_(0),
+      last_applied_index_(0),
       checkpoint_(store),
       cluster_clock_(now),
       configuration_(config_manager),
       send_vote_requests_(false)
     {
-      election_timeout_ = new_election_timeout(now);
+      election_timeout_ = new_election_timeout(now);      
+
+      // Default dummy state machine that synchronously completes every entry as noop
+      state_machine_ = [this](log_entry_const_arg_type , uint64_t idx, size_t ) { this->on_command_applied(idx); };
 
       // TODO: Read the log if non-empty and apply configuration entries as necessary
       // TODO: This should be async.
@@ -1219,6 +1289,11 @@ namespace raft {
     {
     }
 
+    template<typename _Callback>
+    void set_state_machine(_Callback && state_machine)
+    {
+      state_machine_ = std::move(state_machine);
+    }
 
     // Events
     void on_timer()
@@ -1318,6 +1393,43 @@ namespace raft {
       }
     }
 
+    std::tuple<client_result_type, uint64_t, uint64_t> on_command(std::pair<raft::slice, raft::util::call_on_delete> && req)
+    {
+      return on_client_request(std::move(req), std::chrono::steady_clock::now());
+    }
+    
+    std::tuple<client_result_type, uint64_t, uint64_t> on_command(std::pair<raft::slice, raft::util::call_on_delete> && req,
+                                                                  std::chrono::time_point<std::chrono::steady_clock> clock_now)
+    {
+      switch(state_) {
+      case FOLLOWER:
+      case CANDIDATE:
+	{
+          BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+            " received command while not leader";
+	  // Not leader don't bother.
+	  return { messages_type::client_result_not_leader(), leader_id_, current_term_ };
+	}
+      case LEADER:
+	{
+	  // Create a log entry and try to replicate it
+	  // Append to the in memory log then we have to wait for
+	  // the new log entry to be replicated to a majority (TODO: to disk?)/committed before
+	  // returning to the client
+	  // auto indices = log_.append_command(current_term_, req.get_command_data());
+	  auto indices = log_.append(log_entry_traits_type::create_command(current_term_, cluster_clock_.advance(clock_now), std::move(req)));
+	  // TODO: Do we want to let the log know that we'd like a flush?
+	  // TODO: What triggers the sending of append_entries to peers?  Currently it is a timer
+	  // but that limits the minimum latency of replication.  Is that a problem?  I suppose we
+	  // could just call append_entries or on_timer here.
+          BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+            " received command, replicating log entry at index " << (indices.second-1);
+	  return { messages_type::client_result_success(), indices.second-1, current_term_ };
+	}
+      }
+      return { messages_type::client_result_not_leader(), leader_id_, current_term_ };
+    }
+
     void on_set_configuration(client_type & client, set_configuration_request_arg_type && req)
     {
       typedef set_configuration_request_traits_type scr;
@@ -1351,6 +1463,9 @@ namespace raft {
     {
       typedef request_vote_traits_type rv;
       if (rv::term_number(req) < current_term_) {
+        BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+          " received vote request at lower term " << rv::term_number(req) <<
+          " from candidate " << rv::candidate_id(req) << ", voting false.";
 	// Peer is behind the times, let it know
 	comm_.vote_response(rv::candidate_id(req), get_peer_from_id(rv::candidate_id(req)).address,
 			    my_cluster_id(),
@@ -1359,6 +1474,19 @@ namespace raft {
 			    false);
 	return;
       }
+
+      // Remember whether a header sync is outstanding at this point.  Probably better to
+      // make log_header_sync_required_ an enum rather than a bool.
+      // I'm really not sure about this logic.
+      // On the one hand, it's not clear that is makes sense to process a vote request at all if there is a
+      // header sync outstanding (e.g. what happens if we have to update term and voted_for; they are already in flight).
+      //
+      // My best theory is that this logic has been hanging around since some time early in development when become_follower
+      // issued a log header sync rather than just setting the flag.   The idea MAY have been that we wanted to avoid "double
+      // syncing".   However, become_follower changed to not do a sync automatically because it doesn't have all of the info
+      // that it needs regarding voted_for_.   Thus is now changes so simply set the flag and there is no need to suppress a sync
+      // in this method (indeed it would be bad not to sync if the header is updated in this method).
+      bool header_sync_already_outstanding = log_header_sync_required_;
       
       // QUESTION: Under what circumstances might we get req.term_number == current_term_ and nullptr == voted_for_?
       // ANSWER: I may have gotten a vote request from a candidate that bumped up my current_term_ but didn't have
@@ -1383,10 +1511,6 @@ namespace raft {
 	become_follower(rv::term_number(req), clock_now);
       }
 
-      // Remember whether a header sync is outstanding at this point.  Probably better to
-      // make log_header_sync_required_ an enum rather than a bool.
-      bool header_sync_already_outstanding = log_header_sync_required_;
-
       // TODO: Is it the case that every entry in a FOLLOWER log is committed?  No, since a FOLLOWER will receive log entries
       // from a LEADER that may not get quorum hence never get committed.  Therefore
       // the log completeness check is strictly stronger than "does the candidate have all my committed entries"?  How do we know that
@@ -1396,6 +1520,15 @@ namespace raft {
       // which gives a total ordering.  During any election cycle peers maximal with respect to the total ordering are possible leaders.
       bool candidate_log_more_complete_than_mine = rv::last_log_term(req) > last_log_entry_term() ||
 	(rv::last_log_term(req) == last_log_entry_term() && rv::last_log_index(req) >= last_log_entry_index());
+
+      BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_
+                               << " with current vote = " << (voted_for_ != nullptr ? boost::lexical_cast<std::string>(voted_for_->peer_id) : "null")
+                               << " candidate_log_more_complete_than_mine = rv::last_log_term(req) > last_log_entry_term() ||"
+                               << " (rv::last_log_term(req) == last_log_entry_term() && rv::last_log_index(req) >= last_log_entry_index()) = "
+                               << rv::last_log_term(req) << " > " << last_log_entry_term() << " || "
+                               << "(" << rv::last_log_term(req) << " == " << last_log_entry_term() << " && " << rv::last_log_index(req)
+                               << " >= " << last_log_entry_index() << ") = " << candidate_log_more_complete_than_mine;
+      
 
       // Vote at most once in each term and only vote for a candidate that has all of my committed log entries.
       // The point here is that Raft has the property that a canidate cannot become leader unless it has all committed entries; this
@@ -1408,7 +1541,9 @@ namespace raft {
       // is a bit clearer to me.
       if (rv::term_number(req) >= current_term_ && candidate_log_more_complete_than_mine && nullptr == voted_for_) {
 	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	  " voting for " << rv::candidate_id(req) << " at term " << rv::term_number(req);
+	  " voting for " << rv::candidate_id(req) << " at to become LEADER at term " << rv::term_number(req) <<
+          " as candidate has more complete log and no vote cast at this term." <<
+          " header_sync_already_outstanding = " << header_sync_already_outstanding;
 	become_follower(rv::term_number(req), clock_now);
 	voted_for_ = &peer_from_id(rv::candidate_id(req));
 	log_header_sync_required_ = true;
@@ -1520,12 +1655,18 @@ namespace raft {
 
       // I highly doubt a disk write can be reliably cancelled so we have to wait for
       // an outstanding one to complete.  Instead of queuing up just pretend the message is lost.
+      // TODO: Would it be better to queue the message and wait for a log header sync?
       if (!can_become_follower_at_term(ae::term_number(req))) {
 	BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " cannot advance to term " << ae::term_number(req) <<
 	  " due to outstanding log header sync.  Ignoring append_entry message.";
 	return;
       }
+
+      // Just for checking that log header doesn't change while a header sync is outstanding.
+      bool header_sync_already_outstanding = log_header_sync_required_;
+      auto current_log_header_term = log_.current_term();
+      auto current_log_header_voted_for = log_.voted_for();
 
       // At this point doesn't really matter what state I'm currently in
       // as I'm going to become a FOLLOWER.
@@ -1539,8 +1680,14 @@ namespace raft {
 	  " waiting for log header sync.  Queuing append_entry message from recipient " <<
 	  ae::recipient_id(req) << " previous_log_term " << ae::previous_log_term(req) <<
 	  " previous_log_index " << ae::previous_log_index(req);
-	log_.sync_header();
 	append_entry_header_sync_continuations_.push_back(std::move(req));
+        if (!header_sync_already_outstanding) {
+          log_.sync_header();
+        } else {
+          // become_follower didn't update election timeout
+          election_timeout_ = new_election_timeout(clock_now);
+          BOOST_ASSERT(current_log_header_term == log_.current_term() && current_log_header_voted_for == log_.voted_for());
+        }
       } else {
 	election_timeout_ = new_election_timeout(clock_now);
 	internal_append_entry(std::move(req), clock_now);
@@ -1569,6 +1716,9 @@ namespace raft {
 	if (can_become_follower_at_term(ae::term_number(resp))) {
 	  become_follower(ae::term_number(resp), clock_now);
 	  // TODO: What do I do here????  Is all the processing below still relevant?
+          // TODO: What happens if a log header sync is required?   Would all of the processing below
+          // have to wait until after the log header is synced?
+          BOOST_ASSERT(!log_header_sync_required_);
 	} else {
 	  // This may be impossible because if we are waiting for a log header flush
 	  // for current_term_ then we should never have been leader at current_term_
@@ -1936,6 +2086,8 @@ namespace raft {
  
       // Discard log entries
       // TODO: Understand the log sync'ing implications here
+      // TODO: Also make sure that all of these entries have completed being applied
+      // to state machine.
       log_.truncate_prefix(checkpoint_.last_checkpoint_index_);
       configuration_.truncate_prefix(checkpoint_.last_checkpoint_index_);
 
@@ -1948,6 +2100,16 @@ namespace raft {
 	last_log_entry_index() << ")";
 
       return true;
+    }
+
+    void on_command_applied(uint64_t log_index)
+    {
+      if (log_index >= last_applied_index_) {
+        BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+          " finished applying log entry " << log_index << " to state machine";
+        last_applied_index_ = log_index + 1;
+      }
+      apply_log_entries();
     }
 
 
@@ -1968,6 +2130,9 @@ namespace raft {
     uint64_t commit_index() const {
       return last_committed_index_;
     }
+    uint64_t applied_index() const {
+      return last_applied_index_;
+    }
     state get_state() const {
       return state_;
     }
@@ -1979,6 +2144,9 @@ namespace raft {
     }
     uint64_t cluster_time() const {
       return cluster_clock_.cluster_time();
+    }
+    uint64_t leader_id() const {
+      return leader_id_;
     }
   };
 }

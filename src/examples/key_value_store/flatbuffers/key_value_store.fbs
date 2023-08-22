@@ -1,0 +1,33 @@
+// IDL file for key_value_store
+
+namespace raft.examples.key_value_store.fbs;
+
+table put_request
+{
+  key:string;
+  value:string;
+}
+
+table put_response
+{
+}
+
+table get_request
+{
+  key:string;
+}
+
+table get_response
+{
+  value:string;
+}
+
+union any_message { put_request, put_response, get_request, get_response }
+
+table message
+{
+  inner:any_message;
+}
+
+root_type message;
+

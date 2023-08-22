@@ -82,6 +82,9 @@ struct close_session_responseBuilder;
 struct linearizable_command;
 struct linearizable_commandBuilder;
 
+struct log_entry_command;
+struct log_entry_commandBuilder;
+
 struct raft_message;
 struct raft_messageBuilder;
 
@@ -123,36 +126,108 @@ enum client_result : int8_t {
   client_result_FAIL = 1,
   client_result_RETRY = 2,
   client_result_NOT_LEADER = 3,
+  client_result_SESSION_EXPIRED = 4,
   client_result_MIN = client_result_SUCCESS,
-  client_result_MAX = client_result_NOT_LEADER
+  client_result_MAX = client_result_SESSION_EXPIRED
 };
 
-inline const client_result (&EnumValuesclient_result())[4] {
+inline const client_result (&EnumValuesclient_result())[5] {
   static const client_result values[] = {
     client_result_SUCCESS,
     client_result_FAIL,
     client_result_RETRY,
-    client_result_NOT_LEADER
+    client_result_NOT_LEADER,
+    client_result_SESSION_EXPIRED
   };
   return values;
 }
 
 inline const char * const *EnumNamesclient_result() {
-  static const char * const names[5] = {
+  static const char * const names[6] = {
     "SUCCESS",
     "FAIL",
     "RETRY",
     "NOT_LEADER",
+    "SESSION_EXPIRED",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameclient_result(client_result e) {
-  if (::flatbuffers::IsOutRange(e, client_result_SUCCESS, client_result_NOT_LEADER)) return "";
+  if (::flatbuffers::IsOutRange(e, client_result_SUCCESS, client_result_SESSION_EXPIRED)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesclient_result()[index];
 }
+
+enum any_log_entry_command : uint8_t {
+  any_log_entry_command_NONE = 0,
+  any_log_entry_command_open_session_request = 1,
+  any_log_entry_command_open_session_response = 2,
+  any_log_entry_command_close_session_request = 3,
+  any_log_entry_command_close_session_response = 4,
+  any_log_entry_command_linearizable_command = 5,
+  any_log_entry_command_MIN = any_log_entry_command_NONE,
+  any_log_entry_command_MAX = any_log_entry_command_linearizable_command
+};
+
+inline const any_log_entry_command (&EnumValuesany_log_entry_command())[6] {
+  static const any_log_entry_command values[] = {
+    any_log_entry_command_NONE,
+    any_log_entry_command_open_session_request,
+    any_log_entry_command_open_session_response,
+    any_log_entry_command_close_session_request,
+    any_log_entry_command_close_session_response,
+    any_log_entry_command_linearizable_command
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesany_log_entry_command() {
+  static const char * const names[7] = {
+    "NONE",
+    "open_session_request",
+    "open_session_response",
+    "close_session_request",
+    "close_session_response",
+    "linearizable_command",
+    nullptr
+  };
+  return names;
+}
+
+inline const char *EnumNameany_log_entry_command(any_log_entry_command e) {
+  if (::flatbuffers::IsOutRange(e, any_log_entry_command_NONE, any_log_entry_command_linearizable_command)) return "";
+  const size_t index = static_cast<size_t>(e);
+  return EnumNamesany_log_entry_command()[index];
+}
+
+template<typename T> struct any_log_entry_commandTraits {
+  static const any_log_entry_command enum_value = any_log_entry_command_NONE;
+};
+
+template<> struct any_log_entry_commandTraits<raft::fbs::open_session_request> {
+  static const any_log_entry_command enum_value = any_log_entry_command_open_session_request;
+};
+
+template<> struct any_log_entry_commandTraits<raft::fbs::open_session_response> {
+  static const any_log_entry_command enum_value = any_log_entry_command_open_session_response;
+};
+
+template<> struct any_log_entry_commandTraits<raft::fbs::close_session_request> {
+  static const any_log_entry_command enum_value = any_log_entry_command_close_session_request;
+};
+
+template<> struct any_log_entry_commandTraits<raft::fbs::close_session_response> {
+  static const any_log_entry_command enum_value = any_log_entry_command_close_session_response;
+};
+
+template<> struct any_log_entry_commandTraits<raft::fbs::linearizable_command> {
+  static const any_log_entry_command enum_value = any_log_entry_command_linearizable_command;
+};
+
+bool Verifyany_log_entry_command(::flatbuffers::Verifier &verifier, const void *obj, any_log_entry_command type);
+bool Verifyany_log_entry_commandVector(::flatbuffers::Verifier &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<uint8_t> *types);
 
 enum any_message : uint8_t {
   any_message_NONE = 0,
@@ -167,16 +242,11 @@ enum any_message : uint8_t {
   any_message_configuration_checkpoint = 9,
   any_message_append_checkpoint_chunk = 10,
   any_message_append_checkpoint_chunk_response = 11,
-  any_message_open_session_request = 12,
-  any_message_open_session_response = 13,
-  any_message_close_session_request = 14,
-  any_message_close_session_response = 15,
-  any_message_linearizable_command = 16,
   any_message_MIN = any_message_NONE,
-  any_message_MAX = any_message_linearizable_command
+  any_message_MAX = any_message_append_checkpoint_chunk_response
 };
 
-inline const any_message (&EnumValuesany_message())[17] {
+inline const any_message (&EnumValuesany_message())[12] {
   static const any_message values[] = {
     any_message_NONE,
     any_message_request_vote,
@@ -189,18 +259,13 @@ inline const any_message (&EnumValuesany_message())[17] {
     any_message_set_configuration_response,
     any_message_configuration_checkpoint,
     any_message_append_checkpoint_chunk,
-    any_message_append_checkpoint_chunk_response,
-    any_message_open_session_request,
-    any_message_open_session_response,
-    any_message_close_session_request,
-    any_message_close_session_response,
-    any_message_linearizable_command
+    any_message_append_checkpoint_chunk_response
   };
   return values;
 }
 
 inline const char * const *EnumNamesany_message() {
-  static const char * const names[18] = {
+  static const char * const names[13] = {
     "NONE",
     "request_vote",
     "vote_response",
@@ -213,18 +278,13 @@ inline const char * const *EnumNamesany_message() {
     "configuration_checkpoint",
     "append_checkpoint_chunk",
     "append_checkpoint_chunk_response",
-    "open_session_request",
-    "open_session_response",
-    "close_session_request",
-    "close_session_response",
-    "linearizable_command",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameany_message(any_message e) {
-  if (::flatbuffers::IsOutRange(e, any_message_NONE, any_message_linearizable_command)) return "";
+  if (::flatbuffers::IsOutRange(e, any_message_NONE, any_message_append_checkpoint_chunk_response)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesany_message()[index];
 }
@@ -275,26 +335,6 @@ template<> struct any_messageTraits<raft::fbs::append_checkpoint_chunk> {
 
 template<> struct any_messageTraits<raft::fbs::append_checkpoint_chunk_response> {
   static const any_message enum_value = any_message_append_checkpoint_chunk_response;
-};
-
-template<> struct any_messageTraits<raft::fbs::open_session_request> {
-  static const any_message enum_value = any_message_open_session_request;
-};
-
-template<> struct any_messageTraits<raft::fbs::open_session_response> {
-  static const any_message enum_value = any_message_open_session_response;
-};
-
-template<> struct any_messageTraits<raft::fbs::close_session_request> {
-  static const any_message enum_value = any_message_close_session_request;
-};
-
-template<> struct any_messageTraits<raft::fbs::close_session_response> {
-  static const any_message enum_value = any_message_close_session_response;
-};
-
-template<> struct any_messageTraits<raft::fbs::linearizable_command> {
-  static const any_message enum_value = any_message_linearizable_command;
 };
 
 bool Verifyany_message(::flatbuffers::Verifier &verifier, const void *obj, any_message type);
@@ -1410,7 +1450,8 @@ struct client_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_ID = 4,
     VT_RESULT = 6,
     VT_INDEX = 8,
-    VT_LEADER_ID = 10
+    VT_LEADER_ID = 10,
+    VT_RESPONSE = 12
   };
   uint64_t id() const {
     return GetField<uint64_t>(VT_ID, 0);
@@ -1424,12 +1465,17 @@ struct client_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint64_t leader_id() const {
     return GetField<uint64_t>(VT_LEADER_ID, 0);
   }
+  const ::flatbuffers::String *response() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_RESPONSE);
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint64_t>(verifier, VT_ID, 8) &&
            VerifyField<int8_t>(verifier, VT_RESULT, 1) &&
            VerifyField<uint64_t>(verifier, VT_INDEX, 8) &&
            VerifyField<uint64_t>(verifier, VT_LEADER_ID, 8) &&
+           VerifyOffset(verifier, VT_RESPONSE) &&
+           verifier.VerifyString(response()) &&
            verifier.EndTable();
   }
 };
@@ -1450,6 +1496,9 @@ struct client_responseBuilder {
   void add_leader_id(uint64_t leader_id) {
     fbb_.AddElement<uint64_t>(client_response::VT_LEADER_ID, leader_id, 0);
   }
+  void add_response(::flatbuffers::Offset<::flatbuffers::String> response) {
+    fbb_.AddOffset(client_response::VT_RESPONSE, response);
+  }
   explicit client_responseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1466,13 +1515,32 @@ inline ::flatbuffers::Offset<client_response> Createclient_response(
     uint64_t id = 0,
     raft::fbs::client_result result = raft::fbs::client_result_SUCCESS,
     uint64_t index = 0,
-    uint64_t leader_id = 0) {
+    uint64_t leader_id = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> response = 0) {
   client_responseBuilder builder_(_fbb);
   builder_.add_leader_id(leader_id);
   builder_.add_index(index);
   builder_.add_id(id);
+  builder_.add_response(response);
   builder_.add_result(result);
   return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<client_response> Createclient_responseDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t id = 0,
+    raft::fbs::client_result result = raft::fbs::client_result_SUCCESS,
+    uint64_t index = 0,
+    uint64_t leader_id = 0,
+    const char *response = nullptr) {
+  auto response__ = response ? _fbb.CreateString(response) : 0;
+  return raft::fbs::Createclient_response(
+      _fbb,
+      id,
+      result,
+      index,
+      leader_id,
+      response__);
 }
 
 struct set_configuration_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -1806,6 +1874,94 @@ inline ::flatbuffers::Offset<linearizable_command> Createlinearizable_commandDir
       command__);
 }
 
+struct log_entry_command FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef log_entry_commandBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_COMMAND_TYPE = 4,
+    VT_COMMAND = 6
+  };
+  raft::fbs::any_log_entry_command command_type() const {
+    return static_cast<raft::fbs::any_log_entry_command>(GetField<uint8_t>(VT_COMMAND_TYPE, 0));
+  }
+  const void *command() const {
+    return GetPointer<const void *>(VT_COMMAND);
+  }
+  template<typename T> const T *command_as() const;
+  const raft::fbs::open_session_request *command_as_open_session_request() const {
+    return command_type() == raft::fbs::any_log_entry_command_open_session_request ? static_cast<const raft::fbs::open_session_request *>(command()) : nullptr;
+  }
+  const raft::fbs::open_session_response *command_as_open_session_response() const {
+    return command_type() == raft::fbs::any_log_entry_command_open_session_response ? static_cast<const raft::fbs::open_session_response *>(command()) : nullptr;
+  }
+  const raft::fbs::close_session_request *command_as_close_session_request() const {
+    return command_type() == raft::fbs::any_log_entry_command_close_session_request ? static_cast<const raft::fbs::close_session_request *>(command()) : nullptr;
+  }
+  const raft::fbs::close_session_response *command_as_close_session_response() const {
+    return command_type() == raft::fbs::any_log_entry_command_close_session_response ? static_cast<const raft::fbs::close_session_response *>(command()) : nullptr;
+  }
+  const raft::fbs::linearizable_command *command_as_linearizable_command() const {
+    return command_type() == raft::fbs::any_log_entry_command_linearizable_command ? static_cast<const raft::fbs::linearizable_command *>(command()) : nullptr;
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_COMMAND_TYPE, 1) &&
+           VerifyOffset(verifier, VT_COMMAND) &&
+           Verifyany_log_entry_command(verifier, command(), command_type()) &&
+           verifier.EndTable();
+  }
+};
+
+template<> inline const raft::fbs::open_session_request *log_entry_command::command_as<raft::fbs::open_session_request>() const {
+  return command_as_open_session_request();
+}
+
+template<> inline const raft::fbs::open_session_response *log_entry_command::command_as<raft::fbs::open_session_response>() const {
+  return command_as_open_session_response();
+}
+
+template<> inline const raft::fbs::close_session_request *log_entry_command::command_as<raft::fbs::close_session_request>() const {
+  return command_as_close_session_request();
+}
+
+template<> inline const raft::fbs::close_session_response *log_entry_command::command_as<raft::fbs::close_session_response>() const {
+  return command_as_close_session_response();
+}
+
+template<> inline const raft::fbs::linearizable_command *log_entry_command::command_as<raft::fbs::linearizable_command>() const {
+  return command_as_linearizable_command();
+}
+
+struct log_entry_commandBuilder {
+  typedef log_entry_command Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_command_type(raft::fbs::any_log_entry_command command_type) {
+    fbb_.AddElement<uint8_t>(log_entry_command::VT_COMMAND_TYPE, static_cast<uint8_t>(command_type), 0);
+  }
+  void add_command(::flatbuffers::Offset<void> command) {
+    fbb_.AddOffset(log_entry_command::VT_COMMAND, command);
+  }
+  explicit log_entry_commandBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<log_entry_command> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<log_entry_command>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<log_entry_command> Createlog_entry_command(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    raft::fbs::any_log_entry_command command_type = raft::fbs::any_log_entry_command_NONE,
+    ::flatbuffers::Offset<void> command = 0) {
+  log_entry_commandBuilder builder_(_fbb);
+  builder_.add_command(command);
+  builder_.add_command_type(command_type);
+  return builder_.Finish();
+}
+
 struct raft_message FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef raft_messageBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
@@ -1851,21 +2007,6 @@ struct raft_message FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   const raft::fbs::append_checkpoint_chunk_response *message_as_append_checkpoint_chunk_response() const {
     return message_type() == raft::fbs::any_message_append_checkpoint_chunk_response ? static_cast<const raft::fbs::append_checkpoint_chunk_response *>(message()) : nullptr;
-  }
-  const raft::fbs::open_session_request *message_as_open_session_request() const {
-    return message_type() == raft::fbs::any_message_open_session_request ? static_cast<const raft::fbs::open_session_request *>(message()) : nullptr;
-  }
-  const raft::fbs::open_session_response *message_as_open_session_response() const {
-    return message_type() == raft::fbs::any_message_open_session_response ? static_cast<const raft::fbs::open_session_response *>(message()) : nullptr;
-  }
-  const raft::fbs::close_session_request *message_as_close_session_request() const {
-    return message_type() == raft::fbs::any_message_close_session_request ? static_cast<const raft::fbs::close_session_request *>(message()) : nullptr;
-  }
-  const raft::fbs::close_session_response *message_as_close_session_response() const {
-    return message_type() == raft::fbs::any_message_close_session_response ? static_cast<const raft::fbs::close_session_response *>(message()) : nullptr;
-  }
-  const raft::fbs::linearizable_command *message_as_linearizable_command() const {
-    return message_type() == raft::fbs::any_message_linearizable_command ? static_cast<const raft::fbs::linearizable_command *>(message()) : nullptr;
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1920,26 +2061,6 @@ template<> inline const raft::fbs::append_checkpoint_chunk_response *raft_messag
   return message_as_append_checkpoint_chunk_response();
 }
 
-template<> inline const raft::fbs::open_session_request *raft_message::message_as<raft::fbs::open_session_request>() const {
-  return message_as_open_session_request();
-}
-
-template<> inline const raft::fbs::open_session_response *raft_message::message_as<raft::fbs::open_session_response>() const {
-  return message_as_open_session_response();
-}
-
-template<> inline const raft::fbs::close_session_request *raft_message::message_as<raft::fbs::close_session_request>() const {
-  return message_as_close_session_request();
-}
-
-template<> inline const raft::fbs::close_session_response *raft_message::message_as<raft::fbs::close_session_response>() const {
-  return message_as_close_session_response();
-}
-
-template<> inline const raft::fbs::linearizable_command *raft_message::message_as<raft::fbs::linearizable_command>() const {
-  return message_as_linearizable_command();
-}
-
 struct raft_messageBuilder {
   typedef raft_message Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
@@ -1969,6 +2090,47 @@ inline ::flatbuffers::Offset<raft_message> Createraft_message(
   builder_.add_message(message);
   builder_.add_message_type(message_type);
   return builder_.Finish();
+}
+
+inline bool Verifyany_log_entry_command(::flatbuffers::Verifier &verifier, const void *obj, any_log_entry_command type) {
+  switch (type) {
+    case any_log_entry_command_NONE: {
+      return true;
+    }
+    case any_log_entry_command_open_session_request: {
+      auto ptr = reinterpret_cast<const raft::fbs::open_session_request *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case any_log_entry_command_open_session_response: {
+      auto ptr = reinterpret_cast<const raft::fbs::open_session_response *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case any_log_entry_command_close_session_request: {
+      auto ptr = reinterpret_cast<const raft::fbs::close_session_request *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case any_log_entry_command_close_session_response: {
+      auto ptr = reinterpret_cast<const raft::fbs::close_session_response *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case any_log_entry_command_linearizable_command: {
+      auto ptr = reinterpret_cast<const raft::fbs::linearizable_command *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    default: return true;
+  }
+}
+
+inline bool Verifyany_log_entry_commandVector(::flatbuffers::Verifier &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<uint8_t> *types) {
+  if (!values || !types) return !values && !types;
+  if (values->size() != types->size()) return false;
+  for (::flatbuffers::uoffset_t i = 0; i < values->size(); ++i) {
+    if (!Verifyany_log_entry_command(
+        verifier,  values->Get(i), types->GetEnum<any_log_entry_command>(i))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 inline bool Verifyany_message(::flatbuffers::Verifier &verifier, const void *obj, any_message type) {
@@ -2018,26 +2180,6 @@ inline bool Verifyany_message(::flatbuffers::Verifier &verifier, const void *obj
     }
     case any_message_append_checkpoint_chunk_response: {
       auto ptr = reinterpret_cast<const raft::fbs::append_checkpoint_chunk_response *>(obj);
-      return verifier.VerifyTable(ptr);
-    }
-    case any_message_open_session_request: {
-      auto ptr = reinterpret_cast<const raft::fbs::open_session_request *>(obj);
-      return verifier.VerifyTable(ptr);
-    }
-    case any_message_open_session_response: {
-      auto ptr = reinterpret_cast<const raft::fbs::open_session_response *>(obj);
-      return verifier.VerifyTable(ptr);
-    }
-    case any_message_close_session_request: {
-      auto ptr = reinterpret_cast<const raft::fbs::close_session_request *>(obj);
-      return verifier.VerifyTable(ptr);
-    }
-    case any_message_close_session_response: {
-      auto ptr = reinterpret_cast<const raft::fbs::close_session_response *>(obj);
-      return verifier.VerifyTable(ptr);
-    }
-    case any_message_linearizable_command: {
-      auto ptr = reinterpret_cast<const raft::fbs::linearizable_command *>(obj);
       return verifier.VerifyTable(ptr);
     }
     default: return true;

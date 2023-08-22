@@ -1,6 +1,7 @@
 #ifndef __SLICE_HH__
 #define __SLICE_HH__
 
+#include <cstring>
 #include <iomanip>
 #include <iostream>
 #include "boost/io/ios_state.hpp"

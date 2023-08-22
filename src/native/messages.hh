@@ -2,6 +2,7 @@
 #define __RAFTMESSAGES_HH__
 
 #include <chrono>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -113,7 +114,7 @@ namespace raft {
       }
     };
 
-    enum client_result { SUCCESS, FAIL, RETRY, NOT_LEADER };
+    enum client_result { SUCCESS, FAIL, RETRY, NOT_LEADER, SESSION_EXPIRED };
     class client_request
     {
     public:
@@ -143,6 +144,7 @@ namespace raft {
       client_result result;
       uint64_t index;
       uint64_t leader_id;
+      std::string response;
     };
 
     class client_response_traits
@@ -151,6 +153,23 @@ namespace raft {
       typedef client_response value_type;
       typedef client_response arg_type;
       typedef const value_type& const_arg_type;
+
+      static client_result result(const_arg_type cr)
+      {
+        return cr.result;
+      }
+      static uint64_t index(const_arg_type cr)
+      {
+        return cr.index;
+      }
+      static uint64_t leader_id(const_arg_type cr)
+      {
+        return cr.leader_id;
+      }
+      static slice response(const_arg_type cr)
+      {
+	return slice::create(cr.response);
+      }
     };
     
     class set_configuration_request
@@ -581,6 +600,7 @@ namespace raft {
       typedef open_session_request value_type;
       typedef open_session_request arg_type;
       typedef const value_type & const_arg_type;
+      typedef const value_type & const_view_type;
     };
     
     class open_session_response
@@ -613,6 +633,7 @@ namespace raft {
       typedef close_session_request value_type;
       typedef close_session_request arg_type;
       typedef const value_type & const_arg_type;
+      typedef const value_type & const_view_type;
       static uint64_t session_id(const_arg_type ae)
       {
 	return ae.session_id;
@@ -647,6 +668,7 @@ namespace raft {
       typedef linearizable_command value_type;
       typedef linearizable_command arg_type;
       typedef const value_type & const_arg_type;
+      typedef const value_type & const_view_type;
       static uint64_t session_id(const_arg_type ae)
       {
 	return ae.session_id;
@@ -665,6 +687,48 @@ namespace raft {
       }
     };
 
+    
+    struct log_entry_command
+    {
+      enum command_type { OPEN_SESSION, CLOSE_SESSION, LINEARIZABLE_COMMAND };
+      command_type type;
+      open_session_request open_session;
+      close_session_request close_session;
+      linearizable_command command;
+    };
+
+    struct log_entry_command_traits
+    {
+      typedef log_entry_command value_type;
+      typedef const value_type * const_arg_type;
+
+      static bool is_open_session(const_arg_type msg)
+      {
+        return log_entry_command::OPEN_SESSION == msg->type;
+      }
+      static bool is_close_session(const_arg_type msg)
+      {
+        return log_entry_command::CLOSE_SESSION == msg->type;
+      }
+      static bool is_linearizable_command(const_arg_type msg)
+      {
+        return log_entry_command::LINEARIZABLE_COMMAND == msg->type;
+      }
+
+      static open_session_request_traits::const_view_type open_session(const_arg_type msg)
+      {
+        return msg->open_session;
+      }
+      static close_session_request_traits::const_view_type close_session(const_arg_type msg)
+      {
+        return msg->close_session;
+      }
+      static linearizable_command_traits::const_view_type linearizable_command(const_arg_type msg)
+      {
+        return msg->command;
+      }
+    };
+    
     template <typename _Description>
     struct log_entry
     {
@@ -730,6 +794,17 @@ namespace raft {
 	ret->term = term;
         ret->cluster_time = cluster_time;
 	ret->data = std::move(req.command);
+	return std::pair<const log_entry<_Description> *, raft::util::call_on_delete>(ret, [ret]() { delete ret; });
+      }
+      static std::pair<const log_entry<_Description> *, raft::util::call_on_delete > create_command(uint64_t term,
+                                                                                                    uint64_t cluster_time,
+                                                                                                    std::pair<raft::slice, raft::util::call_on_delete> && req)
+      {
+	auto ret = new log_entry<_Description>();
+	ret->type = value_type::COMMAND;
+	ret->term = term;
+        ret->cluster_time = cluster_time;
+	ret->data.assign(reinterpret_cast<const char *>(req.first.data()), req.first.size());
 	return std::pair<const log_entry<_Description> *, raft::util::call_on_delete>(ret, [ret]() { delete ret; });
       }
       static std::pair<const log_entry<_Description> *, raft::util::call_on_delete > create_noop(uint64_t term, uint64_t cluster_time)
@@ -811,6 +886,8 @@ namespace raft {
     public:
       typedef log_entry<configuration_description> log_entry_type;
       typedef log_entry_traits<configuration_description> log_entry_traits_type;
+      typedef log_entry_command log_entry_command_type;
+      typedef log_entry_command_traits log_entry_command_traits_type;
       typedef client_request client_request_type;
       typedef client_request_traits client_request_traits_type;
       typedef client_response client_response_type;
@@ -858,6 +935,7 @@ namespace raft {
       static client_result client_result_fail() { return FAIL; }
       static client_result client_result_retry() { return RETRY; }
       static client_result client_result_not_leader() { return NOT_LEADER; }
+      static client_result client_result_session_expired() { return SESSION_EXPIRED; }
     };
 
     template<typename _Ty>
@@ -1166,6 +1244,12 @@ namespace raft {
       client_response_builder & leader_id(uint64_t val)
       {
 	get_object()->leader_id = val;
+	return *this;
+      }
+      client_response_builder & response(raft::slice && val)
+      {
+	get_object()->response.assign(raft::slice::buffer_cast<const char *>(val),
+				     raft::slice::buffer_size(val));
 	return *this;
       }
     };
@@ -1727,6 +1811,8 @@ namespace raft {
 	  return client_result::FAIL;
 	} else if (_Messages::client_result_not_leader() == result) {
 	  return client_result::NOT_LEADER;
+	} else if (_Messages::client_result_session_expired() == result) {
+	  return client_result::SESSION_EXPIRED;
 	} else {
 	  return client_result::RETRY;
 	}

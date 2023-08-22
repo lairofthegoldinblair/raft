@@ -1157,6 +1157,30 @@ BOOST_AUTO_TEST_CASE(InitializeFromNonEmptyLog)
   BOOST_CHECK_EQUAL(get_cluster_time(time_base, now), s.cluster_time());
 }
 
+struct log_header_write_test : public raft::log_header_write
+{
+  uint64_t current_term_ = std::numeric_limits<uint64_t>::max();
+  uint64_t voted_for_ = std::numeric_limits<uint64_t>::max();
+
+  void async_write_log_header(uint64_t current_term, uint64_t voted_for) override
+  {
+    current_term_ = current_term;
+    voted_for_ = voted_for;
+  }
+
+  bool empty() const
+  {
+    return current_term_ == std::numeric_limits<uint64_t>::max() &&
+      voted_for_ == std::numeric_limits<uint64_t>::max();
+  }
+
+  void reset()
+  {
+    current_term_ = std::numeric_limits<uint64_t>::max();
+    voted_for_ = std::numeric_limits<uint64_t>::max();
+  }
+};
+
 template<typename _TestType>
 class RaftTestBase
 {
@@ -1197,6 +1221,8 @@ public:
   std::shared_ptr<typename raft_type::configuration_manager_type> cm;
   std::shared_ptr<raft_type> s;
   append_checkpoint_chunk_arg_type five_servers;
+  std::vector<uint8_t> checkpoint_load_state;
+  log_header_write_test log_header_write_;
 
   uint64_t initial_cluster_time;
 
@@ -1223,6 +1249,9 @@ public:
 
   RaftTestBase(bool initializeWithCheckpoint=true)
   {
+    // Glue log to log_header_write
+    l.set_log_header_writer(&log_header_write_);
+    
     initial_cluster_time = 0;
     cluster_size = 5;
     cm.reset(new typename raft_type::configuration_manager_type(0));
@@ -1596,6 +1625,8 @@ public:
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK_EQUAL(0U, comm.q.size());
+    BOOST_CHECK_EQUAL(1U, log_header_write_.current_term_);
+    BOOST_CHECK_EQUAL(1U, log_header_write_.voted_for_);
     s->on_log_header_sync();
     BOOST_CHECK(!s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
@@ -1619,7 +1650,10 @@ public:
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK_EQUAL(0U, comm.q.size());
-
+    BOOST_CHECK_EQUAL(1U, log_header_write_.current_term_);
+    BOOST_CHECK_EQUAL(1U, log_header_write_.voted_for_);
+    log_header_write_.reset();
+    
     // We are still waiting for header to sync to disk so will ignore subsequent request.
     msg = request_vote_builder().recipient_id(0).term_number(2).candidate_id(2).last_log_index(0).last_log_term(0).finish();
     s->on_request_vote(std::move(msg));
@@ -1628,6 +1662,7 @@ public:
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK_EQUAL(0U, comm.q.size());
+    BOOST_CHECK(log_header_write_.empty());
 
     s->on_log_header_sync();
     BOOST_CHECK(!s->log_header_sync_required());
@@ -1640,6 +1675,7 @@ public:
     BOOST_CHECK_EQUAL(1U, vote_response_traits::request_term_number(boost::get<vote_response_arg_type>(comm.q.back())));
     BOOST_CHECK(vote_response_traits::granted(boost::get<vote_response_arg_type>(comm.q.back())));
     comm.q.pop_back();
+    BOOST_CHECK(log_header_write_.empty());
 
     // Send again now that we are sync'd
     msg = request_vote_builder().recipient_id(0).term_number(2).candidate_id(2).last_log_index(0).last_log_term(0).finish();
@@ -1649,6 +1685,9 @@ public:
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK_EQUAL(0U, comm.q.size());
+    BOOST_CHECK_EQUAL(2U, log_header_write_.current_term_);
+    BOOST_CHECK_EQUAL(2U, log_header_write_.voted_for_);
+    log_header_write_.reset();
 
     s->on_log_header_sync();
     BOOST_CHECK(!s->log_header_sync_required());
@@ -1661,6 +1700,7 @@ public:
     BOOST_CHECK_EQUAL(2U, vote_response_traits::request_term_number(boost::get<vote_response_arg_type>(comm.q.back())));
     BOOST_CHECK(vote_response_traits::granted(boost::get<vote_response_arg_type>(comm.q.back())));
     comm.q.pop_back();
+    BOOST_CHECK(log_header_write_.empty());
 
     // Send a couple of entries
     for(std::size_t i=1; i<=3; ++i) {
@@ -1693,6 +1733,9 @@ public:
     BOOST_CHECK_EQUAL(1003U, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK_EQUAL(0U, comm.q.size());
+    BOOST_CHECK_EQUAL(3U, log_header_write_.current_term_);
+    BOOST_CHECK_EQUAL(std::numeric_limits<uint64_t>::max(), log_header_write_.voted_for_);
+    log_header_write_.reset();
     s->on_log_header_sync();
     BOOST_CHECK(!s->log_header_sync_required());
     BOOST_CHECK_EQUAL(3U, s->current_term());
@@ -1714,6 +1757,9 @@ public:
     BOOST_CHECK_EQUAL(1003U, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK_EQUAL(0U, comm.q.size());
+    BOOST_CHECK_EQUAL(3U, log_header_write_.current_term_);
+    BOOST_CHECK_EQUAL(1U, log_header_write_.voted_for_);
+    log_header_write_.reset();
 
     // Let's suppose that the leader here got a quorum from other peers
     // it could start appending entries.  We have the correct term so we should
@@ -1730,6 +1776,7 @@ public:
     BOOST_CHECK_EQUAL(1003U, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK_EQUAL(0U, comm.q.size());
+    BOOST_CHECK(log_header_write_.empty());
   
     s->on_log_header_sync();
     BOOST_CHECK(!s->log_header_sync_required());
@@ -1742,6 +1789,7 @@ public:
     BOOST_CHECK_EQUAL(3U, vote_response_traits::request_term_number(boost::get<vote_response_arg_type>(comm.q.back())));
     BOOST_CHECK(vote_response_traits::granted(boost::get<vote_response_arg_type>(comm.q.back())));
     comm.q.pop_back();
+    BOOST_CHECK(log_header_write_.empty());
 
     s->on_log_sync(4);
     BOOST_CHECK_EQUAL(3U, s->current_term());
@@ -1755,6 +1803,7 @@ public:
     BOOST_CHECK_EQUAL(4, append_response_traits::last_index(boost::get<append_response_arg_type>(comm.q.back())));
     BOOST_CHECK(append_response_traits::success(boost::get<append_response_arg_type>(comm.q.back())));
     comm.q.pop_back();
+    BOOST_CHECK(log_header_write_.empty());
   }
 
   void AppendCheckpointChunk()
@@ -2683,6 +2732,12 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedBasicOnVoteRequestTest, _TestType, test_t
 {
   RaftTestBase<_TestType> t;
   t.BasicOnVoteRequestTest();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedOnVoteRequestSlowHeaderSyncTest, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.OnVoteRequestSlowHeaderSyncTest();
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesLogSync, _TestType, test_types)

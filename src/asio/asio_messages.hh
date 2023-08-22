@@ -13,7 +13,7 @@ namespace raft {
 
     struct rpc_header
     {
-      static const uint16_t MAGIC=0x09ab;
+      static const uint16_t MAGIC() { return 0x09ab; }
       static const uint16_t POISON=0xbaad;
       boost::endian::little_uint16_t magic;
       boost::endian::little_uint32_t payload_length;
@@ -50,6 +50,7 @@ namespace raft {
       typedef _Serialization serialization_type;
 
       BOOST_TTI_HAS_STATIC_MEMBER_FUNCTION(classify);
+      BOOST_TTI_HAS_STATIC_MEMBER_FUNCTION(classify_log_entry_command);
 	
       static std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete> make_return(const void * ptr,
 													 std::size_t sz,
@@ -70,7 +71,7 @@ namespace raft {
 	static const std::size_t sz = sizeof(rpc_header);
 	BOOST_ASSERT(boost::asio::buffer_size(b) >= sz);
 	rpc_header * header = reinterpret_cast<rpc_header *>(b.data());
-	header->magic = rpc_header::MAGIC;
+	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
 	header->operation = 0;
@@ -87,7 +88,7 @@ namespace raft {
 	static const std::size_t sz = sizeof(rpc_header);
 	BOOST_ASSERT(boost::asio::buffer_size(b) >= sz);
 	rpc_header * header = reinterpret_cast<rpc_header *>(b.data());
-	header->magic = rpc_header::MAGIC;
+	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
 	header->operation = 1;
@@ -100,7 +101,7 @@ namespace raft {
 	auto inner = serialization_type::serialize(std::move(msg));
 	std::size_t sz = sizeof(rpc_header);
 	rpc_header * header = reinterpret_cast<rpc_header *>(b.data());
-	header->magic = rpc_header::MAGIC;
+	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
 	header->operation = 2;
@@ -113,10 +114,23 @@ namespace raft {
 	static const std::size_t sz = sizeof(rpc_header);
 	BOOST_ASSERT(boost::asio::buffer_size(b) >= sz);
 	rpc_header * header = reinterpret_cast<rpc_header *>(b.data());
-	header->magic = rpc_header::MAGIC;
+	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
 	header->operation = 3;
+	return make_return(b.data(), sz, std::move(inner));
+      };
+
+      static std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete> serialize_client_response(boost::asio::mutable_buffer b, client_response_arg_type && msg)
+      {
+	auto inner = serialization_type::serialize(std::move(msg));
+	static const std::size_t sz = sizeof(rpc_header);
+	BOOST_ASSERT(boost::asio::buffer_size(b) >= sz);
+	rpc_header * header = reinterpret_cast<rpc_header *>(b.data());
+	header->magic = rpc_header::MAGIC();
+	header->payload_length = inner.first.size();
+	header->service = 0;
+	header->operation = 5;
 	return make_return(b.data(), sz, std::move(inner));
       };
 
@@ -126,7 +140,7 @@ namespace raft {
 	static const std::size_t sz = sizeof(rpc_header);
 	BOOST_ASSERT(boost::asio::buffer_size(b) >= sz);
 	rpc_header * header = reinterpret_cast<rpc_header *>(b.data());
-	header->magic = rpc_header::MAGIC;
+	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
 	header->operation = OPEN_SESSION_REQUEST;
@@ -139,7 +153,7 @@ namespace raft {
 	static const std::size_t sz = sizeof(rpc_header);
 	BOOST_ASSERT(boost::asio::buffer_size(b) >= sz);
 	rpc_header * header = reinterpret_cast<rpc_header *>(b.data());
-	header->magic = rpc_header::MAGIC;
+	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
 	header->operation = OPEN_SESSION_RESPONSE;
@@ -152,7 +166,7 @@ namespace raft {
 	static const std::size_t sz = sizeof(rpc_header);
 	BOOST_ASSERT(boost::asio::buffer_size(b) >= sz);
 	rpc_header * header = reinterpret_cast<rpc_header *>(b.data());
-	header->magic = rpc_header::MAGIC;
+	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
 	header->operation = CLOSE_SESSION_REQUEST;
@@ -165,7 +179,7 @@ namespace raft {
 	static const std::size_t sz = sizeof(rpc_header);
 	BOOST_ASSERT(boost::asio::buffer_size(b) >= sz);
 	rpc_header * header = reinterpret_cast<rpc_header *>(b.data());
-	header->magic = rpc_header::MAGIC;
+	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
 	header->operation = CLOSE_SESSION_RESPONSE;
@@ -178,7 +192,7 @@ namespace raft {
 	static const std::size_t sz = sizeof(rpc_header);
 	BOOST_ASSERT(boost::asio::buffer_size(b) >= sz);
 	rpc_header * header = reinterpret_cast<rpc_header *>(b.data());
-	header->magic = rpc_header::MAGIC;
+	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
 	header->operation = LINEARIZABLE_COMMAND;
@@ -217,6 +231,14 @@ namespace raft {
 	return serialize_append_entry_response(b, std::move(msg));
       }
       
+      template<typename _M = _Messages, typename _S = _Serialization>
+      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::request_vote_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      serialize(boost::asio::mutable_buffer b,
+	        typename _M::client_response_traits_type::arg_type && msg)
+      {
+	return serialize_client_response(b, std::move(msg));
+      }
+      
       template<typename T, typename _M = _Messages, typename _S = _Serialization>
       static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::request_vote_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
@@ -226,43 +248,43 @@ namespace raft {
       }
 
       template<typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::open_session_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<!has_static_member_function_classify_log_entry_command<_S, int32_t(typename _M::open_session_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
-	        typename _M::open_session_request_traits_type::arg_type && msg)
+                typename _M::open_session_request_traits_type::arg_type && msg)
       {
-	return serialize_open_session_request(b, std::move(msg));
+        return serialize_open_session_request(b, std::move(msg));
       }
       
       template<typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::open_session_response_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<!has_static_member_function_classify_log_entry_command<_S, int32_t(typename _M::open_session_response_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
-	        typename _M::open_session_response_traits_type::arg_type && msg)
+                typename _M::open_session_response_traits_type::arg_type && msg)
       {
-	return serialize_open_session_response(b, std::move(msg));
+        return serialize_open_session_response(b, std::move(msg));
       }
       
       template<typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::close_session_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<!has_static_member_function_classify_log_entry_command<_S, int32_t(typename _M::close_session_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
-	        typename _M::close_session_request_traits_type::arg_type && msg)
+                typename _M::close_session_request_traits_type::arg_type && msg)
       {
-	return serialize_close_session_request(b, std::move(msg));
+        return serialize_close_session_request(b, std::move(msg));
       }
       
       template<typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::close_session_response_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<!has_static_member_function_classify_log_entry_command<_S, int32_t(typename _M::close_session_response_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
-	        typename _M::close_session_response_traits_type::arg_type && msg)
+                typename _M::close_session_response_traits_type::arg_type && msg)
       {
-	return serialize_close_session_response(b, std::move(msg));
+        return serialize_close_session_response(b, std::move(msg));
       }
       
       template<typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::linearizable_command_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<!has_static_member_function_classify_log_entry_command<_S, int32_t(typename _M::linearizable_command_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
-	        typename _M::linearizable_command_traits_type::arg_type && msg)
+                typename _M::linearizable_command_traits_type::arg_type && msg)
       {
-	return serialize_linearizable_command(b, std::move(msg));
+        return serialize_linearizable_command(b, std::move(msg));
       }
       
       template<typename _M = _Messages, typename _S = _Serialization>
@@ -279,6 +301,19 @@ namespace raft {
       	  return serialize_append_entry(b, std::move(msg));
       	case 3:
       	  return serialize_append_entry_response(b, std::move(msg));
+      	case 5:
+      	  return serialize_client_response(b, std::move(msg));
+      	default:
+      	  throw std::runtime_error("Not yet implemented");
+      	}
+      }
+
+      template<typename _M = _Messages, typename _S = _Serialization>
+      static std::enable_if_t<has_static_member_function_classify_log_entry_command<_S, int32_t(typename _M::open_session_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      serialize(boost::asio::mutable_buffer b,
+      		typename _M::open_session_request_traits_type::arg_type && msg)
+      {
+      	switch(serialization_type::classify_log_entry_command(std::move(msg))) {
       	case 11:
       	  return serialize_open_session_request(b, std::move(msg));
       	case 12:
