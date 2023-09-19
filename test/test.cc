@@ -1976,27 +1976,27 @@ public:
     const char * cmd = "1";
     uint64_t client_index=l.last_index();
     send_client_request_and_commit(term, cmd, client_index++);
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_cluster_time());
-    BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
   
     auto ckpt = s->begin_checkpoint(2U);
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_cluster_time());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
     BOOST_REQUIRE(nullptr != ckpt.get());
     BOOST_CHECK_EQUAL(2U, checkpoint_header_traits::last_log_entry_index(&ckpt->header()));
     BOOST_CHECK_EQUAL(1U, checkpoint_header_traits::last_log_entry_term(&ckpt->header()));
     BOOST_CHECK_EQUAL(initial_cluster_time, checkpoint_header_traits::last_log_entry_cluster_time(&ckpt->header()));
-    BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
     s->complete_checkpoint(2U, ckpt);
-    BOOST_CHECK_EQUAL(2U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(1U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(initial_cluster_time, s->checkpoint().last_checkpoint_cluster_time());
-    BOOST_CHECK(ckpt == s->checkpoint().last_checkpoint());
+    BOOST_CHECK_EQUAL(2U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(initial_cluster_time, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(ckpt == s->last_checkpoint());
   }
 
   void ClientPartialCheckpointTest()
@@ -2006,34 +2006,34 @@ public:
 
     uint64_t client_index=l.last_index();
     send_client_request_and_commit(term, "1", client_index++);  
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_cluster_time());
-    BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
     uint64_t expected_cluster_time = initial_cluster_time;
     send_client_request_and_commit(term, "2", client_index++);  
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_cluster_time());
-    BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
 
     auto ckpt = s->begin_checkpoint(2U);
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_cluster_time());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
     BOOST_REQUIRE(nullptr != ckpt.get());
     BOOST_CHECK_EQUAL(2U, checkpoint_header_traits::last_log_entry_index(&ckpt->header()));
     BOOST_CHECK_EQUAL(1U, checkpoint_header_traits::last_log_entry_term(&ckpt->header()));
     BOOST_CHECK_EQUAL(expected_cluster_time, checkpoint_header_traits::last_log_entry_cluster_time(&ckpt->header()));
-    BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
 
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
     s->complete_checkpoint(2U, ckpt);
-    BOOST_CHECK_EQUAL(2U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(1U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(expected_cluster_time, s->checkpoint().last_checkpoint_cluster_time());
-    BOOST_CHECK(ckpt == s->checkpoint().last_checkpoint());
+    BOOST_CHECK_EQUAL(2U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(ckpt == s->last_checkpoint());
   }
 
   void ClientCheckpointOldTermTest()
@@ -2043,10 +2043,10 @@ public:
 
     uint64_t client_index=l.last_index();
     send_client_request_and_commit(term, "1", client_index++);  
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_cluster_time());
-    BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
     uint64_t expected_cluster_time = initial_cluster_time;
     // Advance term; we should still be able to checkpoint at the old term
     term = 2;
@@ -2055,28 +2055,28 @@ public:
     make_leader(term);
     client_index=l.last_index();
     send_client_request_and_commit(term, "2", client_index++);  
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_cluster_time());
-    BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
   
     auto ckpt = s->begin_checkpoint(2U);
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_cluster_time());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
     BOOST_REQUIRE(nullptr != ckpt.get());
     BOOST_CHECK_EQUAL(2U, checkpoint_header_traits::last_log_entry_index(&ckpt->header()));
     BOOST_CHECK_EQUAL(1U, checkpoint_header_traits::last_log_entry_term(&ckpt->header()));
     BOOST_CHECK_EQUAL(expected_cluster_time, checkpoint_header_traits::last_log_entry_cluster_time(&ckpt->header()));
-    BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
 
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
     s->complete_checkpoint(2U, ckpt);
-    BOOST_CHECK_EQUAL(2U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(1U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(expected_cluster_time, s->checkpoint().last_checkpoint_cluster_time());
-    BOOST_CHECK(ckpt == s->checkpoint().last_checkpoint());
+    BOOST_CHECK_EQUAL(2U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(ckpt == s->last_checkpoint());
   }
 
   void ClientCheckpointNegativeTest()
@@ -2086,10 +2086,10 @@ public:
 
     uint64_t client_index=l.last_index();
     send_client_request_and_commit(term, "1", client_index++);  
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_cluster_time());
-    BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
     auto ckpt = s->begin_checkpoint(l.last_index()+1);
     BOOST_CHECK(nullptr == ckpt.get());
   }
@@ -2110,27 +2110,27 @@ public:
     responses.resize(num_known_peers(), true);
     responses.flip(1);
     send_client_request(term, cmd, client_index++, responses);
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_cluster_time());
-    BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
   
     auto ckpt = s->begin_checkpoint(1U);
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_cluster_time());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
     BOOST_REQUIRE(nullptr != ckpt.get());
     BOOST_CHECK_EQUAL(1U, checkpoint_header_traits::last_log_entry_index(&ckpt->header()));
     BOOST_CHECK_EQUAL(1U, checkpoint_header_traits::last_log_entry_term(&ckpt->header()));
     BOOST_CHECK_EQUAL(expected_cluster_time, checkpoint_header_traits::last_log_entry_cluster_time(&ckpt->header()));
-    BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
     s->complete_checkpoint(1U, ckpt);
-    BOOST_CHECK_EQUAL(1U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(1U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(expected_cluster_time, s->checkpoint().last_checkpoint_cluster_time());
-    BOOST_CHECK(ckpt == s->checkpoint().last_checkpoint());
+    BOOST_CHECK_EQUAL(1U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(ckpt == s->last_checkpoint());
 
     // Fire timer.  Peer 1 still doesn't have first log entry but since that entry is
     // discarded, a checkpoint will need to be sent to 1.
@@ -2209,27 +2209,27 @@ public:
     responses.resize(num_known_peers(), true);
     responses.flip(1);
     send_client_request(term, cmd, client_index++, responses);
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_cluster_time());
-    BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
   
     auto ckpt = s->begin_checkpoint(1U);
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(0U, s->checkpoint().last_checkpoint_cluster_time());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
     BOOST_REQUIRE(nullptr != ckpt.get());
     BOOST_CHECK_EQUAL(1U, checkpoint_header_traits::last_log_entry_index(&ckpt->header()));
     BOOST_CHECK_EQUAL(1U, checkpoint_header_traits::last_log_entry_term(&ckpt->header()));
     BOOST_CHECK_EQUAL(expected_cluster_time, checkpoint_header_traits::last_log_entry_cluster_time(&ckpt->header()));
-    BOOST_CHECK(nullptr == s->checkpoint().last_checkpoint().get());
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
     s->complete_checkpoint(1U, ckpt);
-    BOOST_CHECK_EQUAL(1U, s->checkpoint().last_checkpoint_index());
-    BOOST_CHECK_EQUAL(1U, s->checkpoint().last_checkpoint_term());
-    BOOST_CHECK_EQUAL(expected_cluster_time, s->checkpoint().last_checkpoint_cluster_time());
-    BOOST_CHECK(ckpt == s->checkpoint().last_checkpoint());
+    BOOST_CHECK_EQUAL(1U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(ckpt == s->last_checkpoint());
 
     // Fire timer.  Peer 1 still doesn't have first log entry but since that entry is
     // discarded, a checkpoint will need to be sent to 1.

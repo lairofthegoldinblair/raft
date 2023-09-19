@@ -107,12 +107,48 @@ namespace raft {
   };
 
   // Per-server state related to checkpoints
-  template <typename checkpoint_data_store_type>
+  // This class is a CRTP to add checkpointability to an underlying Raft protocol
+  //
+  // The _Protocol class is assumed to have the following public methods:
+  //
+  // uint64_t my_cluster_id();
+  // uint64_t current_term();
+  // checkpoint_header_type create_checkpoint_header(uint64_t last_index_in_checkpoint);
+  // bool check_log_has_checkpoint(checkpoint_data_ptr);
+  // void set_checkpoint(checkpoint_data_ptr);
+  // void load_checkpoint_header(checkpoint_header_type &);
+  // void send_append_checkpoint_chunk_response(append_checkpoint_chunk_response_continuation);
+  template <typename _Messages, typename _Protocol>
   class server_checkpoint
   {
   public:
+    typedef _Protocol protocol_type;
+    typedef _Messages messages_type;
+    typedef typename messages_type::append_checkpoint_chunk_traits_type append_checkpoint_chunk_traits_type;
+    typedef typename messages_type::append_checkpoint_chunk_traits_type::arg_type append_checkpoint_chunk_arg_type;
+    typedef checkpoint_data_store<messages_type> checkpoint_data_store_type;
     typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
-  public:
+    typedef typename checkpoint_data_store_type::header_type checkpoint_header_type;
+    typedef typename checkpoint_data_store_type::header_traits_type checkpoint_header_traits_type;
+  private:
+    protocol_type * protocol()
+    {
+      return static_cast<protocol_type *>(this);
+    }
+    const protocol_type * protocol() const
+    {
+      return static_cast<const protocol_type *>(this);
+    }
+    void sync(const append_checkpoint_chunk_response_continuation & resp) {
+      checkpoint_chunk_response_sync_continuations_.emplace_back(resp);
+    }
+    void update_last_checkpoint(const checkpoint_header_type & header)
+    {
+      last_checkpoint_index_ = checkpoint_header_traits_type::last_log_entry_index(&header);
+      last_checkpoint_term_ = checkpoint_header_traits_type::last_log_entry_term(&header);
+      last_checkpoint_cluster_time_ = checkpoint_header_traits_type::last_log_entry_cluster_time(&header);
+    }
+
     // One after last log entry checkpointed.
     uint64_t last_checkpoint_index_;
     // Term of last checkpoint
@@ -126,34 +162,7 @@ namespace raft {
     std::shared_ptr<in_progress_checkpoint<checkpoint_data_store_type> > current_checkpoint_;
     // Checkpoints live here
     checkpoint_data_store_type & store_;
-
-    uint64_t last_checkpoint_index() const {
-      return last_checkpoint_index_;
-    }
-    
-    uint64_t last_checkpoint_term() const {
-      return last_checkpoint_term_;
-    }
-    
-    uint64_t last_checkpoint_cluster_time() const {
-      return last_checkpoint_cluster_time_;
-    }
-    
-    void sync(const append_checkpoint_chunk_response_continuation & resp) {
-      checkpoint_chunk_response_sync_continuations_.emplace_back(resp);
-    }
-
-    void abandon() {
-      if (!!current_checkpoint_) {
-	store_.discard(current_checkpoint_->file_);
-	current_checkpoint_.reset();
-      }
-    }
-
-    checkpoint_data_ptr last_checkpoint() {
-      return store_.last_checkpoint();
-    }
-
+  
     server_checkpoint(checkpoint_data_store_type & store)
       :
       last_checkpoint_index_(0),
@@ -162,11 +171,172 @@ namespace raft {
       store_(store)
     {
     }
+    friend _Protocol;
+
+  protected:
+    // Append Checkpoint Chunk processing
+    std::pair<uint64_t, bool> write_checkpoint_chunk(append_checkpoint_chunk_arg_type && req)
+    {
+      typedef append_checkpoint_chunk_traits_type acc;
+
+      // This is a bit unpleasant.   If this req initiates a checkpoint then
+      // we have to transfer ownership of it to the in_progress_checkpoint via
+      // an opaque deleter.   Just in case we have to unpack all of the internal
+      // details here for processing.
+      auto req_checkpoint_done = acc::checkpoint_done(req);
+      auto req_last_checkpoint_index = acc::last_checkpoint_index(req);
+      auto req_leader_id = acc::leader_id(req);
+      auto req_data = acc::data(req);
+      auto req_checkpoint_begin = acc::checkpoint_begin(req);
+      
+      if (!current_checkpoint_) {
+	const auto & header(acc::last_checkpoint_header(req));
+	current_checkpoint_.reset(new in_progress_checkpoint<checkpoint_data_store_type>(store_, &header, [r = std::move(req)](){}));
+      }
+
+      // N.B. req might be invalid at this point
+
+      if (req_checkpoint_begin != current_checkpoint_->end()) {
+	BOOST_LOG_TRIVIAL(warning) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
+	  " received checkpoint chunk at " << req_checkpoint_begin <<
+	  " expecting at offset " << current_checkpoint_->end() << ".  Ignoring append_checkpoint_chunk message.";
+	return { current_checkpoint_->end(), false };
+      }
+
+      current_checkpoint_->write(std::move(req_data));
+      if (req_checkpoint_done) {
+	if (req_last_checkpoint_index < last_checkpoint_index()) {
+	  BOOST_LOG_TRIVIAL(warning) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
+	    " received completed checkpoint at index " << req_last_checkpoint_index <<
+	    " but already have a checkpoint at " << last_checkpoint_index() << ".  Ignoring entire out of date checkpoint.";
+	  abandon_checkpoint();
+	} else {
+          // Don't respond until the checkpoint is sync'd. Make a note to
+          // do so.
+	  append_checkpoint_chunk_response_continuation resp;
+	  resp.leader_id = req_leader_id;
+	  resp.term_number = resp.request_term_number = protocol()->current_term();
+	  resp.bytes_stored = current_checkpoint_->end();
+	  sync(resp);
+        }
+      }
+      // If checkpoint not done then we can respond immediately.
+      return { current_checkpoint_->end(), !req_checkpoint_done };
+    }
+    
+  public:
+    // One past the last log index of the last completed checkpoint
+    uint64_t last_checkpoint_index() const {
+      return last_checkpoint_index_;
+    }
+    
+    // The term of the last log entry of the last completed checkpoint
+    uint64_t last_checkpoint_term() const {
+      return last_checkpoint_term_;
+    }
+    
+    // The cluster time of the last log entry of the last completed checkpoint
+    uint64_t last_checkpoint_cluster_time() const {
+      return last_checkpoint_cluster_time_;
+    }
+
+    void abandon_checkpoint() {
+      if (!!current_checkpoint_) {
+	store_.discard(current_checkpoint_->file_);
+	current_checkpoint_.reset();
+      }
+    }
+
+    // State of the last completed checkpoint
+    checkpoint_data_ptr last_checkpoint() {
+      return store_.last_checkpoint();
+    }
+
+    checkpoint_data_ptr begin_checkpoint(uint64_t last_index_in_checkpoint) const
+    {
+      auto header = protocol()->create_checkpoint_header(last_index_in_checkpoint);
+      if (header.first != nullptr) {
+        return store_.create(std::move(header));
+      } else {
+        return checkpoint_data_ptr();
+      }
+    }
+
+    bool complete_checkpoint(uint64_t last_index_in_checkpoint, checkpoint_data_ptr ckpt)
+    {
+      BOOST_ASSERT(last_index_in_checkpoint == checkpoint_header_traits_type::last_log_entry_index(&ckpt->header()));
+
+    
+      if (last_index_in_checkpoint <= last_checkpoint_index()) {
+	BOOST_LOG_TRIVIAL(info) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
+	  " got request to complete checkpoint at index " << last_index_in_checkpoint << " but already has checkpoint " <<
+	  " at index " << last_checkpoint_index();
+	return false;
+      }
+
+      if (!protocol()->check_log_has_checkpoint(ckpt)) {
+        return false;
+      }
+
+      update_last_checkpoint(ckpt->header());
+
+      BOOST_ASSERT(last_checkpoint_index() == checkpoint_header_traits_type::last_log_entry_index(&ckpt->header()));
+      BOOST_ASSERT(last_checkpoint_term() == checkpoint_header_traits_type::last_log_entry_term(&ckpt->header()));
+      BOOST_ASSERT(last_checkpoint_cluster_time() == checkpoint_header_traits_type::last_log_entry_cluster_time(&ckpt->header()));
+
+      protocol()->set_checkpoint(ckpt);
+
+      store_.commit(ckpt);
+    
+      return true;
+    }
+    
+    void load_checkpoint()
+    {
+      // TODO: Actually load the checkpoint image
+      checkpoint_data_ptr ckpt = last_checkpoint();
+      if (!ckpt) {
+	// TODO: Should be a WARNING or ERROR
+	return;
+      }
+      const checkpoint_header_type & header(ckpt->header());
+
+      if (checkpoint_header_traits_type::last_log_entry_index(&header) < last_checkpoint_index()) {
+	return;
+      }
+
+      // Update server_checkpoint
+      update_last_checkpoint(header);
+
+      BOOST_ASSERT(last_checkpoint_index() == checkpoint_header_traits_type::last_log_entry_index(&header));
+      BOOST_ASSERT(last_checkpoint_term() == checkpoint_header_traits_type::last_log_entry_term(&header));
+      BOOST_ASSERT(last_checkpoint_cluster_time() == checkpoint_header_traits_type::last_log_entry_cluster_time(&header));
+
+      protocol()->load_checkpoint_header(header);
+    }
+
+    // Update of checkpoint file is synced to disk
+    void on_checkpoint_sync()
+    {
+      BOOST_ASSERT(current_checkpoint_);
+      BOOST_ASSERT(1U == checkpoint_chunk_response_sync_continuations_.size());
+      if (protocol()->current_term() == checkpoint_chunk_response_sync_continuations_[0].term_number) {
+	// What happens if the current term has changed while we were waiting for sync?  Right now I am suppressing the
+	// message but perhaps better to let the old leader know things have moved on.
+	// TODO: Interface to load checkpoint state now that it is complete
+	// TODO: Do we want an async interface for loading checkpoint state into memory?
+	store_.commit(current_checkpoint_->file_);
+        protocol()->send_append_checkpoint_chunk_response(checkpoint_chunk_response_sync_continuations_[0]);
+        this->load_checkpoint();
+      }
+      current_checkpoint_.reset();
+      checkpoint_chunk_response_sync_continuations_.resize(0);
+    }
   };
 
   // A protocol instance encapsulates what a participant in the Raft consensus protocol knows about itself
   template<typename _Communicator, typename _Client, typename _Messages>
-  class protocol
+  class protocol : public server_checkpoint<_Messages, protocol<_Communicator, _Client, _Messages>>
   {
   public:
     // Communicator types
@@ -182,7 +352,6 @@ namespace raft {
     typedef typename checkpoint_data_store_type::header_type checkpoint_header_type;
     typedef typename checkpoint_data_store_type::header_traits_type checkpoint_header_traits_type;
     typedef peer_checkpoint<checkpoint_data_store_type> peer_checkpoint_type;
-    typedef server_checkpoint<checkpoint_data_store_type> server_checkpoint_type;
 
     // A peer with this checkpoint data store and whatever the configuration manager brings to the table
     struct peer_metafunction
@@ -296,9 +465,6 @@ namespace raft {
     // This is the state machine to which committed log entries are applied
     std::function<void(log_entry_const_arg_type, uint64_t, std::size_t)> state_machine_;
 
-    // State related to checkpoint processing
-    server_checkpoint_type checkpoint_;
-
     // The consistent cluster wide clock
     cluster_clock cluster_clock_;
 
@@ -331,11 +497,6 @@ namespace raft {
       return configuration().num_known_peers();
     }
 
-    std::size_t my_cluster_id() const
-    {
-      return configuration().my_cluster_id();
-    }
-
     bool has_quorum() const {
       return configuration().has_quorum();
     }
@@ -362,13 +523,13 @@ namespace raft {
       // Something subtle with snapshots/checkpoints occurs here.  
       // After a checkpoint we may have no log entries so the term has to be recorded at the time
       // of the checkpoint.
-      return log_.empty() ? checkpoint_.last_checkpoint_term_ : log_.last_entry_term();
+      return log_.empty() ? this->last_checkpoint_term() : log_.last_entry_term();
     }
     uint64_t last_log_entry_cluster_time() const {
       // Something subtle with snapshots/checkpoints occurs here.  
       // After a checkpoint we may have no log entries so the cluster time has to be recorded at the time
       // of the checkpoint.
-      return log_.empty() ? checkpoint_.last_checkpoint_cluster_time_ : log_.last_entry_cluster_time();
+      return log_.empty() ? this->last_checkpoint_cluster_time() : log_.last_entry_cluster_time();
     }
     // Inserting this public/private pair to avoid colliding some some subsequent refactoring
   public:
@@ -459,17 +620,17 @@ namespace raft {
 	  } else if (previous_log_index == 0) {
 	    // First log entry.  No previous log term.
 	    previous_log_term = 0;
-	  } else if (previous_log_index == checkpoint_.last_checkpoint_index_) {
+	  } else if (previous_log_index == this->last_checkpoint_index()) {
 	    // Boundary case: Last log entry sent was the last entry in the last checkpoint
 	    // so we know what term that was
-	    previous_log_term = checkpoint_.last_checkpoint_term_;
+	    previous_log_term = this->last_checkpoint_term();
 	  } else {
 	    // How do we get here??? 
 	    // This is what we can conclude:
 	    // 1) p.next_index_ = log_start_index() (checked via 2 if statements above)
-	    // 2) log_start_index() <= checkpoint_.last_checkpoint_index_ (invariant; can't throw away log that isn't checkpointed)
-	    // 3) p.next_index_ != checkpoint_.last_checkpoint_term_
-	    // This implies p.next_index_ < checkpoint_.last_checkpoint_index_.
+	    // 2) log_start_index() <= this->last_checkpoint_index() (invariant; can't throw away log that isn't checkpointed)
+	    // 3) p.next_index_ != this->last_checkpoint_term()
+	    // This implies p.next_index_ < this->last_checkpoint_index().
 	    // So the following can get us here:  checkpoint  [0,p.next_index_) then truncate the
 	    // log prefix to make log_start_index()=p.next_index_.  Without updating p.next_index_, take another checkpoint strictly past p.next_index_
 	    // and DON'T truncate the prefix (e.g. keep it around precisely to avoid having to send checkpoints :-)
@@ -525,16 +686,16 @@ namespace raft {
       peer_type & p(peer_from_id(peer_id));
 
       // Internal error if we call this method without a checkpoint to send
-      BOOST_ASSERT(checkpoint_.last_checkpoint());
+      BOOST_ASSERT(this->last_checkpoint());
 
       // TODO: Should we arrange for abstractions that permit use of sendfile for checkpoint data?  Manual chunking
       // involves extra work and shouldn't really be necessary (though the manual chunking does send heartbeats).
       if (!p.checkpoint_) {
-	const checkpoint_header_type & header(configuration_.get_checkpoint());
-	BOOST_ASSERT(checkpoint_.last_checkpoint_index_ == checkpoint_header_traits_type::last_log_entry_index(&header));
-	BOOST_ASSERT(checkpoint_.last_checkpoint_term_ == checkpoint_header_traits_type::last_log_entry_term(&header));
-	BOOST_ASSERT(checkpoint_.last_checkpoint_cluster_time_ == checkpoint_header_traits_type::last_log_entry_cluster_time(&header));
-	p.checkpoint_.reset(new peer_checkpoint_type(header, checkpoint_.last_checkpoint()));
+	const auto & header(configuration_.get_checkpoint());
+	BOOST_ASSERT(this->last_checkpoint_index() == checkpoint_header_traits_type::last_log_entry_index(&header));
+	BOOST_ASSERT(this->last_checkpoint_term() == checkpoint_header_traits_type::last_log_entry_term(&header));
+	BOOST_ASSERT(this->last_checkpoint_cluster_time() == checkpoint_header_traits_type::last_log_entry_cluster_time(&header));
+	p.checkpoint_.reset(new peer_checkpoint_type(header, this->last_checkpoint()));
       }
 
       // Are we waiting for a response to a previous chunk?
@@ -935,91 +1096,36 @@ namespace raft {
       }
 
       // This is a bit unpleasant.   If this req initiates a checkpoint then
-      // we have to transfer ownership of it to the in_progress_checkpoint via
-      // an opaque deleter.   Just in case we have to unpack all of the internal
+      // we have to transfer ownership of it to the checkpointer via
+      // an opaque deleter.   Just in case we have to unpack all of the required internal
       // details here for processing.
       auto req_checkpoint_done = acc::checkpoint_done(req);
-      auto req_last_checkpoint_index = acc::last_checkpoint_index(req);
       auto req_leader_id = acc::leader_id(req);
-      auto req_data = acc::data(req);
-      auto req_checkpoint_begin = acc::checkpoint_begin(req);
       
-      if (!checkpoint_.current_checkpoint_) {
-	const auto & header(acc::last_checkpoint_header(req));
-	checkpoint_.current_checkpoint_.reset(new in_progress_checkpoint<checkpoint_data_store_type>(checkpoint_.store_, &header, [r = std::move(req)](){}));
-      }
+      auto ret = this->write_checkpoint_chunk(std::move(req));
 
       // N.B. req might be invalid at this point
 
-      if (req_checkpoint_begin != checkpoint_.current_checkpoint_->end()) {
-	BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	  " received checkpoint chunk at " << req_checkpoint_begin <<
-	  " expecting at offset " << checkpoint_.current_checkpoint_->end() << ".  Ignoring append_checkpoint_chunk message.";
-	return;
-      }
+      // If checkpoint done then we should not be told to send a response.
+      BOOST_ASSERT(!(req_checkpoint_done && ret.second));
 
-      checkpoint_.current_checkpoint_->write(std::move(req_data));
-      if (req_checkpoint_done) {
-	if (req_last_checkpoint_index < checkpoint_.last_checkpoint_index_) {
-	  BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	    " received completed checkpoint at index " << req_last_checkpoint_index <<
-	    " but already have a checkpoint at " << checkpoint_.last_checkpoint_index_ << ".  Ignoring entire out of date checkpoint.";
-	  checkpoint_.abandon();
-	  // TODO: Should we tell the leader that we didn't like its checkpoint?
-	  return;
-	} else {
-	  append_checkpoint_chunk_response_continuation resp;
-	  resp.leader_id = req_leader_id;
-	  resp.term_number = resp.request_term_number = current_term_;
-	  resp.bytes_stored = checkpoint_.current_checkpoint_->end();
-	  checkpoint_.sync(resp);
-	}
-      } else {
-	comm_.append_checkpoint_chunk_response(req_leader_id, get_peer_from_id(req_leader_id).address,
-					       my_cluster_id(),
-					       current_term_,
-					       current_term_,
-					       checkpoint_.current_checkpoint_->end());
+      if (ret.second) {
+        comm_.append_checkpoint_chunk_response(req_leader_id, get_peer_from_id(req_leader_id).address,
+                                               my_cluster_id(),
+                                               current_term_,
+                                               current_term_,
+                                               ret.first);
       }
     }
 
-    void internal_append_checkpoint_chunk_sync(const append_checkpoint_chunk_response_continuation & resp)
+    // This temporary transition to from private to public is a temporary expedient that
+    // intends to make diffs for a major refactorization easier to read.   There will be a follow on
+    // commit which is purely for moving code around.
+  public:
+    void load_checkpoint_header(const checkpoint_header_type & header)
     {
-      if (current_term_ == resp.term_number) {
-	// What happens if the current term has changed while we were waiting for sync?  Right now I am suppressing the
-	// message but perhaps better to let the old leader know things have moved on.
-	// TODO: Interface to load checkpoint state now that it is complete
-	// TODO: Do we want an async interface for loading checkpoint state into memory?
-	checkpoint_.store_.commit(checkpoint_.current_checkpoint_->file_);
-	comm_.append_checkpoint_chunk_response(resp.leader_id, get_peer_from_id(resp.leader_id).address,
-					       my_cluster_id(),
-					       resp.term_number,
-					       resp.request_term_number,
-					       resp.bytes_stored);
-	load_checkpoint();
-      }
-      checkpoint_.current_checkpoint_.reset();
-    }
-  
-
-    void load_checkpoint()
-    {
-      // TODO: Actually load the checkpoint image
-      checkpoint_data_ptr ckpt = checkpoint_.last_checkpoint();
-      if (!ckpt) {
-	// TODO: Should be a WARNING or ERROR
-	return;
-      }
-      const checkpoint_header_type & header(ckpt->header());
-
-      if (checkpoint_header_traits_type::last_log_entry_index(&header) < checkpoint_.last_checkpoint_index()) {
-	return;
-      }
-
-      // Update server_checkpoint 
-      checkpoint_.last_checkpoint_index_ = checkpoint_header_traits_type::last_log_entry_index(&header);
-      checkpoint_.last_checkpoint_term_ = checkpoint_header_traits_type::last_log_entry_term(&header);
-      checkpoint_.last_checkpoint_cluster_time_ = checkpoint_header_traits_type::last_log_entry_cluster_time(&header);
+      auto last_index = checkpoint_header_traits_type::last_log_entry_index(&header);
+      auto last_term = checkpoint_header_traits_type::last_log_entry_term(&header);
 
       // Anything checkpointed must be committed so we learn of commits this way
       // TODO: What if we get asked to load a checkpoint while we still have
@@ -1027,8 +1133,8 @@ namespace raft {
       // after handling the log and configuration before updating the commit index?
       // I suppose it is possible that a configuration that this server initiated gets
       // committed as part of a checkpoint received after losing leadership?
-      if(last_committed_index_ < checkpoint_.last_checkpoint_index_) {
-	update_last_committed_index(checkpoint_.last_checkpoint_index_);
+      if(last_committed_index_ < last_index) {
+	update_last_committed_index(last_index);
       }
 
       // TODO: How to handle the state machine?  We just learned of commits that are incorporated into the
@@ -1042,14 +1148,14 @@ namespace raft {
       // checkpoint).  If my log is at least as long the checkpoint
       // range but the term at the end of the checkpoint range doesn't match the checkpoint term
       // then I've got the wrong entries in the log and I should trash the entire log as well.
-      if (last_log_entry_index() < checkpoint_.last_checkpoint_index_ ||
-	  (log_start_index() <= checkpoint_.last_checkpoint_index_ &&
-	   log_.term(checkpoint_.last_checkpoint_index_-1) != checkpoint_.last_checkpoint_term_)) {
+      if (last_log_entry_index() < last_index ||
+	  (log_start_index() <= last_index &&
+	   log_.term(last_index-1) != last_term)) {
         // Now safe to truncate
-	log_.truncate_prefix(checkpoint_.last_checkpoint_index_);
-	log_.truncate_suffix(checkpoint_.last_checkpoint_index_);
-	configuration_.truncate_prefix(checkpoint_.last_checkpoint_index_);
-	configuration_.truncate_suffix(checkpoint_.last_checkpoint_index_);
+	log_.truncate_prefix(last_index);
+	log_.truncate_suffix(last_index);
+	configuration_.truncate_prefix(last_index);
+	configuration_.truncate_suffix(last_index);
       
 	// TODO: What's up with the log sync'ing logic here????
       
@@ -1062,7 +1168,7 @@ namespace raft {
       configuration_.set_checkpoint(header);
     }
 
-
+  private:
     // Guards for state transitions.  Most of the cases in which I can't make a transition
     // it is because the transition requires a disk write of the header and such a write is already in
     // progress.  If we have a sufficiently slow disk we are essentially dead!
@@ -1110,7 +1216,7 @@ namespace raft {
 	configuration().reset_staging_servers();
 
 	// Cancel any in-progress checkpoint
-	checkpoint_.abandon();
+	this->abandon_checkpoint();
       }
 
       // TODO: If transitioning from leader there may be a log sync to disk
@@ -1139,7 +1245,7 @@ namespace raft {
 	  ".  Syncing log header.";
 
 	// Cancel any in-progress checkpoint
-	checkpoint_.abandon();
+	this->abandon_checkpoint();
       
 	current_term_ += 1;
 	state_ = CANDIDATE;
@@ -1238,6 +1344,7 @@ namespace raft {
 	     configuration_manager_type & config_manager,
              std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now())
       :
+      server_checkpoint<_Messages, protocol<_Communicator, _Client, _Messages>>(store),
       comm_(comm),
       config_change_client_(nullptr),
       state_(FOLLOWER),
@@ -1251,7 +1358,6 @@ namespace raft {
       last_committed_index_(0),
       last_synced_index_(0),
       last_applied_index_(0),
-      checkpoint_(store),
       cluster_clock_(now),
       configuration_(config_manager),
       send_vote_requests_(false)
@@ -1282,11 +1388,16 @@ namespace raft {
       current_term_ = log_.current_term();	
 
       // Read any checkpoint
-      load_checkpoint();
+      this->load_checkpoint();
     }
 
     ~protocol()
     {
+    }
+
+    std::size_t my_cluster_id() const
+    {
+      return configuration().my_cluster_id();
     }
 
     template<typename _Callback>
@@ -1990,15 +2101,6 @@ namespace raft {
     
       become_candidate_on_log_header_sync(clock_now);
     }
-  
-    // Update of checkpoint file is synced to disk
-    void on_checkpoint_sync()
-    {
-      BOOST_ASSERT(checkpoint_.current_checkpoint_);
-      BOOST_ASSERT(1U == checkpoint_.checkpoint_chunk_response_sync_continuations_.size());
-      internal_append_checkpoint_chunk_sync(checkpoint_.checkpoint_chunk_response_sync_continuations_[0]);
-    }
-  
 
     // Checkpoint stuff
     // TODO: I don't really have a handle on how this should be structured.  Questions:
@@ -2009,17 +2111,16 @@ namespace raft {
     // 3. Interface between consensus and existing checkpoint state (which must be read both to restore
     // from a checkpoint and to send checkpoint data from a leader to the peer).
 
-    // This avoids having consensus constrain how the client takes and writes a checkpoint, but eventually
-    // have to let consensus know when a checkpoint is complete so that it can be sent to a peer (for example).
-    checkpoint_data_ptr begin_checkpoint(uint64_t last_index_in_checkpoint) const
+    std::pair<typename checkpoint_header_traits_type::const_arg_type, raft::util::call_on_delete> create_checkpoint_header(uint64_t last_index_in_checkpoint) const
     {
+      std::pair<typename checkpoint_header_traits_type::const_arg_type, raft::util::call_on_delete> error(nullptr, raft::util::call_on_delete());
       // TODO: What if log_header_sync_required_==true?
 
       if (last_index_in_checkpoint > last_committed_index_) {
 	BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " got request to checkpoint the log range [0," << last_index_in_checkpoint << ") but current committed log is [0," <<
 	  last_committed_index_ << ")";
-	return checkpoint_data_ptr();
+	return error;
       }
 
       uint64_t arg_last_log_entry_index = 0;
@@ -2035,36 +2136,29 @@ namespace raft {
 	// Requesting an empty checkpoint, silly but OK
 	arg_last_log_entry_term = 0;      
 	arg_last_log_entry_cluster_time = 0;      
-      } else if (last_index_in_checkpoint == checkpoint_.last_checkpoint_index_) {
+      } else if (last_index_in_checkpoint == this->last_checkpoint_index()) {
 	// requesting the checkpoint we've most recently made so we've save the term
 	// and don't need to look at log entries
-	arg_last_log_entry_term = checkpoint_.last_checkpoint_term_;
-	arg_last_log_entry_cluster_time = checkpoint_.last_checkpoint_cluster_time_;
+	arg_last_log_entry_term = this->last_checkpoint_term();
+	arg_last_log_entry_cluster_time = this->last_checkpoint_cluster_time();
       } else {
 	// we can't perform the requested checkpoint.  for example it is possible that
 	// we've gotten a checkpoint from a leader that is newer than anything the client
 	// is aware of yet.
-	return checkpoint_data_ptr();
+	return error;
       }
 
       // Configuration state as of the checkpoint goes in the header...
-      return checkpoint_.store_.create(checkpoint_header_traits_type::build(arg_last_log_entry_index,
-									    arg_last_log_entry_term,
-									    arg_last_log_entry_cluster_time,
-									    configuration_.get_configuration_index_at(last_index_in_checkpoint),
-									    configuration_.get_configuration_description_at(last_index_in_checkpoint)));
+      return checkpoint_header_traits_type::build(arg_last_log_entry_index,
+                                                  arg_last_log_entry_term,
+                                                  arg_last_log_entry_cluster_time,
+                                                  configuration_.get_configuration_index_at(last_index_in_checkpoint),
+                                                  configuration_.get_configuration_description_at(last_index_in_checkpoint));
     }
 
-    bool complete_checkpoint(uint64_t last_index_in_checkpoint, checkpoint_data_ptr ckpt)
+    bool check_log_has_checkpoint(checkpoint_data_ptr ckpt)
     {
-      // TODO: What if log_header_sync_required_?
-    
-      if (last_index_in_checkpoint <= checkpoint_.last_checkpoint_index_) {
-	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	  " got request to complete checkpoint at index " << last_index_in_checkpoint << " but already has checkpoint " <<
-	  " at index " << checkpoint_.last_checkpoint_index_;
-	return false;
-      }
+      auto last_index_in_checkpoint = checkpoint_header_traits_type::last_log_entry_index(&ckpt->header());
 
       // Only remaining case here is that the checkpoint index is in the log
       if (last_index_in_checkpoint <= log_start_index() ||
@@ -2075,33 +2169,42 @@ namespace raft {
 	return false;
       }
 
-      BOOST_ASSERT(last_index_in_checkpoint == checkpoint_header_traits_type::last_log_entry_index(&ckpt->header()));
       BOOST_ASSERT(log_.term(last_index_in_checkpoint-1) == checkpoint_header_traits_type::last_log_entry_term(&ckpt->header()));
       BOOST_ASSERT(log_.cluster_time(last_index_in_checkpoint-1) == checkpoint_header_traits_type::last_log_entry_cluster_time(&ckpt->header()));
-		   
-      checkpoint_.last_checkpoint_index_ = checkpoint_header_traits_type::last_log_entry_index(&ckpt->header());
-      checkpoint_.last_checkpoint_term_ = checkpoint_header_traits_type::last_log_entry_term(&ckpt->header());
-      checkpoint_.last_checkpoint_cluster_time_ = checkpoint_header_traits_type::last_log_entry_cluster_time(&ckpt->header());
+      return true;
+    }
+
+    void set_checkpoint(checkpoint_data_ptr ckpt)
+    {
+      auto last_index_in_checkpoint = checkpoint_header_traits_type::last_log_entry_index(&ckpt->header());
+      auto last_term_in_checkpoint = checkpoint_header_traits_type::last_log_entry_term(&ckpt->header());
+      auto last_cluster_time_in_checkpoint = checkpoint_header_traits_type::last_log_entry_cluster_time(&ckpt->header());
       configuration_.set_checkpoint(ckpt->header());
  
       // Discard log entries
       // TODO: Understand the log sync'ing implications here
       // TODO: Also make sure that all of these entries have completed being applied
       // to state machine.
-      log_.truncate_prefix(checkpoint_.last_checkpoint_index_);
-      configuration_.truncate_prefix(checkpoint_.last_checkpoint_index_);
+      log_.truncate_prefix(last_index_in_checkpoint);
+      configuration_.truncate_prefix(last_index_in_checkpoint);
 
-      checkpoint_.store_.commit(ckpt);
-    
       BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	" completed checkpoint at index " << checkpoint_.last_checkpoint_index_ << ", term " <<
-	checkpoint_.last_checkpoint_term_ << " and cluster time " << checkpoint_.last_checkpoint_cluster_time_ <<
+	" completed checkpoint at index " << last_index_in_checkpoint << ", term " <<
+	last_term_in_checkpoint << " and cluster time " << last_cluster_time_in_checkpoint <<
         " current log entries [" << log_start_index() << "," <<
 	last_log_entry_index() << ")";
 
-      return true;
     }
 
+    void send_append_checkpoint_chunk_response(const append_checkpoint_chunk_response_continuation & resp)
+    {
+      comm_.append_checkpoint_chunk_response(resp.leader_id, get_peer_from_id(resp.leader_id).address,
+                                             my_cluster_id(),
+                                             resp.term_number,
+                                             resp.request_term_number,
+                                             resp.bytes_stored);
+    }
+  
     void on_command_applied(uint64_t log_index)
     {
       if (log_index >= last_applied_index_) {
@@ -2138,9 +2241,6 @@ namespace raft {
     }
     bool log_header_sync_required() const {
       return log_header_sync_required_;
-    }
-    server_checkpoint_type & checkpoint() {
-      return checkpoint_;
     }
     uint64_t cluster_time() const {
       return cluster_clock_.cluster_time();
