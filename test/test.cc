@@ -1221,8 +1221,8 @@ public:
   std::shared_ptr<typename raft_type::configuration_manager_type> cm;
   std::shared_ptr<raft_type> s;
   append_checkpoint_chunk_arg_type five_servers;
-  std::vector<uint8_t> checkpoint_load_state;
   log_header_write_test log_header_write_;
+  std::vector<uint8_t> checkpoint_load_state;
 
   uint64_t initial_cluster_time;
 
@@ -1309,6 +1309,14 @@ public:
       BOOST_CHECK_EQUAL(1U, l.last_index());
       BOOST_CHECK_EQUAL(initial_cluster_time, l.last_entry_cluster_time());
     }
+    s->set_state_machine_for_checkpoint([this](raft::checkpoint_block b, bool is_final) {
+                                          if (!b.is_null()) {
+                                            auto buf = reinterpret_cast<const uint8_t *>(b.data());
+                                            this->checkpoint_load_state.insert(this->checkpoint_load_state.end(), buf, buf+b.size());
+                                          } else {
+                                            this->checkpoint_load_state.clear();
+                                          }
+                                        });
   }
   ~RaftTestBase() {}
 
@@ -1841,6 +1849,9 @@ public:
     BOOST_REQUIRE_EQUAL(0U, comm.q.size());
 
     s->on_checkpoint_sync();
+    BOOST_TEST(1 == checkpoint_load_state.size());
+    BOOST_TEST_REQUIRE(0 < checkpoint_load_state.size());
+    BOOST_TEST(0U == checkpoint_load_state[0]);
     BOOST_CHECK(!s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
@@ -1892,7 +1903,7 @@ public:
     BOOST_CHECK_EQUAL(0U, comm.q.size());
     {
       // Since a log header sync is outstanding we will ignore a new term
-      uint8_t data=0;
+      uint8_t data=1;
       append_checkpoint_chunk_builder bld;
       bld.recipient_id(0).term_number(2).leader_id(2).checkpoint_begin(0).checkpoint_end(1).checkpoint_done(false).data(raft::slice(&data, 1));
       {
@@ -1918,7 +1929,7 @@ public:
 
     {
       // This one doesn't require a new term so it gets queued awaiting the log header sync
-      uint8_t data=0;
+      uint8_t data=2;
       append_checkpoint_chunk_builder bld;
       bld.recipient_id(0).term_number(1).leader_id(1).checkpoint_begin(1).checkpoint_end(2).checkpoint_done(true).data(raft::slice(&data, 1));
       {
@@ -1937,12 +1948,14 @@ public:
       s->on_append_checkpoint_chunk(std::move(msg));
     }
     BOOST_CHECK(s->log_header_sync_required());
+    BOOST_TEST(0 == checkpoint_load_state.size());
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK_EQUAL(0U, comm.q.size());
     s->on_log_header_sync();
     BOOST_CHECK(!s->log_header_sync_required());
+    BOOST_TEST(0 == checkpoint_load_state.size());
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
@@ -1954,6 +1967,10 @@ public:
     comm.q.pop_back();
 
     s->on_checkpoint_sync();
+    BOOST_TEST(2 == checkpoint_load_state.size());
+    BOOST_TEST_REQUIRE(0 < checkpoint_load_state.size());
+    BOOST_TEST(0U == checkpoint_load_state[0]);
+    BOOST_TEST(2U == checkpoint_load_state[1]);
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
@@ -1992,11 +2009,36 @@ public:
     BOOST_CHECK(nullptr == s->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
-    s->complete_checkpoint(2U, ckpt);
+    s->complete_checkpoint(ckpt);
     BOOST_CHECK_EQUAL(2U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->last_checkpoint_cluster_time());
     BOOST_CHECK(ckpt == s->last_checkpoint());
+    BOOST_REQUIRE(nullptr != s->last_checkpoint());
+    std::size_t offset=0;
+    raft::checkpoint_block block;
+    BOOST_CHECK(block.is_null());
+    while(!s->last_checkpoint()->is_final(block)) {
+      block = s->last_checkpoint()->next_block(block);
+      BOOST_CHECK(!block.is_null());
+      if (!s->last_checkpoint()->is_final(block)) {
+        BOOST_TEST(offset + block.size() < 5U);
+        BOOST_CHECK_EQUAL(s->last_checkpoint()->block_size(), block.size());
+        BOOST_CHECK_EQUAL(0, ::memcmp(block.data(), &data[offset], block.size()));
+        offset += block.size();
+      } else {
+        BOOST_TEST(offset + block.size() == 5U);
+        BOOST_TEST(s->last_checkpoint()->block_size() >= block.size());
+        BOOST_CHECK_EQUAL(0, ::memcmp(block.data(), &data[offset], block.size()));
+      }
+    }
+    block = s->last_checkpoint()->next_block(block);
+    BOOST_CHECK(block.is_null());
+
+    BOOST_TEST(0U == checkpoint_load_state.size());
+    s->load_checkpoint(std::chrono::steady_clock::now());
+    BOOST_TEST_REQUIRE(5U == checkpoint_load_state.size());
+    BOOST_TEST(0 == ::memcmp(&checkpoint_load_state[0], &data[0], 5));
   }
 
   void ClientPartialCheckpointTest()
@@ -2029,7 +2071,7 @@ public:
 
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
-    s->complete_checkpoint(2U, ckpt);
+    s->complete_checkpoint(ckpt);
     BOOST_CHECK_EQUAL(2U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
@@ -2072,7 +2114,7 @@ public:
 
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
-    s->complete_checkpoint(2U, ckpt);
+    s->complete_checkpoint(ckpt);
     BOOST_CHECK_EQUAL(2U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
@@ -2126,7 +2168,7 @@ public:
     BOOST_CHECK(nullptr == s->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
-    s->complete_checkpoint(1U, ckpt);
+    s->complete_checkpoint(ckpt);
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
@@ -2225,7 +2267,7 @@ public:
     BOOST_CHECK(nullptr == s->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
-    s->complete_checkpoint(1U, ckpt);
+    s->complete_checkpoint(ckpt);
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
@@ -2849,7 +2891,9 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedJointConsensusAddServerNewLeaderFinishesC
 // TODO: Test edge case in which a transition config gets logged on LEADER then the lose leadership.  Suppose that we get a checkpoint from a new leader that
 // contains the new config.  We can tell the client.  Conversely we can learn from the checkpoint that the config DIDN'T get committed.  Perhaps it is easier to
 // just take the logcabin approach and say that a leader with a transitional config tells the client that it failed immediately upon losing leadership.
-
+// TODO: Restore checkpoint to a FOLLOWER whose state machine is behind with respect to the checkpoint.
+// TODO: Restore a checkpoint to a state machine while the state machine is in the middle of an async log application.
+// TODO: Initiate a checkpoint of a state machine that hasn't applied all of the log entries in the checkpoint.
 
 BOOST_AUTO_TEST_CASE(SliceTotalSize)
 {

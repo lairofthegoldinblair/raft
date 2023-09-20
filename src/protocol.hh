@@ -116,7 +116,7 @@ namespace raft {
   // checkpoint_header_type create_checkpoint_header(uint64_t last_index_in_checkpoint);
   // bool check_log_has_checkpoint(checkpoint_data_ptr);
   // void set_checkpoint(checkpoint_data_ptr);
-  // void load_checkpoint_header(checkpoint_header_type &);
+  // void set_checkpoint_header(checkpoint_header_type &);
   // void send_append_checkpoint_chunk_response(append_checkpoint_chunk_response_continuation);
   template <typename _Messages, typename _Protocol>
   class server_checkpoint
@@ -130,6 +130,7 @@ namespace raft {
     typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
     typedef typename checkpoint_data_store_type::header_type checkpoint_header_type;
     typedef typename checkpoint_data_store_type::header_traits_type checkpoint_header_traits_type;
+    
   private:
     protocol_type * protocol()
     {
@@ -162,13 +163,16 @@ namespace raft {
     std::shared_ptr<in_progress_checkpoint<checkpoint_data_store_type> > current_checkpoint_;
     // Checkpoints live here
     checkpoint_data_store_type & store_;
+    // Interface to state machine for restoring checkpoint
+    std::function<void(checkpoint_block, bool)> state_machine_;
   
     server_checkpoint(checkpoint_data_store_type & store)
       :
       last_checkpoint_index_(0),
       last_checkpoint_term_(0),
       last_checkpoint_cluster_time_(0),
-      store_(store)
+      store_(store),
+      state_machine_([](checkpoint_block, bool) { })
     {
     }
     friend _Protocol;
@@ -225,6 +229,14 @@ namespace raft {
     }
     
   public:
+
+    // Attach the state machine
+    template<typename _Callback>
+    void set_state_machine_for_checkpoint(_Callback && cb)
+    {
+      state_machine_ = std::move(cb);
+    }
+    
     // One past the last log index of the last completed checkpoint
     uint64_t last_checkpoint_index() const {
       return last_checkpoint_index_;
@@ -262,9 +274,9 @@ namespace raft {
       }
     }
 
-    bool complete_checkpoint(uint64_t last_index_in_checkpoint, checkpoint_data_ptr ckpt)
+    bool complete_checkpoint(checkpoint_data_ptr ckpt)
     {
-      BOOST_ASSERT(last_index_in_checkpoint == checkpoint_header_traits_type::last_log_entry_index(&ckpt->header()));
+      auto last_index_in_checkpoint = checkpoint_header_traits_type::last_log_entry_index(&ckpt->header());
 
     
       if (last_index_in_checkpoint <= last_checkpoint_index()) {
@@ -291,9 +303,8 @@ namespace raft {
       return true;
     }
     
-    void load_checkpoint()
+    void load_checkpoint(std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
-      // TODO: Actually load the checkpoint image
       checkpoint_data_ptr ckpt = last_checkpoint();
       if (!ckpt) {
 	// TODO: Should be a WARNING or ERROR
@@ -302,7 +313,13 @@ namespace raft {
       const checkpoint_header_type & header(ckpt->header());
 
       if (checkpoint_header_traits_type::last_log_entry_index(&header) < last_checkpoint_index()) {
-	return;
+        // We've already loaded a more recent checkpoint than this one.   Note that on_checkpoint_sync
+        // commits to the store (hence changes the return value of last_checkpoint()) without
+        // calling update_last_checkpoint (which sets the value of last_checkpoint_index()).   So,
+        // In that scenario we can get a more recent checkpoint in the store than the values in last_checkpoint_*().
+        // TODO: It seems that if this is true we have blown away our most recent checkpoint and that would
+        // be very bad!   In LogCabin, the corresponding condition is a PANIC.
+        throw std::runtime_error("checkpoint_header_traits_type::last_log_entry_index(&header) < last_checkpoint_index()");
       }
 
       // Update server_checkpoint
@@ -312,11 +329,24 @@ namespace raft {
       BOOST_ASSERT(last_checkpoint_term() == checkpoint_header_traits_type::last_log_entry_term(&header));
       BOOST_ASSERT(last_checkpoint_cluster_time() == checkpoint_header_traits_type::last_log_entry_cluster_time(&header));
 
-      protocol()->load_checkpoint_header(header);
+      protocol()->set_checkpoint_header(header, clock_now);
+
+      // TODO: Make the state machine restore async
+      checkpoint_block block;
+      do {
+        state_machine_(block, false);
+        block = last_checkpoint()->next_block(block);
+      } while(!last_checkpoint()->is_final(block));
+      state_machine_(block, true);
     }
 
     // Update of checkpoint file is synced to disk
     void on_checkpoint_sync()
+    {
+      on_checkpoint_sync(std::chrono::steady_clock::now());
+    }
+    
+    void on_checkpoint_sync(std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       BOOST_ASSERT(current_checkpoint_);
       BOOST_ASSERT(1U == checkpoint_chunk_response_sync_continuations_.size());
@@ -327,7 +357,7 @@ namespace raft {
 	// TODO: Do we want an async interface for loading checkpoint state into memory?
 	store_.commit(current_checkpoint_->file_);
         protocol()->send_append_checkpoint_chunk_response(checkpoint_chunk_response_sync_continuations_[0]);
-        this->load_checkpoint();
+        this->load_checkpoint(clock_now);
       }
       current_checkpoint_.reset();
       checkpoint_chunk_response_sync_continuations_.resize(0);
@@ -1122,10 +1152,19 @@ namespace raft {
     // intends to make diffs for a major refactorization easier to read.   There will be a follow on
     // commit which is purely for moving code around.
   public:
-    void load_checkpoint_header(const checkpoint_header_type & header)
+    void set_checkpoint_header(const checkpoint_header_type & header,
+                               std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       auto last_index = checkpoint_header_traits_type::last_log_entry_index(&header);
       auto last_term = checkpoint_header_traits_type::last_log_entry_term(&header);
+      auto last_cluster_time = checkpoint_header_traits_type::last_log_entry_cluster_time(&header);
+
+      // How to handle the state machine?  We just learned of commits that are incorporated into the
+      // checkpoint state, but we won't get the log entries corresponding to those commits, we can't call apply_log_entries() here.
+      // TENTATIVE ANSWER: Checkpoint was loaded into the state machine so we only have to update last_applied_index_ to
+      // the last log entry of the checkpoint.   Given that we do this before calling update_last_committed_index, we should be
+      // able to refold apply_log_entries() into update_last_commit_index().
+      last_applied_index_ = last_index;
 
       // Anything checkpointed must be committed so we learn of commits this way
       // TODO: What if we get asked to load a checkpoint while we still have
@@ -1137,9 +1176,6 @@ namespace raft {
 	update_last_committed_index(last_index);
       }
 
-      // TODO: How to handle the state machine?  We just learned of commits that are incorporated into the
-      // checkpoint state, but we won't get the log entries corresponding to those commits, we can't call apply_log_entries here.
-
       // TODO: Now get the log in order.  If my log is consistent with the checkpoint then I
       // may want to keep some of it around.  For example, if I become leader then I may need to
       // bring some peers up to date and it is likely cheaper to send them some log entries
@@ -1149,16 +1185,19 @@ namespace raft {
       // range but the term at the end of the checkpoint range doesn't match the checkpoint term
       // then I've got the wrong entries in the log and I should trash the entire log as well.
       if (last_log_entry_index() < last_index ||
-	  (log_start_index() <= last_index &&
+	  (log_start_index() < last_index &&
 	   log_.term(last_index-1) != last_term)) {
         // Now safe to truncate
 	log_.truncate_prefix(last_index);
 	log_.truncate_suffix(last_index);
 	configuration_.truncate_prefix(last_index);
 	configuration_.truncate_suffix(last_index);
+
+        // Log is emptied so cluster time needs to be reset to the cluster time of the
+        // checkpoint itself
+        cluster_clock_.set(last_cluster_time, clock_now);
       
 	// TODO: What's up with the log sync'ing logic here????
-      
 	// logcabin waits for the log to sync when FOLLOWER (but not when
 	// LEADER).  logcabin assumes that all log writes are synchronous in a FOLLOWER
 	// but I'm not sure I think that needs to be assumed (just that we sync the
@@ -1388,7 +1427,7 @@ namespace raft {
       current_term_ = log_.current_term();	
 
       // Read any checkpoint
-      this->load_checkpoint();
+      this->load_checkpoint(now);
     }
 
     ~protocol()
@@ -2119,6 +2158,14 @@ namespace raft {
       if (last_index_in_checkpoint > last_committed_index_) {
 	BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " got request to checkpoint the log range [0," << last_index_in_checkpoint << ") but current committed log is [0," <<
+	  last_committed_index_ << ")";
+	return error;
+      }
+
+      // Is it even acceptable to checkpoint before last applied?
+      if (last_index_in_checkpoint > last_applied_index_) {
+	BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+	  " got request to checkpoint the log range [0," << last_index_in_checkpoint << ") but have only applied log in the range is [0," <<
 	  last_committed_index_ << ")";
 	return error;
       }

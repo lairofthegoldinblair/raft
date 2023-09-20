@@ -32,6 +32,16 @@ namespace raft {
     {
     }
 
+    const void * data() const
+    {
+      return block_data_;
+    }
+
+    size_t size() const
+    {
+      return block_length_;
+    }
+
     bool is_null() const {
       return block_data_ == nullptr;
     }
@@ -68,6 +78,11 @@ namespace raft {
     {
     }
 
+    std::size_t block_size() const
+    {
+      return block_size_;
+    }
+
     const header_type & header() const
     {
       return *header_;
@@ -86,7 +101,7 @@ namespace raft {
     
     checkpoint_block next_block(const checkpoint_block & current_block) {
       if (current_block.is_null()) {
-	return checkpoint_block(&data_[0], block_size_);
+	return checkpoint_block(&data_[0], (std::min)(block_size_, data_.size()));
       } else if (!is_final(current_block)) {
 	std::size_t next_block_start = (current_block.block_data_ - &data_[0]) + current_block.block_length_;
 	std::size_t next_block_end = (std::min)(next_block_start+block_size_, data_.size());
@@ -109,7 +124,6 @@ namespace raft {
       return !current_block.is_null() &&
 	(current_block.block_data_ + current_block.block_length_) == &data_[data_.size()];
     }
-
 
     void write(const uint8_t * data, std::size_t len)
     {
