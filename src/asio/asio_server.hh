@@ -669,14 +669,14 @@ namespace raft {
 	// Open the log file
 	std::string log_header_file(log_directory);
 	log_header_file += std::string("/log_header.bin");
-	log_header_fd_ = ::open(log_header_file.c_str(), O_CREAT | O_WRONLY);
+	log_header_fd_ = ::open(log_header_file.c_str(), O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
 	if (-1 == log_header_fd_) {
 	  BOOST_LOG_TRIVIAL(error) << "Server(" << config_manager_.configuration().my_cluster_id() << ") Failed to open log header file " << log_header_file << ": " << ::strerror(errno);
 	}
 	log_header_file_.reset(new basic_file_object<disk_io_service>(io_service_, log_header_fd_));
 	std::string log_file(log_directory);
 	log_file += std::string("/log.bin");
-	log_fd_ = ::open(log_file.c_str(), O_CREAT | O_WRONLY | O_APPEND);
+	log_fd_ = ::open(log_file.c_str(), O_CREAT | O_WRONLY | O_APPEND, S_IRUSR | S_IWUSR);
 	if (-1 == log_fd_) {
 	  BOOST_LOG_TRIVIAL(error) << "Server(" << config_manager_.configuration().my_cluster_id() << ") Failed to open log header file " << log_file << ": " << ::strerror(errno);
 	}
