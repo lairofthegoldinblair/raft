@@ -1,6 +1,17 @@
-cmake_minimum_required (VERSION 2.8)
+cmake_minimum_required (VERSION 3.15)
 
 project (raft)
+
+include(FetchContent)
+FetchContent_Declare(
+  flatbuffers
+  GIT_REPOSITORY https://github.com/google/flatbuffers.git
+  GIT_TAG        v23.3.3
+)
+set(FETCHCONTENT_QUIET OFF)
+FetchContent_MakeAvailable(flatbuffers)
+
+include_directories ( ${flatbuffers_SOURCE_DIR}/include )
 
 # We have some of our own CMake Find Modules
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules/")
