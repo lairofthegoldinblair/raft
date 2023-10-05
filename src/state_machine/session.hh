@@ -434,6 +434,7 @@ namespace raft {
                            open_session_request_arg_type && req,
                            std::chrono::time_point<std::chrono::steady_clock> clock_now)
       {
+        BOOST_LOG_TRIVIAL(debug) << "[session_manager::on_open_session] Request to open session";
         auto buf = serialization_type::serialize_log_entry_command(std::move(req));
         auto ret = protocol_.on_command(std::move(buf), clock_now);
         if (messages_type::client_result_success() == std::get<0>(ret)) {
@@ -448,6 +449,7 @@ namespace raft {
                             close_session_request_arg_type && req,
                             std::chrono::time_point<std::chrono::steady_clock> clock_now)
       {
+        BOOST_LOG_TRIVIAL(debug) << "[session_manager::on_close_session] Request to close session with id " << close_session_request_traits_type::session_id(req);
         auto buf = serialization_type::serialize_log_entry_command(std::move(req));
         auto ret = protocol_.on_command(std::move(buf), clock_now);
         if (messages_type::client_result_success() == std::get<0>(ret)) {
@@ -462,6 +464,8 @@ namespace raft {
                                    linearizable_command_arg_type && req,
                                    std::chrono::time_point<std::chrono::steady_clock> clock_now)
       {
+        BOOST_LOG_TRIVIAL(debug) << "[session_manager::on_linearizable_command] Request to invoke linearizable command on session with id " << linearizable_command_traits_type::session_id(req)
+                                 << " sequence number " << linearizable_command_traits_type::session_id(req);
         auto buf = serialization_type::serialize_log_entry_command(std::move(req));
         auto ret = protocol_.on_command(std::move(buf), clock_now);
         if (messages_type::client_result_success() == std::get<0>(ret)) {

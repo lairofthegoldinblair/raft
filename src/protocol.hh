@@ -637,10 +637,7 @@ namespace raft {
 
     std::chrono::time_point<std::chrono::steady_clock> new_heartbeat_timeout(std::chrono::time_point<std::chrono::steady_clock> clock_now) const
     {
-      std::default_random_engine generator;
-      std::uniform_int_distribution<std::chrono::milliseconds::rep> dist(election_timeout_min_.count()/2, 
-									 election_timeout_max_.count()/2);
-      return clock_now + std::chrono::milliseconds(dist(generator));
+      return clock_now + std::chrono::milliseconds(election_timeout_min_.count()/2);
     }
 
     static const char * state_string(state s)
@@ -692,6 +689,9 @@ namespace raft {
 	  if (p.next_index_ < log_start_index()) {
 	    // We have checkpointed a portion of the log the peer requires
 	    // we must send a checkpoint instead and then we can apply log entries.
+            BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ 
+                                    << " peer " << i << " requires log entries starting at index " << p.next_index_
+                                    << " but log starts at " << log_start_index() << ".  Sending checkpoint.";
 	    send_checkpoint_chunk(clock_now, i);
 	    continue;
 	  }
@@ -750,7 +750,10 @@ namespace raft {
                                      << last_log_entry_index() << ") for " << std::chrono::duration_cast<std::chrono::milliseconds>(p.scheduler_.retransmit_timeout()-clock_now).count()
                                      << " milliseconds";
           }
-        }          
+	}  else if (i != my_cluster_id()) {
+          BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_
+                                   << " peer " << i << " is up to date with log at " << p.match_index_;
+        }
       }
     }
 
@@ -2335,6 +2338,11 @@ namespace raft {
 	if (it != e) {
 	  for(; it != e; ++it) {
 	    BOOST_ASSERT(it->second.end_index <= last_synced_index_);
+            BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+              " sending append_entry response:  request_term_number=" << it->second.term <<
+              " begin_index=" << it->second.begin_index <<
+              " last_index=" << it->second.end_index <<
+              " success=" << (it->second.term == current_term_ ? "true" : "false");
 	    // TODO: Can I respond to more than what was requested?  Possibly useful idea for pipelined append_entry
 	    // requests in which we can sync the log once for multiple append_entries.
 	    comm_.append_entry_response(it->second.leader_id, get_peer_from_id(it->second.leader_id).address,

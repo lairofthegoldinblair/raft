@@ -28,7 +28,7 @@ set(Boost_USE_MULTITHREADED ON)
 #
 # Boost
 #
-find_package( Boost 1.55 COMPONENTS log system thread unit_test_framework REQUIRED )
+find_package( Boost 1.55 COMPONENTS log program_options system thread timer unit_test_framework REQUIRED )
 include_directories ( ${Boost_INCLUDE_DIR} )
 
 #
