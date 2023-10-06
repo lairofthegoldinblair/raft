@@ -99,6 +99,7 @@ namespace raft {
     class little_open_session_request
     {
     public:
+      uint8_t dummy;
     };
 
     class little_open_session_response
@@ -116,6 +117,7 @@ namespace raft {
     class little_close_session_response
     {
     public:
+      uint8_t dummy;
     };
 
     class little_linearizable_command
@@ -141,6 +143,7 @@ namespace raft {
     {
     public:
       boost::endian::little_uint64_t term;
+      boost::endian::little_uint64_t cluster_time;
       uint8_t type;
     };
 
@@ -163,6 +166,61 @@ namespace raft {
     struct serialization
     {
       typedef log_entry_command_view_deserialization log_entry_command_view_deserialization_type;
+
+      static std::size_t serialize_helper(const std::string& str)
+      {
+	return sizeof(boost::endian::little_uint32_t) + str.size();
+      }
+
+      static std::size_t serialize_helper(const raft::native::server_description& desc)
+      {
+	return sizeof(boost::endian::little_uint64_t) + serialize_helper(desc.address);
+      }
+
+      template<typename _T>
+      static std::size_t serialize_helper(const std::vector<_T>& vec)
+      {
+	std::size_t sz = sizeof(boost::endian::little_uint32_t);
+	for (auto & t : vec) {
+	  sz += serialization::serialize_helper(t);
+	}
+	return sz;
+      }
+
+      static std::size_t serialize_helper(const std::vector<uint8_t>& vec)
+      {
+	return sizeof(boost::endian::little_uint32_t) + vec.size();
+      }
+
+      static std::size_t serialize_helper(const raft::native::simple_configuration_description& desc)
+      {
+	return serialization::serialize_helper(desc.servers);
+      }
+
+      static std::size_t serialize_helper(const raft::native::configuration_description& desc)
+      {
+	return serialize_helper(desc.from) + serialize_helper(desc.to);
+      }
+      
+      static std::size_t serialize_helper(const raft::native::log_entry<raft::native::configuration_description>& entry)
+      {
+	return sizeof(little_log_entry) + serialize_helper(entry.data) + serialize_helper(entry.configuration);
+      }
+
+      static std::size_t serialize_helper(const raft::native::open_session_request & msg)
+      {
+        return sizeof(little_open_session_request);
+      }
+
+      static std::size_t serialize_helper(const raft::native::close_session_request & msg)
+      {
+        return sizeof(little_close_session_request);
+      }
+      
+      static std::size_t serialize_helper(const raft::native::linearizable_command & msg)
+      {
+	return sizeof(little_linearizable_command) + serialize_helper(msg.command);
+      }
 
       static std::size_t serialize_helper(raft::mutable_slice && b, const std::string& str)
       {
@@ -217,6 +275,7 @@ namespace raft {
 	little_log_entry * log_buf = reinterpret_cast<little_log_entry *>(b.data());
 	log_buf->term = entry.term;
 	log_buf->type = entry.type;
+	log_buf->cluster_time = entry.cluster_time;
 	std::size_t sz = sizeof(little_log_entry);
 	sz += serialization::serialize_helper(b+sz, entry.data);
 	sz += serialization::serialize_helper(b+sz, entry.configuration);
@@ -225,6 +284,8 @@ namespace raft {
 
       static std::size_t serialize_helper(raft::mutable_slice && b, const raft::native::open_session_request & msg)
       {
+	little_open_session_request * buf = reinterpret_cast<little_open_session_request *>(b.data());
+        buf->dummy = 0xef;
         return sizeof(little_open_session_request);
       }
 
@@ -322,6 +383,7 @@ namespace raft {
       {
 	const little_log_entry * log_buf = reinterpret_cast<const little_log_entry *>(b.data());
 	entry.term = log_buf->term;
+	entry.cluster_time = log_buf->cluster_time;
 	switch(log_buf->type) {
 	case 0:
 	  entry.type = raft::native::log_entry<raft::native::configuration_description>::COMMAND;
@@ -345,6 +407,9 @@ namespace raft {
 
       static std::size_t deserialize_helper(raft::slice && b, raft::native::messages::open_session_request_type & msg)
       {
+	BOOST_ASSERT(b.size() >= sizeof(little_open_session_request));
+	auto buf = reinterpret_cast<const little_open_session_request *>(b.data());
+        BOOST_ASSERT(buf->dummy == 0xef);
         return sizeof(little_open_session_request);
       }
     
@@ -530,6 +595,8 @@ namespace raft {
       {
 	raft::native::messages::open_session_request_type msg;
 	BOOST_ASSERT(b.first.size() >= sizeof(little_open_session_request));
+	auto buf = reinterpret_cast<const little_open_session_request *>(b.first.data());
+        BOOST_ASSERT(buf->dummy == 0xef);
 	return msg;
       }
     
@@ -555,6 +622,8 @@ namespace raft {
       {
 	raft::native::messages::close_session_response_type msg;
 	BOOST_ASSERT(b.first.size() >= sizeof(little_close_session_response));
+	auto buf = reinterpret_cast<const little_close_session_response *>(b.first.data());
+        BOOST_ASSERT(buf->dummy == 0xfa);
 	return msg;
       }
     
@@ -596,8 +665,8 @@ namespace raft {
 
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::append_entry_type && msg)
       {
-	// TODO: Make sure the msg fits in our buffer; either throw or support by allocating a new buffer
-	raft::mutable_slice b(new uint8_t [1024], 1024);
+        auto to_alloc = sizeof(little_append_entry) + serialize_helper(msg.entry);
+	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
 	auto * buf = reinterpret_cast<little_append_entry *>(b.data());
 	buf->recipient_id = msg.recipient_id;
 	buf->term_number = msg.term_number;
@@ -626,8 +695,8 @@ namespace raft {
     
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::client_request_type && msg)
       {
-	// TODO: Make sure the msg fits in our buffer; either throw or support by allocating a new buffer
-	raft::mutable_slice b(new uint8_t [1024], 1024);
+        auto to_alloc = sizeof(little_client_request) + serialize_helper(msg.command);
+	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
 	auto sz = sizeof(little_client_request);
 	sz += serialize_helper(b+sz, msg.command);
 	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
@@ -636,8 +705,8 @@ namespace raft {
 
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::client_response_type && msg)
       {
-	// TODO: Make sure the msg fits in our buffer; either throw or support by allocating a new buffer
-	raft::mutable_slice b(new uint8_t [1024], 1024);
+        auto to_alloc = sizeof(little_client_response) + serialize_helper(msg.response);
+	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
 	auto * buf = reinterpret_cast<little_client_response *>(b.data());
 	buf->result = msg.result;
 	buf->index = msg.index;
@@ -650,8 +719,8 @@ namespace raft {
     
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::set_configuration_request_type && msg)
       {
-	// TODO: Make sure the msg fits in our buffer; either throw or support by allocating a new buffer
-	raft::mutable_slice b(new uint8_t [1024], 1024);
+        auto to_alloc = sizeof(little_set_configuration_request) + serialize_helper(msg.new_configuration);
+	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
 	auto * buf = reinterpret_cast<little_set_configuration_request *>(b.data());
 	buf->old_id = msg.old_id;
 	auto sz = sizeof(little_set_configuration_request);
@@ -662,8 +731,8 @@ namespace raft {
 
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::set_configuration_response_type && msg)
       {
-	// TODO: Make sure the msg fits in our buffer; either throw or support by allocating a new buffer
-	raft::mutable_slice b(new uint8_t [1024], 1024);
+        auto to_alloc = sizeof(little_set_configuration_response) + serialize_helper(msg.bad_servers);
+	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
 	auto * buf = reinterpret_cast<little_set_configuration_response *>(b.data());
 	buf->result = msg.result;
 	auto sz = sizeof(little_set_configuration_response);
@@ -674,8 +743,8 @@ namespace raft {
     
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::append_checkpoint_chunk_type && msg)
       {
-	// TODO: Make sure the msg fits in our buffer; either throw or support by allocating a new buffer
-	raft::mutable_slice b(new uint8_t [1024], 1024);
+        auto to_alloc = sizeof(little_append_checkpoint_chunk) + serialize_helper(msg.last_checkpoint_header.configuration.description) + serialize_helper(msg.data);
+	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
 	auto * buf = reinterpret_cast<little_append_checkpoint_chunk *>(b.data());
 	buf->recipient_id = msg.recipient_id;
 	buf->term_number= msg.term_number;
@@ -708,6 +777,7 @@ namespace raft {
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::open_session_request_type && msg)
       {
 	auto buf = new little_open_session_request();
+        buf->dummy = 0xef;
 	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_open_session_request)),
 								  [buf]() { delete buf; });
       }
@@ -731,27 +801,24 @@ namespace raft {
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::close_session_response_type && msg)
       {
 	auto buf = new little_close_session_response();
-	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_open_session_response)),
+        buf->dummy = 0xfa;
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_close_session_response)),
 								  [buf]() { delete buf; });
       }
 
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::linearizable_command_type && msg)
       {
-	raft::mutable_slice b(new uint8_t [1024], 1024);
+        auto to_alloc = serialize_helper(msg);
+	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
         auto sz = serialize_helper(b+0, msg);
-	// auto * buf = reinterpret_cast<little_linearizable_command *>(b.data());
-	// buf->session_id = msg.session_id;
-	// buf->first_unacknowledged_sequence_number = msg.first_unacknowledged_sequence_number;
-	// buf->sequence_number = msg.sequence_number;
-	// std::size_t sz = sizeof(little_linearizable_command);
-	// sz += serialize_helper(b+sz, msg.command);
 	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
 	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
       }
 
       static std::pair<raft::slice, raft::util::call_on_delete> serialize_log_entry_command(raft::native::messages::open_session_request_type && msg)
       {
-	raft::mutable_slice b(new uint8_t [1024], 1024);
+        auto to_alloc = sizeof(little_log_entry_command) + serialize_helper(msg);
+	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
 	auto * buf = reinterpret_cast<little_log_entry_command *>(b.data());
         buf->type = raft::native::log_entry_command::OPEN_SESSION;
         std::size_t sz = sizeof(little_log_entry_command);
@@ -762,7 +829,8 @@ namespace raft {
 
       static std::pair<raft::slice, raft::util::call_on_delete> serialize_log_entry_command(raft::native::messages::close_session_request_type && msg)
       {
-	raft::mutable_slice b(new uint8_t [1024], 1024);
+        auto to_alloc = sizeof(little_log_entry_command) + serialize_helper(msg);
+	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
 	auto * buf = reinterpret_cast<little_log_entry_command *>(b.data());
         buf->type = raft::native::log_entry_command::CLOSE_SESSION;
         std::size_t sz = sizeof(little_log_entry_command);
@@ -773,7 +841,8 @@ namespace raft {
 
       static std::pair<raft::slice, raft::util::call_on_delete> serialize_log_entry_command(raft::native::messages::linearizable_command_type && msg)
       {
-	raft::mutable_slice b(new uint8_t [1024], 1024);
+        auto to_alloc = sizeof(little_log_entry_command) + serialize_helper(msg);
+	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
 	auto * buf = reinterpret_cast<little_log_entry_command *>(b.data());
         buf->type = raft::native::log_entry_command::LINEARIZABLE_COMMAND;
         std::size_t sz = sizeof(little_log_entry_command);
@@ -785,8 +854,9 @@ namespace raft {
     
     std::pair<raft::slice, raft::util::call_on_delete> serialization::serialize(const raft::native::log_entry<raft::native::configuration_description>& entry)
     {
-      auto ptr = new uint8_t [1024];
-      std::size_t sz = serialize_helper(raft::mutable_slice(ptr, 1024), entry);
+      auto to_alloc = serialize_helper(entry);
+      auto ptr = new uint8_t [to_alloc];
+      std::size_t sz = serialize_helper(raft::mutable_slice(ptr, to_alloc), entry);
       return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
     }
 
