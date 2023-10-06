@@ -35,6 +35,7 @@ namespace raft {
       ~writable_file()
       {
 	flush();
+        delete [] block_begin_;
       }
 
       int write(const uint8_t * data, std::size_t len)
