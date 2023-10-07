@@ -616,12 +616,16 @@ inline ::flatbuffers::Offset<log_entry> Createlog_entryDirect(
 struct request_vote FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef request_voteBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_RECIPIENT_ID = 4,
-    VT_TERM_NUMBER = 6,
-    VT_CANDIDATE_ID = 8,
-    VT_LAST_LOG_INDEX = 10,
-    VT_LAST_LOG_TERM = 12
+    VT_REQUEST_ID = 4,
+    VT_RECIPIENT_ID = 6,
+    VT_TERM_NUMBER = 8,
+    VT_CANDIDATE_ID = 10,
+    VT_LAST_LOG_INDEX = 12,
+    VT_LAST_LOG_TERM = 14
   };
+  uint64_t request_id() const {
+    return GetField<uint64_t>(VT_REQUEST_ID, 0);
+  }
   uint64_t recipient_id() const {
     return GetField<uint64_t>(VT_RECIPIENT_ID, 0);
   }
@@ -639,6 +643,7 @@ struct request_vote FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, VT_REQUEST_ID, 8) &&
            VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID, 8) &&
            VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
            VerifyField<uint64_t>(verifier, VT_CANDIDATE_ID, 8) &&
@@ -652,6 +657,9 @@ struct request_voteBuilder {
   typedef request_vote Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
+  void add_request_id(uint64_t request_id) {
+    fbb_.AddElement<uint64_t>(request_vote::VT_REQUEST_ID, request_id, 0);
+  }
   void add_recipient_id(uint64_t recipient_id) {
     fbb_.AddElement<uint64_t>(request_vote::VT_RECIPIENT_ID, recipient_id, 0);
   }
@@ -680,6 +688,7 @@ struct request_voteBuilder {
 
 inline ::flatbuffers::Offset<request_vote> Createrequest_vote(
     ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t request_id = 0,
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t candidate_id = 0,
@@ -691,6 +700,7 @@ inline ::flatbuffers::Offset<request_vote> Createrequest_vote(
   builder_.add_candidate_id(candidate_id);
   builder_.add_term_number(term_number);
   builder_.add_recipient_id(recipient_id);
+  builder_.add_request_id(request_id);
   return builder_.Finish();
 }
 
@@ -700,7 +710,8 @@ struct vote_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_PEER_ID = 4,
     VT_TERM_NUMBER = 6,
     VT_REQUEST_TERM_NUMBER = 8,
-    VT_GRANTED = 10
+    VT_REQUEST_ID = 10,
+    VT_GRANTED = 12
   };
   uint64_t peer_id() const {
     return GetField<uint64_t>(VT_PEER_ID, 0);
@@ -711,6 +722,9 @@ struct vote_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint64_t request_term_number() const {
     return GetField<uint64_t>(VT_REQUEST_TERM_NUMBER, 0);
   }
+  uint64_t request_id() const {
+    return GetField<uint64_t>(VT_REQUEST_ID, 0);
+  }
   bool granted() const {
     return GetField<uint8_t>(VT_GRANTED, 0) != 0;
   }
@@ -719,6 +733,7 @@ struct vote_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint64_t>(verifier, VT_PEER_ID, 8) &&
            VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
            VerifyField<uint64_t>(verifier, VT_REQUEST_TERM_NUMBER, 8) &&
+           VerifyField<uint64_t>(verifier, VT_REQUEST_ID, 8) &&
            VerifyField<uint8_t>(verifier, VT_GRANTED, 1) &&
            verifier.EndTable();
   }
@@ -736,6 +751,9 @@ struct vote_responseBuilder {
   }
   void add_request_term_number(uint64_t request_term_number) {
     fbb_.AddElement<uint64_t>(vote_response::VT_REQUEST_TERM_NUMBER, request_term_number, 0);
+  }
+  void add_request_id(uint64_t request_id) {
+    fbb_.AddElement<uint64_t>(vote_response::VT_REQUEST_ID, request_id, 0);
   }
   void add_granted(bool granted) {
     fbb_.AddElement<uint8_t>(vote_response::VT_GRANTED, static_cast<uint8_t>(granted), 0);
@@ -756,8 +774,10 @@ inline ::flatbuffers::Offset<vote_response> Createvote_response(
     uint64_t peer_id = 0,
     uint64_t term_number = 0,
     uint64_t request_term_number = 0,
+    uint64_t request_id = 0,
     bool granted = false) {
   vote_responseBuilder builder_(_fbb);
+  builder_.add_request_id(request_id);
   builder_.add_request_term_number(request_term_number);
   builder_.add_term_number(term_number);
   builder_.add_peer_id(peer_id);
@@ -823,14 +843,18 @@ inline ::flatbuffers::Offset<log_entries> Createlog_entriesDirect(
 struct append_entry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef append_entryBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_RECIPIENT_ID = 4,
-    VT_TERM_NUMBER = 6,
-    VT_LEADER_ID = 8,
-    VT_PREVIOUS_LOG_INDEX = 10,
-    VT_PREVIOUS_LOG_TERM = 12,
-    VT_LEADER_COMMIT_INDEX = 14,
-    VT_ENTRIES = 16
+    VT_REQUEST_ID = 4,
+    VT_RECIPIENT_ID = 6,
+    VT_TERM_NUMBER = 8,
+    VT_LEADER_ID = 10,
+    VT_PREVIOUS_LOG_INDEX = 12,
+    VT_PREVIOUS_LOG_TERM = 14,
+    VT_LEADER_COMMIT_INDEX = 16,
+    VT_ENTRIES = 18
   };
+  uint64_t request_id() const {
+    return GetField<uint64_t>(VT_REQUEST_ID, 0);
+  }
   uint64_t recipient_id() const {
     return GetField<uint64_t>(VT_RECIPIENT_ID, 0);
   }
@@ -854,6 +878,7 @@ struct append_entry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, VT_REQUEST_ID, 8) &&
            VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID, 8) &&
            VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
            VerifyField<uint64_t>(verifier, VT_LEADER_ID, 8) &&
@@ -871,6 +896,9 @@ struct append_entryBuilder {
   typedef append_entry Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
+  void add_request_id(uint64_t request_id) {
+    fbb_.AddElement<uint64_t>(append_entry::VT_REQUEST_ID, request_id, 0);
+  }
   void add_recipient_id(uint64_t recipient_id) {
     fbb_.AddElement<uint64_t>(append_entry::VT_RECIPIENT_ID, recipient_id, 0);
   }
@@ -905,6 +933,7 @@ struct append_entryBuilder {
 
 inline ::flatbuffers::Offset<append_entry> Createappend_entry(
     ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t request_id = 0,
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t leader_id = 0,
@@ -919,12 +948,14 @@ inline ::flatbuffers::Offset<append_entry> Createappend_entry(
   builder_.add_leader_id(leader_id);
   builder_.add_term_number(term_number);
   builder_.add_recipient_id(recipient_id);
+  builder_.add_request_id(request_id);
   builder_.add_entries(entries);
   return builder_.Finish();
 }
 
 inline ::flatbuffers::Offset<append_entry> Createappend_entryDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t request_id = 0,
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t leader_id = 0,
@@ -935,6 +966,7 @@ inline ::flatbuffers::Offset<append_entry> Createappend_entryDirect(
   auto entries__ = entries ? _fbb.CreateVector<::flatbuffers::Offset<raft::fbs::log_entries>>(*entries) : 0;
   return raft::fbs::Createappend_entry(
       _fbb,
+      request_id,
       recipient_id,
       term_number,
       leader_id,
@@ -950,9 +982,10 @@ struct append_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_RECIPIENT_ID = 4,
     VT_TERM_NUMBER = 6,
     VT_REQUEST_TERM_NUMBER = 8,
-    VT_BEGIN_INDEX = 10,
-    VT_LAST_INDEX = 12,
-    VT_SUCCESS = 14
+    VT_REQUEST_ID = 10,
+    VT_BEGIN_INDEX = 12,
+    VT_LAST_INDEX = 14,
+    VT_SUCCESS = 16
   };
   uint64_t recipient_id() const {
     return GetField<uint64_t>(VT_RECIPIENT_ID, 0);
@@ -962,6 +995,9 @@ struct append_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   uint64_t request_term_number() const {
     return GetField<uint64_t>(VT_REQUEST_TERM_NUMBER, 0);
+  }
+  uint64_t request_id() const {
+    return GetField<uint64_t>(VT_REQUEST_ID, 0);
   }
   uint64_t begin_index() const {
     return GetField<uint64_t>(VT_BEGIN_INDEX, 0);
@@ -977,6 +1013,7 @@ struct append_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID, 8) &&
            VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
            VerifyField<uint64_t>(verifier, VT_REQUEST_TERM_NUMBER, 8) &&
+           VerifyField<uint64_t>(verifier, VT_REQUEST_ID, 8) &&
            VerifyField<uint64_t>(verifier, VT_BEGIN_INDEX, 8) &&
            VerifyField<uint64_t>(verifier, VT_LAST_INDEX, 8) &&
            VerifyField<uint8_t>(verifier, VT_SUCCESS, 1) &&
@@ -996,6 +1033,9 @@ struct append_responseBuilder {
   }
   void add_request_term_number(uint64_t request_term_number) {
     fbb_.AddElement<uint64_t>(append_response::VT_REQUEST_TERM_NUMBER, request_term_number, 0);
+  }
+  void add_request_id(uint64_t request_id) {
+    fbb_.AddElement<uint64_t>(append_response::VT_REQUEST_ID, request_id, 0);
   }
   void add_begin_index(uint64_t begin_index) {
     fbb_.AddElement<uint64_t>(append_response::VT_BEGIN_INDEX, begin_index, 0);
@@ -1022,12 +1062,14 @@ inline ::flatbuffers::Offset<append_response> Createappend_response(
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t request_term_number = 0,
+    uint64_t request_id = 0,
     uint64_t begin_index = 0,
     uint64_t last_index = 0,
     bool success = false) {
   append_responseBuilder builder_(_fbb);
   builder_.add_last_index(last_index);
   builder_.add_begin_index(begin_index);
+  builder_.add_request_id(request_id);
   builder_.add_request_term_number(request_term_number);
   builder_.add_term_number(term_number);
   builder_.add_recipient_id(recipient_id);
@@ -1177,15 +1219,19 @@ inline ::flatbuffers::Offset<checkpoint_header> Createcheckpoint_header(
 struct append_checkpoint_chunk FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef append_checkpoint_chunkBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_RECIPIENT_ID = 4,
-    VT_TERM_NUMBER = 6,
-    VT_LEADER_ID = 8,
-    VT_LAST_CHECKPOINT_HEADER = 10,
-    VT_CHECKPOINT_BEGIN = 12,
-    VT_CHECKPOINT_END = 14,
-    VT_CHECKPOINT_DONE = 16,
-    VT_DATA = 18
+    VT_REQUEST_ID = 4,
+    VT_RECIPIENT_ID = 6,
+    VT_TERM_NUMBER = 8,
+    VT_LEADER_ID = 10,
+    VT_LAST_CHECKPOINT_HEADER = 12,
+    VT_CHECKPOINT_BEGIN = 14,
+    VT_CHECKPOINT_END = 16,
+    VT_CHECKPOINT_DONE = 18,
+    VT_DATA = 20
   };
+  uint64_t request_id() const {
+    return GetField<uint64_t>(VT_REQUEST_ID, 0);
+  }
   uint64_t recipient_id() const {
     return GetField<uint64_t>(VT_RECIPIENT_ID, 0);
   }
@@ -1212,6 +1258,7 @@ struct append_checkpoint_chunk FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, VT_REQUEST_ID, 8) &&
            VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID, 8) &&
            VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
            VerifyField<uint64_t>(verifier, VT_LEADER_ID, 8) &&
@@ -1230,6 +1277,9 @@ struct append_checkpoint_chunkBuilder {
   typedef append_checkpoint_chunk Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
+  void add_request_id(uint64_t request_id) {
+    fbb_.AddElement<uint64_t>(append_checkpoint_chunk::VT_REQUEST_ID, request_id, 0);
+  }
   void add_recipient_id(uint64_t recipient_id) {
     fbb_.AddElement<uint64_t>(append_checkpoint_chunk::VT_RECIPIENT_ID, recipient_id, 0);
   }
@@ -1267,6 +1317,7 @@ struct append_checkpoint_chunkBuilder {
 
 inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_chunk(
     ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t request_id = 0,
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t leader_id = 0,
@@ -1281,6 +1332,7 @@ inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_ch
   builder_.add_leader_id(leader_id);
   builder_.add_term_number(term_number);
   builder_.add_recipient_id(recipient_id);
+  builder_.add_request_id(request_id);
   builder_.add_data(data);
   builder_.add_last_checkpoint_header(last_checkpoint_header);
   builder_.add_checkpoint_done(checkpoint_done);
@@ -1289,6 +1341,7 @@ inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_ch
 
 inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_chunkDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t request_id = 0,
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t leader_id = 0,
@@ -1300,6 +1353,7 @@ inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_ch
   auto data__ = data ? _fbb.CreateVector<uint8_t>(*data) : 0;
   return raft::fbs::Createappend_checkpoint_chunk(
       _fbb,
+      request_id,
       recipient_id,
       term_number,
       leader_id,
@@ -1316,7 +1370,8 @@ struct append_checkpoint_chunk_response FLATBUFFERS_FINAL_CLASS : private ::flat
     VT_RECIPIENT_ID = 4,
     VT_TERM_NUMBER = 6,
     VT_REQUEST_TERM_NUMBER = 8,
-    VT_BYTES_STORED = 10
+    VT_REQUEST_ID = 10,
+    VT_BYTES_STORED = 12
   };
   uint64_t recipient_id() const {
     return GetField<uint64_t>(VT_RECIPIENT_ID, 0);
@@ -1327,6 +1382,9 @@ struct append_checkpoint_chunk_response FLATBUFFERS_FINAL_CLASS : private ::flat
   uint64_t request_term_number() const {
     return GetField<uint64_t>(VT_REQUEST_TERM_NUMBER, 0);
   }
+  uint64_t request_id() const {
+    return GetField<uint64_t>(VT_REQUEST_ID, 0);
+  }
   uint64_t bytes_stored() const {
     return GetField<uint64_t>(VT_BYTES_STORED, 0);
   }
@@ -1335,6 +1393,7 @@ struct append_checkpoint_chunk_response FLATBUFFERS_FINAL_CLASS : private ::flat
            VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID, 8) &&
            VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
            VerifyField<uint64_t>(verifier, VT_REQUEST_TERM_NUMBER, 8) &&
+           VerifyField<uint64_t>(verifier, VT_REQUEST_ID, 8) &&
            VerifyField<uint64_t>(verifier, VT_BYTES_STORED, 8) &&
            verifier.EndTable();
   }
@@ -1352,6 +1411,9 @@ struct append_checkpoint_chunk_responseBuilder {
   }
   void add_request_term_number(uint64_t request_term_number) {
     fbb_.AddElement<uint64_t>(append_checkpoint_chunk_response::VT_REQUEST_TERM_NUMBER, request_term_number, 0);
+  }
+  void add_request_id(uint64_t request_id) {
+    fbb_.AddElement<uint64_t>(append_checkpoint_chunk_response::VT_REQUEST_ID, request_id, 0);
   }
   void add_bytes_stored(uint64_t bytes_stored) {
     fbb_.AddElement<uint64_t>(append_checkpoint_chunk_response::VT_BYTES_STORED, bytes_stored, 0);
@@ -1372,9 +1434,11 @@ inline ::flatbuffers::Offset<append_checkpoint_chunk_response> Createappend_chec
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t request_term_number = 0,
+    uint64_t request_id = 0,
     uint64_t bytes_stored = 0) {
   append_checkpoint_chunk_responseBuilder builder_(_fbb);
   builder_.add_bytes_stored(bytes_stored);
+  builder_.add_request_id(request_id);
   builder_.add_request_term_number(request_term_number);
   builder_.add_term_number(term_number);
   builder_.add_recipient_id(recipient_id);

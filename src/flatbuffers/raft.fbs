@@ -34,6 +34,7 @@ table log_entry
 }
 table request_vote
 {
+  request_id:ulong;
   recipient_id:ulong;
   term_number:ulong;
   candidate_id:ulong;
@@ -46,6 +47,7 @@ table vote_response
   peer_id:ulong;
   term_number:ulong;
   request_term_number:ulong;
+  request_id:ulong;
   granted:bool;
 }
 
@@ -56,6 +58,7 @@ table log_entries
 
 table append_entry
 {
+  request_id:ulong;
   recipient_id:ulong;
   term_number:ulong;
   leader_id:ulong;
@@ -83,6 +86,7 @@ table append_response
   recipient_id:ulong;
   term_number:ulong;
   request_term_number:ulong;
+  request_id:ulong;
   // Beginning of range of entries appended
   begin_index:ulong;
   // One after the last log entry appended
@@ -109,6 +113,7 @@ table checkpoint_header
 // I've decided to put it in.
 table append_checkpoint_chunk
 {
+  request_id:ulong;
   recipient_id:ulong;
   term_number:ulong;
   leader_id:ulong;
@@ -129,6 +134,7 @@ table append_checkpoint_chunk_response
   recipient_id:ulong;
   term_number:ulong;
   request_term_number:ulong;
+  request_id:ulong;
   bytes_stored:ulong;
 }
 

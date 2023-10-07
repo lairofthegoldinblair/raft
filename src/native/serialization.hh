@@ -9,6 +9,7 @@ namespace raft {
     class little_request_vote
     {
     public:
+      boost::endian::little_uint64_t request_id;
       boost::endian::little_uint64_t recipient_id;
       boost::endian::little_uint64_t term_number;
       boost::endian::little_uint64_t candidate_id;
@@ -22,12 +23,14 @@ namespace raft {
       boost::endian::little_uint64_t peer_id;
       boost::endian::little_uint64_t term_number;
       boost::endian::little_uint64_t request_term_number;
+      boost::endian::little_uint64_t request_id;
       uint8_t granted;
     };
 
     class little_append_entry
     {
     public:
+      boost::endian::little_uint64_t request_id;
       boost::endian::little_uint64_t recipient_id;
       boost::endian::little_uint64_t term_number;
       boost::endian::little_uint64_t leader_id;
@@ -42,6 +45,7 @@ namespace raft {
       boost::endian::little_uint64_t recipient_id;
       boost::endian::little_uint64_t term_number;
       boost::endian::little_uint64_t request_term_number;
+      boost::endian::little_uint64_t request_id;
       boost::endian::little_uint64_t begin_index;
       boost::endian::little_uint64_t last_index;
       uint8_t success;
@@ -75,6 +79,7 @@ namespace raft {
     class little_append_checkpoint_chunk
     {
     public:
+      boost::endian::little_uint64_t request_id;
       boost::endian::little_uint64_t recipient_id;
       boost::endian::little_uint64_t term_number;
       boost::endian::little_uint64_t leader_id;
@@ -93,6 +98,7 @@ namespace raft {
       boost::endian::little_uint64_t recipient_id;
       boost::endian::little_uint64_t term_number;
       boost::endian::little_uint64_t request_term_number;
+      boost::endian::little_uint64_t request_id;
       boost::endian::little_uint64_t bytes_stored;
     };
 
@@ -465,6 +471,7 @@ namespace raft {
 	raft::native::messages::request_vote_type msg;
 	BOOST_ASSERT(b.first.size() >= sizeof(little_request_vote));
 	const little_request_vote * buf = reinterpret_cast<const little_request_vote *>(b.first.data());
+	msg.set_request_id(buf->request_id);
 	msg.set_recipient_id(buf->recipient_id);
 	msg.set_term_number(buf->term_number);
 	msg.set_candidate_id(buf->candidate_id);
@@ -481,6 +488,7 @@ namespace raft {
 	msg.peer_id = buf->peer_id;
 	msg.term_number = buf->term_number;
 	msg.request_term_number = buf->request_term_number;
+	msg.request_id = buf->request_id;
 	msg.granted = (buf->granted != 0);
 	return msg;
       }
@@ -490,6 +498,7 @@ namespace raft {
 	raft::native::messages::append_entry_type msg;
 	BOOST_ASSERT(b.first.size() >= sizeof(little_append_entry));
 	const little_append_entry * buf = reinterpret_cast<const little_append_entry *>(b.first.data());
+	msg.request_id = buf->request_id;
 	msg.recipient_id = buf->recipient_id;
 	msg.term_number = buf->term_number;
 	msg.leader_id = buf->leader_id;
@@ -509,6 +518,7 @@ namespace raft {
 	msg.recipient_id = buf->recipient_id;
 	msg.term_number = buf->term_number;
 	msg.request_term_number = buf->request_term_number;
+	msg.request_id = buf->request_id;
 	msg.begin_index = buf->begin_index;
 	msg.last_index = buf->last_index;
 	msg.success = buf->success ? 1 : 0;
@@ -563,6 +573,7 @@ namespace raft {
 	raft::native::messages::append_checkpoint_chunk_type msg;
 	BOOST_ASSERT(b.first.size() >= sizeof(little_append_checkpoint_chunk));
 	auto buf = reinterpret_cast<const little_append_checkpoint_chunk *>(b.first.data());
+	msg.request_id = buf->request_id;
 	msg.recipient_id = buf->recipient_id;
 	msg.term_number= buf->term_number;
 	msg.leader_id = buf->leader_id;
@@ -587,6 +598,7 @@ namespace raft {
 	msg.recipient_id = buf->recipient_id;
 	msg.term_number= buf->term_number;
 	msg.request_term_number = buf->request_term_number;
+	msg.request_id = buf->request_id;
 	msg.bytes_stored = buf->bytes_stored;
 	return msg;
       }
@@ -643,6 +655,7 @@ namespace raft {
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::request_vote_type && msg)
       {
 	auto buf = new little_request_vote();
+	buf->request_id = raft::native::messages::request_vote_traits_type::request_id(msg);
 	buf->recipient_id = raft::native::messages::request_vote_traits_type::recipient_id(msg);
 	buf->term_number = raft::native::messages::request_vote_traits_type::term_number(msg);
 	buf->candidate_id = raft::native::messages::request_vote_traits_type::candidate_id(msg);
@@ -658,6 +671,7 @@ namespace raft {
 	buf->peer_id = msg.peer_id;
 	buf->term_number = msg.term_number;
 	buf->request_term_number = msg.request_term_number;
+	buf->request_id = msg.request_id;
 	buf->granted = msg.granted ? 1 : 0;
 	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_vote_response)),
 								  [buf]() { delete buf; });
@@ -668,6 +682,7 @@ namespace raft {
         auto to_alloc = sizeof(little_append_entry) + serialize_helper(msg.entry);
 	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
 	auto * buf = reinterpret_cast<little_append_entry *>(b.data());
+	buf->request_id = msg.request_id;
 	buf->recipient_id = msg.recipient_id;
 	buf->term_number = msg.term_number;
 	buf->leader_id = msg.leader_id;
@@ -686,6 +701,7 @@ namespace raft {
 	buf->recipient_id = msg.recipient_id;
 	buf->term_number = msg.term_number;
 	buf->request_term_number = msg.request_term_number;
+	buf->request_id  = msg.request_id;
 	buf->begin_index = msg.begin_index;
 	buf->last_index = msg.last_index;
 	buf->success = (msg.success != 0);
@@ -746,6 +762,7 @@ namespace raft {
         auto to_alloc = sizeof(little_append_checkpoint_chunk) + serialize_helper(msg.last_checkpoint_header.configuration.description) + serialize_helper(msg.data);
 	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
 	auto * buf = reinterpret_cast<little_append_checkpoint_chunk *>(b.data());
+	buf->request_id = msg.request_id;
 	buf->recipient_id = msg.recipient_id;
 	buf->term_number= msg.term_number;
 	buf->leader_id = msg.leader_id;
@@ -769,6 +786,7 @@ namespace raft {
 	buf->recipient_id = msg.recipient_id;
 	buf->term_number = msg.term_number;
 	buf->request_term_number = msg.request_term_number;
+	buf->request_id = msg.request_id;
 	buf->bytes_stored = msg.bytes_stored;
 	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_append_checkpoint_chunk_response)),
 								  [buf]() { delete buf; });

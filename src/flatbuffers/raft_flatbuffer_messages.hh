@@ -120,6 +120,10 @@ namespace raft {
 	// return ae->message_as_append_entry();
 	return ae.first->message_as_append_entry();
       }      
+      static uint64_t request_id(const_arg_type ae)
+      {
+	return get_append_entry(ae)->request_id();
+      }
       static uint64_t recipient_id(const_arg_type ae)
       {
 	return get_append_entry(ae)->recipient_id();
@@ -454,6 +458,10 @@ namespace raft {
 	return msg.first->message_as_request_vote();
       }
 
+      static uint64_t request_id(const_arg_type msg)
+      {
+	return rv(msg)->request_id();
+      }
       static uint64_t recipient_id(const_arg_type msg)
       {
 	return rv(msg)->recipient_id();
@@ -498,6 +506,10 @@ namespace raft {
       {
 	return vr(msg)->request_term_number();
       }
+      static uint64_t request_id(const_arg_type msg)
+      {
+	return vr(msg)->request_id();
+      }
       static bool granted(const_arg_type msg)
       {
 	return vr(msg)->granted();
@@ -527,6 +539,10 @@ namespace raft {
       {
 	return aer(msg)->request_term_number();
       }
+      static uint64_t request_id(const_arg_type msg)
+      {
+	return aer(msg)->request_id();
+      }
       // Beginning of range of entries appended
       static uint64_t begin_index(const_arg_type msg)
       {
@@ -555,6 +571,10 @@ namespace raft {
 	return msg.first->message_as_append_checkpoint_chunk();
       }
     
+      static uint64_t request_id(const_arg_type msg)
+      {
+	return acc(msg)->request_id();
+      }
       static uint64_t recipient_id(const_arg_type msg)
       {
 	return acc(msg)->recipient_id();
@@ -623,6 +643,10 @@ namespace raft {
       static uint64_t request_term_number(const_arg_type msg)
       {
 	return acc(msg)->request_term_number();
+      }
+      static uint64_t request_id(const_arg_type msg)
+      {
+	return acc(msg)->request_id();
       }
       static uint64_t bytes_stored(const_arg_type msg)
       {
@@ -1243,6 +1267,7 @@ simple_configuration_description_builder to()
     class request_vote_builder : public raft_message_builder_base<request_vote_builder, raft::fbs::request_vote>
     {
     private:
+      uint64_t request_id_ = 0;
       uint64_t recipient_id_ = 0;
       uint64_t term_number_ = 0;
       uint64_t candidate_id_ = 0;
@@ -1255,11 +1280,17 @@ simple_configuration_description_builder to()
       
       void initialize(fbs_builder_type * bld)
       {
+	bld->add_request_id(request_id_);
 	bld->add_recipient_id(recipient_id_);
 	bld->add_term_number(term_number_);
 	bld->add_candidate_id(candidate_id_);
 	bld->add_last_log_index(last_log_index_);
 	bld->add_last_log_term(last_log_term_);
+      }
+      request_vote_builder & request_id(uint64_t val)
+      {
+	request_id_ = val;
+	return *this;
       }
       request_vote_builder & recipient_id(uint64_t val)
       {
@@ -1294,6 +1325,7 @@ simple_configuration_description_builder to()
       uint64_t peer_id_ = 0;
       uint64_t term_number_ = 0;
       uint64_t request_term_number_ = 0;
+      uint64_t request_id_ = 0;
       bool granted_ = false;
     public:
       void preinitialize()
@@ -1305,6 +1337,7 @@ simple_configuration_description_builder to()
 	  bld->add_peer_id(peer_id_);
 	  bld->add_term_number(term_number_);
 	  bld->add_request_term_number(request_term_number_);
+	  bld->add_request_id(request_id_);
 	  bld->add_granted(granted_);
       }	
       vote_response_builder & peer_id(uint64_t val)
@@ -1320,6 +1353,11 @@ simple_configuration_description_builder to()
       vote_response_builder & request_term_number(uint64_t val)
       {
 	request_term_number_ = val;
+	return *this;
+      }
+      vote_response_builder & request_id(uint64_t val)
+      {
+	request_id_ = val;
 	return *this;
       }
       vote_response_builder & granted(bool val)
@@ -1395,6 +1433,7 @@ simple_configuration_description_builder to()
     class append_entry_builder : public raft_message_builder_base<append_entry_builder, raft::fbs::append_entry>
     {
     private:
+      uint64_t request_id_ = 0;
       uint64_t recipient_id_ = 0;
       uint64_t term_number_ = 0;
       uint64_t leader_id_ = 0;
@@ -1411,6 +1450,7 @@ simple_configuration_description_builder to()
 
       void initialize(fbs_builder_type * bld)
       {
+	bld->add_request_id(request_id_);
 	bld->add_recipient_id(recipient_id_);
 	bld->add_term_number(term_number_);
 	bld->add_leader_id(leader_id_);
@@ -1420,6 +1460,11 @@ simple_configuration_description_builder to()
 	bld->add_entries(entries_);
       }
 
+      append_entry_builder & request_id(uint64_t val)
+      {
+	request_id_ = val;
+	return *this;
+      }
       append_entry_builder & recipient_id(uint64_t val)
       {
 	recipient_id_ = val;
@@ -1473,6 +1518,7 @@ simple_configuration_description_builder to()
       uint64_t recipient_id_ = 0;
       uint64_t term_number_ = 0;
       uint64_t request_term_number_ = 0;
+      uint64_t request_id_ = 0;
       uint64_t begin_index_ = 0;
       uint64_t last_index_ = 0;
       bool success_ = false;
@@ -1486,6 +1532,7 @@ simple_configuration_description_builder to()
 	  bld->add_recipient_id(recipient_id_);
 	  bld->add_term_number(term_number_);
 	  bld->add_request_term_number(request_term_number_);
+	  bld->add_request_id(request_id_);
 	  bld->add_begin_index(begin_index_);
 	  bld->add_last_index(last_index_);
 	  bld->add_success(success_);
@@ -1503,6 +1550,11 @@ simple_configuration_description_builder to()
       append_response_builder & request_term_number(uint64_t val)
       {
 	request_term_number_ = val;
+	return *this;
+      }
+      append_response_builder & request_id(uint64_t val)
+      {
+	request_id_ = val;
 	return *this;
       }
       append_response_builder & begin_index(uint64_t val)
@@ -1525,6 +1577,7 @@ simple_configuration_description_builder to()
     class append_checkpoint_chunk_builder : public raft_message_builder_base<append_checkpoint_chunk_builder, raft::fbs::append_checkpoint_chunk>
     {
     private:
+      uint64_t request_id_ = 0;
       uint64_t recipient_id_ = 0;
       uint64_t term_number_ = 0;
       uint64_t leader_id_ = 0;
@@ -1540,6 +1593,7 @@ simple_configuration_description_builder to()
       
       void initialize(fbs_builder_type * bld)
       {
+	bld->add_request_id(request_id_);
 	bld->add_recipient_id(recipient_id_);
 	bld->add_term_number(term_number_);
 	bld->add_leader_id(leader_id_);
@@ -1548,6 +1602,11 @@ simple_configuration_description_builder to()
 	bld->add_data(data_);
 	bld->add_last_checkpoint_header(last_checkpoint_header_);
 	bld->add_checkpoint_done(checkpoint_done_);
+      }
+      append_checkpoint_chunk_builder & request_id(uint64_t val)
+      {
+	request_id_ = val;
+	return *this;
       }
       append_checkpoint_chunk_builder & recipient_id(uint64_t val)
       {
@@ -1602,6 +1661,7 @@ simple_configuration_description_builder to()
       uint64_t recipient_id_ = 0;
       uint64_t term_number_ = 0;
       uint64_t request_term_number_ = 0;
+      uint64_t request_id_ = 0;
       uint64_t bytes_stored_ = 0;
     public:
       void preinitialize()
@@ -1613,6 +1673,7 @@ simple_configuration_description_builder to()
 	  bld->add_recipient_id(recipient_id_);
 	  bld->add_term_number(term_number_);
 	  bld->add_request_term_number(request_term_number_);
+	  bld->add_request_id(request_id_);
 	  bld->add_bytes_stored(bytes_stored_);
       }	
       append_checkpoint_chunk_response_builder & recipient_id(uint64_t val)
@@ -1628,6 +1689,11 @@ simple_configuration_description_builder to()
       append_checkpoint_chunk_response_builder & request_term_number(uint64_t val)
       {
 	request_term_number_ = val;
+	return *this;
+      }
+      append_checkpoint_chunk_response_builder & request_id(uint64_t val)
+      {
+	request_id_ = val;
 	return *this;
       }
       append_checkpoint_chunk_response_builder & bytes_stored(uint64_t val)

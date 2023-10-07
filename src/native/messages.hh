@@ -231,12 +231,17 @@ namespace raft {
     class request_vote
     {
     public:
+      uint64_t request_id;
       uint64_t recipient_id;
       uint64_t term_number;
       uint64_t candidate_id;
       uint64_t last_log_index;
       uint64_t last_log_term;
 
+      void set_request_id(uint64_t value)
+      {
+	request_id = value;
+      }
       void set_recipient_id(uint64_t value)
       {
 	recipient_id = value;
@@ -265,6 +270,10 @@ namespace raft {
       typedef request_vote arg_type;
       typedef const arg_type & const_arg_type;
 
+      static uint64_t request_id(const_arg_type msg)
+      {
+	return msg.request_id;
+      }
       static uint64_t recipient_id(const_arg_type msg)
       {
 	return msg.recipient_id;
@@ -293,6 +302,7 @@ namespace raft {
       uint64_t peer_id;
       uint64_t term_number;
       uint64_t request_term_number;
+      uint64_t request_id;
       bool granted;
     };
 
@@ -314,6 +324,10 @@ namespace raft {
       {
 	return msg.request_term_number;
       }
+      static uint64_t request_id(const_arg_type msg)
+      {
+	return msg.request_id;
+      }
       static bool granted(const_arg_type msg)
       {
 	return msg.granted;
@@ -325,6 +339,7 @@ namespace raft {
     {
     public:
       typedef _LogEntry log_entry_type;
+      uint64_t request_id;
       uint64_t recipient_id;
       uint64_t term_number;
       uint64_t leader_id;
@@ -381,6 +396,10 @@ namespace raft {
       typedef append_entry<_LogEntry> arg_type;
       typedef const append_entry<_LogEntry> & const_arg_type;
     
+      static uint64_t request_id(const_arg_type ae)
+      {
+	return ae.request_id;
+      }
       static uint64_t recipient_id(const_arg_type ae)
       {
 	return ae.recipient_id;
@@ -436,6 +455,7 @@ namespace raft {
       uint64_t recipient_id;
       uint64_t term_number;
       uint64_t request_term_number;
+      uint64_t request_id;
       // Beginning of range of entries appended
       uint64_t begin_index;
       // One after the last log entry appended
@@ -463,6 +483,10 @@ namespace raft {
       {
 	return ae.request_term_number;
       }
+      static uint64_t request_id(const_arg_type ae)
+      {
+	return ae.request_id;
+      }
       // Beginning of range of entries appended
       static uint64_t begin_index(const_arg_type ae)
       {
@@ -482,6 +506,7 @@ namespace raft {
     class append_checkpoint_chunk
     {
     public:
+      uint64_t request_id;
       uint64_t recipient_id;
       uint64_t term_number;
       uint64_t leader_id;
@@ -503,6 +528,10 @@ namespace raft {
       typedef append_checkpoint_chunk arg_type;
       typedef const append_checkpoint_chunk & const_arg_type;
     
+      static uint64_t request_id(const_arg_type ae)
+      {
+	return ae.request_id;
+      }
       static uint64_t recipient_id(const_arg_type ae)
       {
 	return ae.recipient_id;
@@ -560,6 +589,7 @@ namespace raft {
       uint64_t recipient_id;
       uint64_t term_number;
       uint64_t request_term_number;
+      uint64_t request_id;
       uint64_t bytes_stored;
     };
 
@@ -580,6 +610,10 @@ namespace raft {
       static uint64_t request_term_number(const_arg_type ae)
       {
 	return ae.request_term_number;
+      }
+      static uint64_t request_id(const_arg_type ae)
+      {
+	return ae.request_id;
       }
       static uint64_t bytes_stored(const_arg_type ae)
       {
@@ -1132,6 +1166,8 @@ namespace raft {
       {
 	if (nullptr == obj_) {
 	  obj_ = std::make_unique<request_vote>();
+	  obj_->request_id = 0;
+	  obj_->recipient_id = 0;
 	  obj_->term_number = 0;
 	  obj_->candidate_id = 0;
 	  obj_->last_log_index = 0;
@@ -1140,6 +1176,11 @@ namespace raft {
 	return obj_.get();
       }
     public:
+      request_vote_builder & request_id(uint64_t val)
+      {
+	get_object()->request_id = val;
+	return *this;
+      }
       request_vote_builder & recipient_id(uint64_t val)
       {
 	get_object()->recipient_id = val;
@@ -1184,6 +1225,7 @@ namespace raft {
 	  obj_->peer_id = 0;
 	  obj_->term_number = 0;
 	  obj_->request_term_number = 0;
+	  obj_->request_id = 0;
 	  obj_->granted = false;
 	}
 	return obj_.get();
@@ -1202,6 +1244,11 @@ namespace raft {
       vote_response_builder & request_term_number(uint64_t val)
       {
 	get_object()->request_term_number = val;
+	return *this;
+      }
+      vote_response_builder & request_id(uint64_t val)
+      {
+	get_object()->request_id = val;
 	return *this;
       }
       vote_response_builder & granted(bool val)
@@ -1263,6 +1310,7 @@ namespace raft {
       {
 	if (nullptr == obj_) {
 	  obj_ = std::make_unique<append_entry<_LogEntry> >();
+	  obj_->request_id = 0;
 	  obj_->recipient_id = 0;
 	  obj_->term_number = 0;
 	  obj_->leader_id = 0;
@@ -1273,6 +1321,11 @@ namespace raft {
 	return obj_.get();
       }
     public:
+      append_entry_builder & request_id(uint64_t val)
+      {
+	get_object()->request_id = val;
+	return *this;
+      }
       append_entry_builder & recipient_id(uint64_t val)
       {
 	get_object()->recipient_id = val;
@@ -1331,6 +1384,7 @@ namespace raft {
 	  obj_->recipient_id = 0;
 	  obj_->term_number = 0;
 	  obj_->request_term_number = 0;
+	  obj_->request_id  = 0;
 	  obj_->begin_index = 0;
 	  obj_->last_index = 0;
 	  obj_->success = false;
@@ -1351,6 +1405,11 @@ namespace raft {
       append_response_builder & request_term_number(uint64_t val)
       {
 	get_object()->request_term_number = val;
+	return *this;
+      }
+      append_response_builder & request_id(uint64_t val)
+      {
+	get_object()->request_id = val;
 	return *this;
       }
       append_response_builder & begin_index(uint64_t val)
@@ -1379,6 +1438,11 @@ namespace raft {
     class append_checkpoint_chunk_builder : public builder_base<append_checkpoint_chunk>
     {
     public:
+      append_checkpoint_chunk_builder & request_id(uint64_t val)
+      {
+	get_object()->request_id = val;
+	return *this;
+      }
       append_checkpoint_chunk_builder & recipient_id(uint64_t val)
       {
 	get_object()->recipient_id = val;
@@ -1437,6 +1501,7 @@ namespace raft {
 	  obj_->recipient_id = 0;
 	  obj_->term_number = 0;
 	  obj_->request_term_number = 0;
+	  obj_->request_id = 0;
 	  obj_->bytes_stored = 0;
 	}
 	return obj_.get();
@@ -1455,6 +1520,11 @@ namespace raft {
       append_checkpoint_chunk_response_builder & request_term_number(uint64_t val)
       {
 	get_object()->request_term_number = val;
+	return *this;
+      }
+      append_checkpoint_chunk_response_builder & request_id(uint64_t val)
+      {
+	get_object()->request_id = val;
 	return *this;
       }
       append_checkpoint_chunk_response_builder & bytes_stored(uint64_t val)
