@@ -130,6 +130,24 @@ namespace raft {
       return acked[(acked.size()-1)/2];
     }
 
+    // Last request id quorum
+    uint64_t get_last_request_id(std::size_t leader, uint64_t last_request_id) const
+    {
+      // Figure out the minimum ack'd request id over a quorum.
+      std::vector<uint64_t> acked;
+      for(auto & p : peers_) {
+	if(p->peer_id != leader) {
+	  // For peers we need an vote response, append response or append checkpoint chunk to get an ack
+	  acked.push_back(p->last_request_id_);
+	} else {
+	  // For a leader, just check its request_id
+	  acked.push_back(last_request_id);
+	}
+      }
+      std::sort(acked.begin(), acked.end());
+      return acked[(acked.size()-1)/2];
+    }
+
     void clear()
     {
       return peers_.clear();
@@ -416,6 +434,17 @@ namespace raft {
 	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") with transitional config has old commit index " << ret <<
 	  " new commit index " << new_committed_index;
 	ret = (std::min)(ret, new_committed_index);
+      }
+      return ret;
+    }
+
+    uint64_t get_last_request_id(uint64_t last_request_id) const {
+      uint64_t ret = old_peers_.get_last_request_id(cluster_idx_, last_request_id);
+      if (state_ == TRANSITIONAL) {
+	uint64_t new_last_request_id = new_peers_.get_last_request_id(cluster_idx_, last_request_id);
+	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") with transitional config has old last request id " << ret <<
+	  " new last request id " << new_last_request_id;
+	ret = (std::min)(ret, new_last_request_id);
       }
       return ret;
     }

@@ -435,6 +435,10 @@ namespace raft {
     enum state { LEADER, FOLLOWER, CANDIDATE };
 
     static const std::size_t INVALID_PEER_ID = std::numeric_limits<std::size_t>::max();
+    static std::size_t INVALID_PEER_ID_FUN()
+    {
+      return std::numeric_limits<std::size_t>::max();
+    }
 
   private:
 
@@ -511,6 +515,9 @@ namespace raft {
     // so we send out heartbeats with an incremented request id and wait to get a quorum of responses
     // with request id at least as large.
     uint64_t request_id_;
+    // If LEADER this is the index of the NOOP entry we make at the beginning of our term.   We cannot service
+    // read-only queries until this is committed.
+    uint64_t leader_read_only_commit_fence_;
 
     // Common log state
     log_type & log_;
@@ -552,6 +559,8 @@ namespace raft {
     std::vector<append_entry_arg_type> append_entry_header_sync_continuations_;
     std::vector<append_checkpoint_chunk_arg_type> append_checkpoint_chunk_header_sync_continuations_;
     std::vector<vote_response_continuation> vote_response_header_sync_continuations_;
+    std::map<uint64_t, std::function<void(client_result_type)>> request_id_quorum_continuations_;
+    std::map<uint64_t, std::vector<std::function<void(client_result_type)>>> state_machine_applied_continuations_;
     // This flag is essentially another log header sync continuation that indicates vote requests 
     // should be sent out after log header sync (which is the case when we transition to CANDIDATE
     // but not when we transition to FOLLOWER).
@@ -561,6 +570,16 @@ namespace raft {
     bool no_log_header_sync_continuations_exist() const {
       return !send_vote_requests_ && 0 == vote_response_header_sync_continuations_.size() &&
 	0 == append_entry_header_sync_continuations_.size();
+    }
+
+    uint64_t commit_index_term() const {
+      // Either:
+      // 1) commit is in current log
+      // 2) log is empty
+      // 3) commit is the last entry checkpointed
+      BOOST_ASSERT(last_committed_index_ > log_.start_index() || 0 == last_committed_index_ || last_committed_index_ == this->last_checkpoint_index());
+      return last_committed_index_ > this->last_checkpoint_index() ?  log_.term(last_committed_index_ - 1) :
+        (last_committed_index_ > 0 ? this->last_checkpoint_term() : 0);
     }
     
     uint64_t last_log_entry_term() const {
@@ -707,11 +726,11 @@ namespace raft {
       }
     }
 
-    void send_heartbeats(std::chrono::time_point<std::chrono::steady_clock> clock_now)
+    void send_heartbeats(bool force, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       for(auto peer_it = configuration().begin_peers(), peer_end = configuration().end_peers(); peer_it != peer_end; ++peer_it) {
 	peer_type & p(*peer_it);
-	if (p.peer_id != my_cluster_id() && p.requires_heartbeat_ <= clock_now) {
+	if (p.peer_id != my_cluster_id() && (force || p.requires_heartbeat_ <= clock_now)) {
 	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	    " sending empty append_entry to peer " << p.peer_id << " as heartbeat with request id " << request_id_;
 	  comm_.append_entry(p.peer_id, p.address, request_id_, p.peer_id, current_term_, my_cluster_id(), 0, 0,
@@ -801,13 +820,17 @@ namespace raft {
       BOOST_ASSERT(committed > log_start_index());
 
       if (log_.term(committed-1) != current_term_) {
-	// See section 3.6.2 of Ongaro's thesis for why we cannot yet conclude that these entries are committed.
+	// See section 3.6.2 of Ongaro's thesis for why we do not directly commit entries at previous terms;
+        // they will be committed indirectly when the commits subsequent entries at its current term.
 	BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " has majority vote on last log entry at index " << (committed-1) <<
 	  " and term " << log_.term(committed-1) << " but cannot directly commit log entry from previous term";
 	return;
       }
 
+      // This is the first commit of our term, which unblocks processing read only queries
+      bool is_first_commit_of_term = last_committed_index_ <= leader_read_only_commit_fence_ && committed != last_committed_index_;
+      
       BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" committed log entries [" << last_committed_index_ <<
 	"," << committed << ")";
@@ -816,6 +839,10 @@ namespace raft {
       // Now try to apply any newly committed log entries
       apply_log_entries();
 
+      if (is_first_commit_of_term) {
+        update_last_request_id_quorum();
+      }
+      
       // TODO: Check use of >= vs. >
       if (state_ == LEADER && last_committed_index_ > configuration().configuration_id()) {
 	if (!configuration().includes_self()) {
@@ -854,6 +881,7 @@ namespace raft {
     void update_last_committed_index(uint64_t committed)
     {
       last_committed_index_ = committed;
+
       if (configuration().is_transitional_initiator() && last_committed_index_ > configuration().configuration_id()) {
 	// Respond to the client that we've succeeded
 	BOOST_ASSERT(config_change_client_ != nullptr);
@@ -1034,6 +1062,9 @@ namespace raft {
       // checkpoint then it would need database-like functionality to rollback such changes on startup when it realizes that
       // the committed part of its log is behind (meaning compensation info would have to be persisted outside the checkpoint as well).
       // In any case, Ongaro makes it clear that there is no need to sync this to disk here.
+      // This is the first commit of our term, which unblocks processing read only queries
+      bool is_first_commit_of_term = last_committed_index_ <= leader_read_only_commit_fence_ && ae::leader_commit_index(req) != last_committed_index_;
+      
       if (last_committed_index_ <ae::leader_commit_index(req)) {
 	update_last_committed_index(ae::leader_commit_index(req));
       }
@@ -1083,6 +1114,10 @@ namespace raft {
       // Log entries in place, now try to apply the committed ones
       apply_log_entries();
 
+      if (is_first_commit_of_term) {
+        update_last_request_id_quorum();
+      }
+      
       // N.B. The argument req is no longer valid at this point. It has either been free or has ownership has been passed to the
       // log
 
@@ -1281,6 +1316,21 @@ namespace raft {
 
 	// Cancel any in-progress checkpoint
 	this->abandon_checkpoint();
+
+        // Clear the read only fence in case we were leader
+        leader_read_only_commit_fence_ = std::numeric_limits<uint64_t>::max();
+
+        // Cancel any read only queries
+        for(auto & f : request_id_quorum_continuations_) {
+          f.second(messages_type::client_result_not_leader());
+        }
+        request_id_quorum_continuations_.clear();
+        for(auto & c : state_machine_applied_continuations_) {
+          for(auto & f : c.second) {
+            f(messages_type::client_result_not_leader());
+          }
+        }
+        state_machine_applied_continuations_.clear();
       }
 
       // TODO: If transitioning from leader there may be a log sync to disk
@@ -1309,8 +1359,23 @@ namespace raft {
 	  ".  Syncing log header.";
 
 	// Cancel any in-progress checkpoint
-	this->abandon_checkpoint();
-      
+	this->abandon_checkpoint();      
+
+        // Clear the read only fence in case we were leader
+        leader_read_only_commit_fence_ = std::numeric_limits<uint64_t>::max();
+        
+        // Cancel any read only queries
+        for(auto & f : request_id_quorum_continuations_) {
+          f.second(messages_type::client_result_not_leader());
+        }
+        request_id_quorum_continuations_.clear();
+        for(auto & c : state_machine_applied_continuations_) {
+          for(auto & f : c.second) {
+            f(messages_type::client_result_not_leader());
+          }
+        }
+        state_machine_applied_continuations_.clear();
+
 	current_term_ += 1;
 	state_ = CANDIDATE;
 	election_timeout_ = new_election_timeout(clock_now);
@@ -1323,7 +1388,6 @@ namespace raft {
 	// flag is basically a continuation).  TODO: Do we really need this flag or should this be
 	// based on checking that state_ == CANDIDATE after the log header sync is done (in on_log_header_sync)?
 	send_vote_requests_ = true;
-
       } else {
 	// TODO: Perhaps make a continuation here and make the candidate transition after the sync?
 	BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
@@ -1360,6 +1424,7 @@ namespace raft {
       BOOST_ASSERT(!log_header_sync_required_);
       state_ = LEADER;
       leader_id_ = my_cluster_id();
+      // TODO: Should we set the election timeout to infinity?
       election_timeout_ = new_election_timeout(clock_now);
 
       // TODO: Make this relative to the configuration.  I do think this is already correct; send out to all known servers.
@@ -1390,16 +1455,72 @@ namespace raft {
 
       // Append a new log entry in order to get the committed index updated. 
       // The empty log entry will also trigger append_entry messages to the peers to let them know we have
-      // become leader.  The latter could also be achieved with heartbeats, but would it get the commit index advanced?
-      // The main reason for the NOOP instead of heartbeat is that we need an entry from the new term to commit any entries from previous terms
-      // (see Section 3.6.2 from Ongaro's thesis).
-      // Another rationale for getting commit index advanced has to do with the protocol for doing non-stale reads (that uses
-      // RaftConsensus::getLastCommitIndex in logcabin); I need to understand this protocol.
-      log_.append(log_entry_traits_type::create_noop(current_term_, cluster_clock_.advance(clock_now)));
+      // become leader.  The latter could also be achieved with heartbeats, but would it get the commit index advanced (I think the answer is no
+      // a heartbeat response will not wait for a log sync; there could be a log sync outstanding too using the synced index from heartbeat response
+      // could result in an underestimate of the committed index if the log sync completes after the heartbeat response is sent)?
+      // The main reason for the NOOP instead of heartbeat is that entries from a previous term are not committed directly by counting how many
+      // servers have received them; they are only committed indirectly by committing entries from the current term on the LEADER
+      // (see Section 3.6.2 from Ongaro's thesis).   That still begs the question of why we force the issue of committing
+      // those old entries right now?
+      // Knowing the last committed index in the cluster also allows us to guarantee linearizable semantics for
+      // read only queries simply by verifying we are still leader via some heartbeats (see Section 6.4 of Ongago's thesis
+      // and reference the method protocol::async_linearizable_read_only_query_fence below).
+      // We note the index of this entry, because we won't process read-only queries until this entry is committed.
+      auto indices = log_.append(log_entry_traits_type::create_noop(current_term_, cluster_clock_.advance(clock_now)));
+      leader_read_only_commit_fence_ = indices.first;
       send_append_entries(clock_now);
     
       // TODO: As an optimization cancel any outstanding request_vote since they are not needed
       // we've already got quorum
+    }
+
+    void update_last_request_id_quorum()
+    {
+      if (request_id_quorum_continuations_.empty()) {
+        return;
+      }
+      
+      if (last_committed_index_ <= leader_read_only_commit_fence_) {
+        BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_
+                                 << " commit index at " << last_committed_index_
+                                 << " has not yet committed read only query fence at index " << leader_read_only_commit_fence_
+                                 << " cannot yet process linearizable read only queries.";
+
+        return;
+      }
+      
+      // Acknowledged request id  is relative to a configuration...
+      uint64_t acknowledged_request_id = configuration().get_last_request_id(request_id_);
+      
+      BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_
+                               << " updating last request id min quorum request_id_ " << request_id_
+                               << " acknowledged_request_id " << acknowledged_request_id
+                               << " commit_index_term " << commit_index_term();
+
+        
+      if (commit_index_term() == current_term_) {
+        auto it = request_id_quorum_continuations_.begin();
+        auto e = request_id_quorum_continuations_.upper_bound(acknowledged_request_id);
+        for(; it != e; ++it) {
+          // Validated that we are current leader and have up to date log
+          // Now only have to wait for state machine to complete applying
+          // all entries up to committed index (if not already true)
+          if (last_applied_index_ == last_committed_index_) {
+            BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_
+                                     << " read only query at request id " << it->first
+                                     << " confirmed LEADER and state machine is up to date at commit index "
+                                     << last_committed_index_;
+            it->second(messages_type::client_result_success());
+          } else {
+            BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_
+                                     << " read only query at request id " << it->first
+                                     << " confirmed LEADER and state machine not up to date commit index "
+                                     << last_committed_index_ << " applied index " << last_applied_index_;
+            state_machine_applied_continuations_[last_committed_index_].push_back(std::move(it->second));
+          }
+        }
+        request_id_quorum_continuations_.erase(request_id_quorum_continuations_.begin(), e);
+      }
     }
 
   public:
@@ -1424,6 +1545,7 @@ namespace raft {
       last_applied_index_(0),
       cluster_clock_(now),
       request_id_(0),
+      leader_read_only_commit_fence_(std::numeric_limits<uint64_t>::max()),
       configuration_(config_manager),
       send_vote_requests_(false)
     {
@@ -1525,7 +1647,7 @@ namespace raft {
 	}
 	// Send heartbeats and append_entries if needed
 	send_append_entries(clock_now);
-	send_heartbeats(clock_now);
+	send_heartbeats(false, clock_now);
 	break;
       }
     }
@@ -1799,6 +1921,7 @@ namespace raft {
 	    if (has_quorum()) {
 	      become_leader(now);
 	    }
+            update_last_request_id_quorum();
 	  }
 	}
 	break;
@@ -1859,8 +1982,8 @@ namespace raft {
       if (log_header_sync_required_) {
 	// TODO: We need to put a limit on number of continuations we'll queue up
 	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	  " waiting for log header sync.  Queuing append_entry message from recipient " <<
-	  ae::recipient_id(req) << " previous_log_term " << ae::previous_log_term(req) <<
+	  " waiting for log header sync.  Queuing append_entry message from leader " <<
+	  ae::leader_id(req) << " previous_log_term " << ae::previous_log_term(req) <<
 	  " previous_log_index " << ae::previous_log_index(req);
 	append_entry_header_sync_continuations_.push_back(std::move(req));
         if (!header_sync_already_outstanding) {
@@ -1895,12 +2018,18 @@ namespace raft {
       BOOST_ASSERT(state_ == LEADER);
 
       if (ae::term_number(resp) > current_term_) {
+        // I learning (perhaps from a heartbeat) that I am no longer leader.
 	if (can_become_follower_at_term(ae::term_number(resp))) {
 	  become_follower(ae::term_number(resp), clock_now);
 	  // TODO: What do I do here????  Is all the processing below still relevant?
-          // TODO: What happens if a log header sync is required?   Would all of the processing below
+          // TODO: If so, would all of the processing below
           // have to wait until after the log header is synced?
-          BOOST_ASSERT(!log_header_sync_required_);
+          // Most of what is below can safely be skipped, but I do need to think
+          // about what happens if a configuration change is in progress.
+          BOOST_ASSERT(log_header_sync_required_);
+	  if (log_header_sync_required_) {
+	    log_.sync_header();
+	  }
 	} else {
 	  // This may be impossible because if we are waiting for a log header flush
 	  // for current_term_ then we should never have been leader at current_term_
@@ -1919,6 +2048,7 @@ namespace raft {
       }
       peer_type & p(peer_from_id(ae::recipient_id(resp)));
       p.acknowledge_request_id(ae::request_id(resp));
+      update_last_request_id_quorum();        
       if (ae::success(resp)) {
 	if (p.match_index_ > ae::last_index(resp)) {
 	  // TODO: This is unexpected if we don't pipeline append entries message,
@@ -1931,7 +2061,7 @@ namespace raft {
 	} else {
 	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	    " peer " << ae::recipient_id(resp) << " acknowledged index entries [" << ae::begin_index(resp) <<
-	    "," << ae::last_index(resp) << ")";
+	    "," << ae::last_index(resp) << ") at request id " << ae::request_id(resp);
 	  p.match_index_ = ae::last_index(resp);
 	  // Now figure out whether we have a majority of peers ack'ing and can commit something
 	  try_to_commit(clock_now);
@@ -2074,6 +2204,7 @@ namespace raft {
 
       peer_type & p(peer_from_id(acc::recipient_id(resp)));
       p.acknowledge_request_id(acc::request_id(resp));
+      update_last_request_id_quorum();        
       if(!p.checkpoint_ || !p.checkpoint_->awaiting_ack_) {
 	BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " received unexpected append_checkpoint_chunk_message from peer " << acc::recipient_id(resp) <<
@@ -2295,10 +2426,32 @@ namespace raft {
         BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
           " finished applying log entry " << log_index << " to state machine";
         last_applied_index_ = log_index + 1;
+
+        {
+          auto it = state_machine_applied_continuations_.begin();
+          auto e = state_machine_applied_continuations_.upper_bound(last_applied_index_);
+          for(; it != e; ++it) {
+            for(auto & f : it->second) {
+              f(messages_type::client_result_success());
+            }
+          }
+          state_machine_applied_continuations_.erase(state_machine_applied_continuations_.begin(), e);
+        }
       }
       apply_log_entries();
     }
 
+    template<typename _Callback>
+    void async_linearizable_read_only_query_fence(_Callback && cb, std::chrono::time_point<std::chrono::steady_clock> clock_now)
+    {
+      // First get quorum at a new request id to make sure we are still the cluster leader, if not the leader, we might be missing
+      // a command the client committed and our response would break linearizability (though it would still be
+      // serializable).
+      ++request_id_;
+      request_id_quorum_continuations_[request_id_] = std::function<void(client_result_type)>(std::move(cb));
+      BOOST_LOG_TRIVIAL(debug) << "Enqueuing linearizable read only query at request_id_ " << request_id_;
+      send_heartbeats(true, clock_now);
+    }
 
     // Create a seed configuration record with a single server configuration for a log.
     // This should be run exactly once on a single server in a cluster.
@@ -2314,6 +2467,10 @@ namespace raft {
     uint64_t current_term() const {
       return current_term_;
     }
+    // N.B. even on a LEADER this commit index may be an underestimate of the
+    // commit index of the cluster (e.g. a leader may have become partitioned and
+    // fallen behind but not yet discovered that it has lost leadership).
+    // See Ongaro Thesis Section 6.4.
     uint64_t commit_index() const {
       return last_committed_index_;
     }
@@ -2331,6 +2488,9 @@ namespace raft {
     }
     uint64_t leader_id() const {
       return leader_id_;
+    }
+    uint64_t request_id() const {
+      return request_id_;
     }
   };
 }

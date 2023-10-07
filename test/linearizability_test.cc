@@ -752,6 +752,7 @@ public:
   typedef typename _TestType::builders_type::append_checkpoint_chunk_response_builder_type append_checkpoint_chunk_response_builder;
   typedef typename _TestType::messages_type::checkpoint_header_traits_type checkpoint_header_traits;
   typedef typename _TestType::messages_type::log_entry_traits_type log_entry_traits;
+  typedef typename _TestType::messages_type::log_entry_traits_type::const_arg_type log_entry_const_arg_type;
   typedef typename _TestType::builders_type::client_request_builder_type client_request_builder;
   typedef typename _TestType::messages_type::server_description_traits_type server_description_traits;
   typedef typename _TestType::messages_type::simple_configuration_description_traits_type simple_configuration_description_traits;
@@ -759,6 +760,9 @@ public:
   typedef typename _TestType::messages_type::set_configuration_request_traits_type set_configuration_request_traits;
   typedef typename _TestType::builders_type::set_configuration_request_builder_type set_configuration_request_builder;
   typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
+  typedef typename _TestType::builders_type::linearizable_command_builder_type linearizable_command_builder;
+  typedef typename _TestType::builders_type::open_session_request_builder_type open_session_request_builder;
+  typedef typename _TestType::serialization_type serialization_type;
   typedef raft::protocol<::raft::test::generic_communicator_metafunction, ::raft::test::native_client_metafunction, typename _TestType::messages_type> raft_type;
   std::size_t cluster_size;
   typename raft_type::communicator_type comm;
@@ -874,6 +878,12 @@ public:
   void make_leader(uint64_t term, bool respond_to_noop=true);
   void make_follower_with_checkpoint(uint64_t term, uint64_t log_entry);
   void become_follower_with_vote_request(uint64_t term);
+  void become_follower_with_vote_request(uint64_t term, uint64_t last_log_index, uint64_t last_log_term);
+  void send_noop(uint64_t leader_id, uint64_t term, uint64_t previous_log_index, uint64_t previous_log_term, uint64_t leader_commit_index);
+  void send_open_session(uint64_t leader_id, uint64_t term, uint64_t previous_log_index, uint64_t previous_log_term, uint64_t leader_commit_index);
+  void send_linearizable_command(uint64_t session_id, uint64_t leader_id, uint64_t term, uint64_t previous_log_index, uint64_t previous_log_term, uint64_t leader_commit_index, raft::slice && cmd);
+  void send_append_entry(uint64_t leader_id, uint64_t term, uint64_t previous_log_index, uint64_t previous_log_term, uint64_t leader_commit_index,
+                         const std::pair<log_entry_const_arg_type, raft::util::call_on_delete > & le);
   void commit_one_log_entry(uint64_t term, uint64_t client_index);
   void send_heartbeats();
   void send_client_request_and_commit(uint64_t term, const char * cmd, uint64_t client_index);
@@ -1096,7 +1106,13 @@ void RaftTestFixtureBase<_TestType>::make_follower_with_checkpoint(uint64_t term
 template<typename _TestType>
 void RaftTestFixtureBase<_TestType>::become_follower_with_vote_request(uint64_t term)
 {
-  auto msg = request_vote_builder().recipient_id(0).term_number(term).candidate_id(1).last_log_index(0).last_log_term(0).finish();
+  become_follower_with_vote_request(term, 0, 0);
+}
+
+template<typename _TestType>
+void RaftTestFixtureBase<_TestType>::become_follower_with_vote_request(uint64_t term, uint64_t last_log_index, uint64_t last_log_term)
+{
+  auto msg = request_vote_builder().recipient_id(0).term_number(term).candidate_id(1).last_log_index(last_log_index).last_log_term(last_log_term).finish();
   protocol->on_request_vote(std::move(msg), now);
   BOOST_CHECK(protocol->log_header_sync_required());
   BOOST_CHECK_EQUAL(term, protocol->current_term());
@@ -1117,6 +1133,74 @@ void RaftTestFixtureBase<_TestType>::become_follower_with_vote_request(uint64_t 
   BOOST_CHECK_EQUAL(term, vote_response_traits::request_term_number(boost::get<vote_response_arg_type>(comm.q.back())));
   // Don't worry about vote; it will be no unless the server's log was empty
   //BOOST_CHECK(vote_response_traits::granted(boost::get<vote_response_arg_type>(comm.q.back())));
+  comm.q.pop_back();
+  BOOST_CHECK(log_header_write_.empty());
+}
+
+template<typename _TestType>
+void RaftTestFixtureBase<_TestType>::send_noop(uint64_t leader_id, uint64_t term, uint64_t previous_log_index, uint64_t previous_log_term, uint64_t leader_commit_index)
+{
+  auto le = log_entry_traits::create_noop(term, 23432343);
+  send_append_entry(leader_id, term, previous_log_index, previous_log_term, leader_commit_index, le);
+}
+
+template<typename _TestType>
+void RaftTestFixtureBase<_TestType>::send_open_session(uint64_t leader_id, uint64_t term, uint64_t previous_log_index, uint64_t previous_log_term, uint64_t leader_commit_index)
+{
+  auto lcmd = serialization_type::serialize_log_entry_command(open_session_request_builder().finish());
+  auto le = log_entry_traits::create_command(term, 23432343, std::move(lcmd));
+  send_append_entry(leader_id, term, previous_log_index, previous_log_term, leader_commit_index, le);
+}
+
+template<typename _TestType>
+void RaftTestFixtureBase<_TestType>::send_linearizable_command(uint64_t session_id, uint64_t leader_id, uint64_t term, uint64_t previous_log_index, uint64_t previous_log_term, uint64_t leader_commit_index, raft::slice && cmd)
+{
+  auto lcmd = serialization_type::serialize_log_entry_command(linearizable_command_builder().session_id(session_id).first_unacknowledged_sequence_number(0).sequence_number(0).command(std::move(cmd)).finish());
+  auto le = log_entry_traits::create_command(term, 23432343, std::move(lcmd));
+  send_append_entry(leader_id, term, previous_log_index, previous_log_term, leader_commit_index, le);
+}
+
+template<typename _TestType>
+void RaftTestFixtureBase<_TestType>::send_append_entry(uint64_t leader_id, uint64_t term, uint64_t previous_log_index, uint64_t previous_log_term, uint64_t leader_commit_index,
+                                                       const std::pair<log_entry_const_arg_type, raft::util::call_on_delete > & le)
+{
+  auto entry_cluster_time = log_entry_traits::cluster_time(le.first);
+  auto original_state = protocol->get_state();
+  append_entry_builder bld;
+  bld.request_id(992345).recipient_id(0).term_number(term).leader_id(leader_id).previous_log_index(previous_log_index).previous_log_term(previous_log_term).leader_commit_index(leader_commit_index).entry(le);
+  auto msg = bld.finish();
+  protocol->on_append_entry(std::move(msg), now);
+  BOOST_CHECK((raft_type::FOLLOWER == original_state && !protocol->log_header_sync_required()) ||
+              (raft_type::FOLLOWER != original_state && protocol->log_header_sync_required()));
+  BOOST_CHECK_EQUAL(term, protocol->current_term());
+  BOOST_TEST(((protocol->log_header_sync_required() && initial_cluster_time == protocol->cluster_time()) ||
+              (!protocol->log_header_sync_required() && 23432343U == protocol->cluster_time())));
+  BOOST_CHECK_EQUAL(raft_type::FOLLOWER, protocol->get_state());
+  BOOST_CHECK_EQUAL(0U, comm.q.size());
+  BOOST_TEST(((protocol->log_header_sync_required() && term == log_header_write_.current_term_) ||
+              (!protocol->log_header_sync_required() && std::numeric_limits<uint64_t>::max() == log_header_write_.current_term_)));
+  BOOST_TEST(raft_type::INVALID_PEER_ID_FUN(), log_header_write_.voted_for_);
+  if (protocol->log_header_sync_required()) {
+    log_header_write_.reset();
+    protocol->on_log_header_sync(now);
+  }
+  BOOST_CHECK(!protocol->log_header_sync_required());
+  BOOST_CHECK_EQUAL(term, protocol->current_term());
+  BOOST_CHECK_EQUAL(entry_cluster_time, protocol->cluster_time());
+  initial_cluster_time = entry_cluster_time;
+  BOOST_CHECK_EQUAL(raft_type::FOLLOWER, protocol->get_state());
+  BOOST_CHECK_EQUAL(leader_commit_index, protocol->commit_index());
+  BOOST_CHECK_EQUAL(0U, comm.q.size());
+  protocol->on_log_sync(previous_log_index+1, now);
+  BOOST_CHECK_EQUAL(1U, comm.q.size());
+  BOOST_REQUIRE(0U < comm.q.size());
+  BOOST_CHECK_EQUAL(0U, append_response_traits::recipient_id(boost::get<append_response_arg_type>(comm.q.back())));
+  BOOST_CHECK_EQUAL(term, append_response_traits::term_number(boost::get<append_response_arg_type>(comm.q.back())));
+  BOOST_CHECK_EQUAL(term, append_response_traits::request_term_number(boost::get<append_response_arg_type>(comm.q.back())));
+  BOOST_CHECK_EQUAL(992345U, append_response_traits::request_id(boost::get<append_response_arg_type>(comm.q.back())));
+  BOOST_CHECK_EQUAL(previous_log_index, append_response_traits::begin_index(boost::get<append_response_arg_type>(comm.q.back())));
+  BOOST_CHECK_EQUAL(previous_log_index+1, append_response_traits::last_index(boost::get<append_response_arg_type>(comm.q.back())));
+  BOOST_CHECK(append_response_traits::success(boost::get<append_response_arg_type>(comm.q.back())));
   comm.q.pop_back();
   BOOST_CHECK(log_header_write_.empty());
 }
@@ -1168,6 +1252,7 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
   typedef typename _TestType::builders_type::close_session_request_builder_type close_session_request_builder;
   typedef typename _TestType::builders_type::linearizable_command_builder_type linearizable_command_builder;
   typedef typename _TestType::serialization_type serialization_type;
+  typedef typename _TestType::messages_type::client_result_type client_result_type;
   typedef communicator_mock<messages_type> client_communicator_type;
   typedef logger<messages_type, serialization_type> state_machine_type;
   typedef raft::protocol<raft::test::generic_communicator_metafunction, raft::test::native_client_metafunction, messages_type> raft_type;
@@ -1480,6 +1565,378 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
     }
     BOOST_CHECK(!state_machine.cont);
   }
+
+  void TestReadOnlyQuery()
+  {
+    typedef typename messages_type::append_entry_traits_type append_entry_traits;
+    typedef typename _TestType::messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
+    typedef typename _TestType::builders_type::append_response_builder_type append_response_builder;
+    // Now make leader and open a session
+    uint64_t term = 1;
+    this->make_leader(term);
+    BOOST_CHECK_EQUAL(1, this->protocol->last_log_entry_index());
+    
+    open_session(0, term, 1);
+  
+    send_command(0, 1, 0, 0, "foo", term, 2);
+
+    // Everything is committed and state machine is up to date.
+    // Read only query should send some heartbeats immediately
+    auto client_index = this->protocol->last_log_entry_index();
+    bool called = false;
+    client_result_type cr = messages_type::client_result_fail();
+    auto cb = [&cr, &called](client_result_type result) { cr = result; called = true; };
+    BOOST_TEST(0 == this->protocol->request_id());
+    this->protocol->async_linearizable_read_only_query_fence(std::move(cb), this->now);
+    BOOST_TEST(1 == this->protocol->request_id());
+    BOOST_TEST(!called);
+    BOOST_CHECK_EQUAL(this->num_known_peers()-1, this->comm.q.size());
+    std::size_t expected = 1;
+    while(this->comm.q.size() > 0) {
+      auto req_request_id = append_entry_traits::request_id(boost::get<append_entry_arg_type>(this->comm.q.back()));
+      BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
+      BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(client_index).success(true).finish();
+      this->protocol->on_append_response(std::move(resp), this->now);
+      if (expected > 1) {
+        BOOST_TEST(called);
+        BOOST_TEST(messages_type::client_result_success() == cr);
+      } else {
+        BOOST_TEST(!called);
+      }
+      expected += 1;
+      this->comm.q.pop_back();
+    }
+  }  
+
+  void TestAsyncReadOnlyQuery()
+  {
+    typedef typename messages_type::append_entry_traits_type append_entry_traits;
+    typedef typename _TestType::messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
+    typedef typename _TestType::builders_type::append_response_builder_type append_response_builder;
+    // Now make leader and open a session
+    uint64_t term = 1;
+    this->make_leader(term);
+    BOOST_CHECK_EQUAL(1, this->protocol->last_log_entry_index());
+    
+    open_session(0, term, 1);
+  
+    // Set state machine to async after session because that validation logic doesn't support
+    // async
+    state_machine.async = true;
+
+    send_command(0, 1, 0, 0, "foo", term, 2);
+
+    // Everything is committed but state machine is not up to date
+    // Read only query should send some heartbeats immediately
+    auto client_index = this->protocol->last_log_entry_index();
+    bool called = false;
+    client_result_type cr = messages_type::client_result_fail();
+    auto cb = [&cr, &called](client_result_type result) { cr = result; called = true; };
+    BOOST_TEST(0 == this->protocol->request_id());
+    this->protocol->async_linearizable_read_only_query_fence(std::move(cb), this->now);
+    BOOST_TEST(1 == this->protocol->request_id());
+    BOOST_TEST(!called);
+    BOOST_CHECK_EQUAL(this->num_known_peers()-1, this->comm.q.size());
+    std::size_t expected = 1;
+    while(this->comm.q.size() > 0) {
+      auto req_request_id = append_entry_traits::request_id(boost::get<append_entry_arg_type>(this->comm.q.back()));
+      BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
+      BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(client_index).success(true).finish();
+      this->protocol->on_append_response(std::move(resp), this->now);
+      BOOST_TEST(!called);
+      expected += 1;
+      this->comm.q.pop_back();
+    }
+
+    // Now if we complete the state machine command application, the read only query will
+    // be runnable
+    send_state_machine_completion(0, "foo", 2);
+    BOOST_TEST(called);
+    BOOST_TEST(messages_type::client_result_success() == cr);
+  }  
+
+  void TestReadOnlyQueryNoLongerLeader()
+  {
+    typedef typename messages_type::append_entry_traits_type append_entry_traits;
+    typedef typename _TestType::messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
+    typedef typename _TestType::builders_type::append_response_builder_type append_response_builder;
+    // Now make leader and open a session
+    uint64_t term = 1;
+    this->make_leader(term);
+    BOOST_CHECK_EQUAL(1, this->protocol->last_log_entry_index());
+    
+    open_session(0, term, 1);
+  
+    send_command(0, 1, 0, 0, "foo", term, 2);
+
+    // Everything is committed and state machine is up to date.
+    // Read only query should send some heartbeats immediately
+    auto client_index = this->protocol->last_log_entry_index();
+    bool called = false;
+    client_result_type cr = messages_type::client_result_fail();
+    auto cb = [&cr, &called](client_result_type result) { cr = result; called = true; };
+    BOOST_TEST(0 == this->protocol->request_id());
+    this->protocol->async_linearizable_read_only_query_fence(std::move(cb), this->now);
+    BOOST_TEST(1 == this->protocol->request_id());
+    BOOST_TEST(!called);
+    BOOST_CHECK_EQUAL(this->num_known_peers()-1, this->comm.q.size());
+    std::size_t expected = 1;
+    while(this->comm.q.size() > 0) {
+      auto req_request_id = append_entry_traits::request_id(boost::get<append_entry_arg_type>(this->comm.q.back()));
+      BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
+      BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      if (expected > 1) {
+        // Peers 2,3 and 4 formed a new quorum and elected a new leader and committed new entry
+        auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term+1).request_term_number(term).begin_index(client_index+1).last_index(client_index+1).success(true).finish();
+        this->protocol->on_append_response(std::move(resp), this->now);
+        BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
+        BOOST_TEST(called);
+        BOOST_TEST(messages_type::client_result_not_leader() == cr);
+        if (2 == expected) {
+          BOOST_TEST(this->protocol->log_header_sync_required());
+          this->protocol->on_log_header_sync(this->now);
+        }
+      } else {
+        auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(client_index).success(true).finish();
+        this->protocol->on_append_response(std::move(resp), this->now);
+        BOOST_TEST(!called);
+      }
+      expected += 1;
+      this->comm.q.pop_back();
+    }
+  }  
+
+  void TestReadOnlyQueryUnknownCommitIndex()
+  {
+    typedef typename messages_type::append_entry_traits_type append_entry_traits;
+    typedef typename _TestType::messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
+    typedef typename _TestType::builders_type::append_response_builder_type append_response_builder;
+    // Start out as follower and have the leader append some entries that are not known to be committed
+    uint64_t term = 1;
+    this->become_follower_with_vote_request(term);
+    this->send_noop(1, 1, 0, 0, 0);
+    this->send_open_session(1, 1, 1, 1, 0);
+    this->send_linearizable_command(1, 1, 1, 2, 1, 0, raft::slice::create("foo"));
+    this->send_linearizable_command(1, 1, 1, 3, 1, 0, raft::slice::create("bar"));
+    // We now assume that the leader has committed these entries but hasn't yet informed us of that fact.
+    // Now we become leader (which is fine since we have all of the necessary log entries), but don't process the
+    // NOOP append entry responses.
+    this->make_leader(++term, false);
+    BOOST_TEST(0U == this->protocol->commit_index());
+    bool called = false;
+    client_result_type cr = messages_type::client_result_fail();
+    auto cb = [&cr, &called](client_result_type result) { cr = result; called = true; };
+    BOOST_TEST(0 == this->protocol->request_id());
+    this->protocol->async_linearizable_read_only_query_fence(std::move(cb), this->now);
+    BOOST_TEST(1 == this->protocol->request_id());
+    BOOST_TEST(!called);
+    BOOST_TEST(this->num_known_peers() == this->comm.q.size()+1);
+    // For this test, we assume that the all of the entries from the previous leader were committed
+    this->protocol->on_log_sync(5, this->now);
+    for(uint64_t p=1; p!=this->num_known_peers(); ++p) {
+      auto resp = append_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(4).last_index(5).success(true).finish();
+      this->protocol->on_append_response(std::move(resp), this->now);
+      if (p == 1) {
+        BOOST_TEST(0U == this->protocol->commit_index());
+      } else {
+        BOOST_TEST(5U == this->protocol->commit_index());
+      }
+    }    
+    std::size_t expected = 1;
+    while(this->comm.q.size() > 0) {
+      auto req_request_id = append_entry_traits::request_id(boost::get<append_entry_arg_type>(this->comm.q.back()));
+      BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
+      BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(5).success(true).finish();
+      this->protocol->on_append_response(std::move(resp), this->now);
+      if (expected > 1) {
+        BOOST_TEST(called);
+        BOOST_TEST(messages_type::client_result_success() == cr);
+      } else {
+        BOOST_TEST(!called);
+      }
+      expected += 1;
+      this->comm.q.pop_back();
+    }
+  }  
+
+  void TestReadOnlyQueryUnknownCommitIndexOutOfDatePeers()
+  {
+    typedef typename messages_type::append_entry_traits_type append_entry_traits;
+    typedef typename _TestType::messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
+    typedef typename _TestType::builders_type::append_response_builder_type append_response_builder;
+    // Start out as follower and have the leader append some entries that are not known to be committed
+    uint64_t term = 1;
+    this->become_follower_with_vote_request(term);
+    this->send_noop(1, 1, 0, 0, 0);
+    this->send_open_session(1, 1, 1, 1, 0);
+    this->send_linearizable_command(1, 1, 1, 2, 1, 0, raft::slice::create("foo"));
+    this->send_linearizable_command(1, 1, 1, 3, 1, 0, raft::slice::create("bar"));
+    // Now we become leader (which is fine since we have all of the necessary log entries), but don't process the
+    // NOOP append entry responses.
+    this->make_leader(++term, false);
+    BOOST_TEST(0U == this->protocol->commit_index());
+    BOOST_TEST(this->comm.q.size() == 0);
+    // For this test, we assume that only the former leader had all of our log entries.
+    // That means we don't commit yet and have to send old entries (we do assume that the other peers got the noop from
+    // the old leader).
+    this->protocol->on_log_sync(5, this->now);
+    for(uint64_t p=1; p!=this->num_known_peers(); ++p) {
+      if (p == 1) {
+        auto resp = append_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(4).last_index(5).success(true).finish();
+        this->protocol->on_append_response(std::move(resp), this->now);
+      } else {
+        auto resp = append_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(1).last_index(1).success(false).finish();
+        this->protocol->on_append_response(std::move(resp), this->now);
+      }
+      BOOST_TEST(0U == this->protocol->commit_index());
+    }
+    BOOST_TEST(this->comm.q.size() == 0);
+    // Now a client submits a read only query which triggers heartbeats at a new request id
+    bool called = false;
+    client_result_type cr = messages_type::client_result_fail();
+    auto cb = [&cr, &called](client_result_type result) { cr = result; called = true; };
+    BOOST_TEST(0 == this->protocol->request_id());
+    this->protocol->async_linearizable_read_only_query_fence(std::move(cb), this->now);
+    BOOST_TEST(1 == this->protocol->request_id());
+    BOOST_TEST(!called);
+    BOOST_TEST(this->num_known_peers() == this->comm.q.size()+1);
+    std::size_t expected = 1;
+    while(this->comm.q.size() > 0) {
+      auto & msg (boost::get<append_entry_arg_type>(this->comm.q.back()));
+      auto req_request_id = append_entry_traits::request_id(msg);
+      BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
+      BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(msg));
+      BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::num_entries(msg));
+      if (expected == 1) {
+        auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(5).success(true).finish();
+        this->protocol->on_append_response(std::move(resp), this->now);
+      } else {
+        auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(1).success(true).finish();
+        this->protocol->on_append_response(std::move(resp), this->now);
+      }
+      BOOST_TEST(!called);
+      BOOST_TEST(0U == this->protocol->commit_index());
+      expected += 1;
+      this->comm.q.pop_back();
+    }
+    // Timer goes off and we resend append entries to finish commit
+    this->protocol->on_timer(this->now);
+    BOOST_TEST(3U == this->comm.q.size());
+    expected = 2;
+    while(this->comm.q.size() > 0) {
+      auto & msg (boost::get<append_entry_arg_type>(this->comm.q.back()));
+      auto req_request_id = append_entry_traits::request_id(msg);
+      BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
+      BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(msg));
+      BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(msg));
+      BOOST_CHECK_EQUAL(1U, append_entry_traits::previous_log_index(msg));
+      BOOST_CHECK_EQUAL(1U, append_entry_traits::previous_log_term(msg));
+      BOOST_CHECK_EQUAL(4U, append_entry_traits::num_entries(msg));
+      auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(2).last_index(5).success(true).finish();
+      this->protocol->on_append_response(std::move(resp), this->now);
+      BOOST_TEST(called);
+      BOOST_TEST(5U == this->protocol->commit_index());
+      expected += 1;
+      this->comm.q.pop_back();
+    }
+  }
+
+  void TestReadOnlyQueryUnknownCommitIndexOutOfDatePeersThenLoseLeadership()
+  {
+    typedef typename messages_type::append_entry_traits_type append_entry_traits;
+    typedef typename _TestType::messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
+    typedef typename _TestType::builders_type::append_response_builder_type append_response_builder;
+    // Start out as follower and have the leader append some entries that are not known to be committed
+    uint64_t term = 1;
+    this->become_follower_with_vote_request(term);
+    this->send_noop(1, 1, 0, 0, 0);
+    this->send_open_session(1, 1, 1, 1, 0);
+    this->send_linearizable_command(1, 1, 1, 2, 1, 0, raft::slice::create("foo"));
+    this->send_linearizable_command(1, 1, 1, 3, 1, 0, raft::slice::create("bar"));
+    // Now we become leader (which is fine since we have all of the necessary log entries), but don't process the
+    // NOOP append entry responses.
+    this->make_leader(++term, false);
+    BOOST_TEST(0U == this->protocol->commit_index());
+    BOOST_TEST(this->comm.q.size() == 0);
+    // For this test, we assume that only the former leader had all of our log entries.
+    // That means we don't commit yet and have to send old entries (we do assume that the other peers got the noop from
+    // the old leader).   In this variant, we lose leadership while trying to bring peers up to date.
+    this->protocol->on_log_sync(5, this->now);
+    for(uint64_t p=1; p!=this->num_known_peers(); ++p) {
+      if (p == 1) {
+        auto resp = append_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(4).last_index(5).success(true).finish();
+        this->protocol->on_append_response(std::move(resp), this->now);
+      } else {
+        auto resp = append_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(1).last_index(1).success(false).finish();
+        this->protocol->on_append_response(std::move(resp), this->now);
+      }
+      BOOST_TEST(0U == this->protocol->commit_index());
+    }
+    BOOST_TEST(this->comm.q.size() == 0);
+    // Now a client submits a read only query which triggers heartbeats at a new request id
+    bool called = false;
+    client_result_type cr = messages_type::client_result_fail();
+    auto cb = [&cr, &called](client_result_type result) { cr = result; called = true; };
+    BOOST_TEST(0 == this->protocol->request_id());
+    this->protocol->async_linearizable_read_only_query_fence(std::move(cb), this->now);
+    BOOST_TEST(1 == this->protocol->request_id());
+    BOOST_TEST(!called);
+    BOOST_TEST(this->num_known_peers() == this->comm.q.size()+1);
+    std::size_t expected = 1;
+    while(this->comm.q.size() > 0) {
+      auto & msg (boost::get<append_entry_arg_type>(this->comm.q.back()));
+      auto req_request_id = append_entry_traits::request_id(msg);
+      BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
+      BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(msg));
+      BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_traits::num_entries(msg));
+      if (expected == 1) {
+        auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(5).success(true).finish();
+        this->protocol->on_append_response(std::move(resp), this->now);
+      } else {
+        auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(1).success(true).finish();
+        this->protocol->on_append_response(std::move(resp), this->now);
+      }
+      BOOST_TEST(!called);
+      BOOST_TEST(0U == this->protocol->commit_index());
+      expected += 1;
+      this->comm.q.pop_back();
+    }
+    this->become_follower_with_vote_request(term+1, 5, term);
+    BOOST_TEST(called);
+    BOOST_TEST(cr == messages_type::client_result_not_leader());
+  }
 };
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TestLinearizableCommand, _TestType, test_types)
@@ -1500,3 +1957,38 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TestAsyncLinearizableCommand, _TestType, test_type
   t.TestAsyncLinearizableCommand();
 }
 
+BOOST_AUTO_TEST_CASE_TEMPLATE(TestReadOnlyQuery, _TestType, test_types)
+{
+  SessionManagerTestFixture<_TestType> t;
+  t.TestReadOnlyQuery();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TestAsyncReadOnlyQuery, _TestType, test_types)
+{
+  SessionManagerTestFixture<_TestType> t;
+  t.TestAsyncReadOnlyQuery();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TestReadOnlyQueryNoLongerLeader, _TestType, test_types)
+{
+  SessionManagerTestFixture<_TestType> t;
+  t.TestReadOnlyQueryNoLongerLeader();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TestReadOnlyQueryUnknownCommitIndex, _TestType, test_types)
+{
+  SessionManagerTestFixture<_TestType> t;
+  t.TestReadOnlyQueryUnknownCommitIndex();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TestReadOnlyQueryUnknownCommitIndexOutOfDatePeers, _TestType, test_types)
+{
+  SessionManagerTestFixture<_TestType> t;
+  t.TestReadOnlyQueryUnknownCommitIndexOutOfDatePeers();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TestReadOnlyQueryUnknownCommitIndexOutOfDatePeersThenLoseLeadership, _TestType, test_types)
+{
+  SessionManagerTestFixture<_TestType> t;
+  t.TestReadOnlyQueryUnknownCommitIndexOutOfDatePeersThenLoseLeadership();
+}

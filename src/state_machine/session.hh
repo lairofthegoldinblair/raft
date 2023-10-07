@@ -251,6 +251,7 @@ namespace raft {
         // Technically we could probably allow sessions to be opened or closed while a state machine command
         // but I don't think it is worth the risk.
         if (command_application_.is_outstanding()) {
+          BOOST_LOG_TRIVIAL(debug) << "[session_manager::apply] Log entry at " << idx << " cannot be applied because command is oustanding.";
           return;
         }
         auto log_term = log_entry_traits_type::term(le);
