@@ -1081,6 +1081,7 @@ public:
   }
   
   void vote_request(endpoint ep, const std::string & address,
+		    uint64_t request_id,
 		    uint64_t recipient_id,
 		    uint64_t term_number,
 		    uint64_t candidate_id,
@@ -1088,7 +1089,8 @@ public:
 		    uint64_t last_log_term)
   {
     raft::fbs::request_vote_sender<flatbuffer_test_communicator> sender(*this, ep, address);
-    sender.send(recipient_id,
+    sender.send(request_id,
+                recipient_id,
 		term_number,
 		candidate_id,
 		last_log_index,
@@ -1097,6 +1099,7 @@ public:
 
   template<typename EntryProvider>
   void append_entry(endpoint ep, const std::string& address,
+	    uint64_t request_id,
 	    uint64_t recipient_id,
 	    uint64_t term_number,
 	    uint64_t leader_id,
@@ -1107,7 +1110,8 @@ public:
 	    EntryProvider entries)
   {
     raft::fbs::append_entry_sender<flatbuffer_test_communicator> sender(*this, ep, address);
-    sender.send(recipient_id,
+    sender.send(request_id,
+                recipient_id,
 		term_number,
 		leader_id,
 		previous_log_index,
@@ -1121,25 +1125,28 @@ public:
 			     uint64_t recipient_id,
 			     uint64_t term_number,
 			     uint64_t request_term_number,
+			     uint64_t request_id,
 			     uint64_t begin_index,
 			     uint64_t last_index,
 			     bool success)
   {
     raft::fbs::append_entry_response_sender<flatbuffer_test_communicator> sender(*this, ep, address);
-    sender.send(recipient_id, term_number, request_term_number, begin_index, last_index, success);
+    sender.send(recipient_id, term_number, request_term_number, request_id, begin_index, last_index, success);
   }
 
   void vote_response(endpoint ep, const std::string& address,
 		     uint64_t peer_id,
 		     uint64_t term_number,
 		     uint64_t request_term_number,
+		     uint64_t request_id,
 		     bool granted)
   {
     raft::fbs::vote_response_sender<flatbuffer_test_communicator> sender(*this, ep, address);
-    sender.send(peer_id, term_number, request_term_number, granted);
+    sender.send(peer_id, term_number, request_term_number, request_id, granted);
   }
 
   void append_checkpoint_chunk(endpoint ep, const std::string& address,
+			       uint64_t request_id,
 			       uint64_t recipient_id,
 			       uint64_t term_number,
 			       uint64_t leader_id,
@@ -1155,6 +1162,7 @@ public:
 					uint64_t recipient_id,
 					uint64_t term_number,
 					uint64_t request_term_number,
+					uint64_t request_id,
 					uint64_t bytes_stored)
   {
     raft::fbs::append_checkpoint_chunk_response_sender<flatbuffer_test_communicator> sender(*this, ep, address);

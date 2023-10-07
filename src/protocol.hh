@@ -86,6 +86,8 @@ namespace raft {
     uint64_t end_index;
     // The term that the client request was part of
     uint64_t term;
+    // The request_id we are responding to
+    uint64_t request_id;
   };
 
   class append_checkpoint_chunk_response_continuation
@@ -94,6 +96,7 @@ namespace raft {
     uint64_t leader_id;
     uint64_t term_number;
     uint64_t request_term_number;
+    uint64_t request_id;
     uint64_t bytes_stored;
   };
 
@@ -103,6 +106,7 @@ namespace raft {
     uint64_t candidate_id;
     uint64_t term_number;
     uint64_t request_term_number;
+    uint64_t request_id;
     bool granted;
   };
 
@@ -190,6 +194,7 @@ namespace raft {
       auto req_checkpoint_done = acc::checkpoint_done(req);
       auto req_last_checkpoint_index = acc::last_checkpoint_index(req);
       auto req_leader_id = acc::leader_id(req);
+      auto req_request_id = acc::request_id(req);
       auto req_data = acc::data(req);
       auto req_checkpoint_begin = acc::checkpoint_begin(req);
       
@@ -220,6 +225,7 @@ namespace raft {
 	  append_checkpoint_chunk_response_continuation resp;
 	  resp.leader_id = req_leader_id;
 	  resp.term_number = resp.request_term_number = protocol()->current_term();
+          resp.request_id = req_request_id;
 	  resp.bytes_stored = current_checkpoint_->end();
 	  sync(resp);
         }
@@ -498,6 +504,14 @@ namespace raft {
     // The consistent cluster wide clock
     cluster_clock cluster_clock_;
 
+    // If LEADER, this is the request id to use for next request_vote, append_entry or append_checkpoint_chunk.
+    // It is not necessary to update this every time we send such a message, but only when we really
+    // want to know if the message has been ack'd by peers.
+    // For example, to do linearizable read only query, we need to know that we are the "current" leader
+    // so we send out heartbeats with an incremented request id and wait to get a quorum of responses
+    // with request id at least as large.
+    uint64_t request_id_;
+
     // Common log state
     log_type & log_;
 
@@ -615,7 +629,8 @@ namespace raft {
 	p.vote_ = boost::logic::indeterminate;
 	if (i != my_cluster_id()) {
 	  comm_.vote_request(p.peer_id, p.address,
-			     i,
+			     request_id_,
+                             i,
 			     current_term_,
 			     my_cluster_id(),
 			     last_log_entry_index(),
@@ -671,7 +686,7 @@ namespace raft {
 	  }
 
 	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	    " sending append_entry to peer " << i << "; last_log_entry_index()=" << last_log_entry_index() <<
+	    " sending append_entry to peer " << i << "; request_id=" << request_id_ << " last_log_entry_index()=" << last_log_entry_index() <<
 	    " peer.match_index=" << p.match_index_ << "; peer.next_index_=" << p.next_index_;
 
 	  // Are p.next_index_ and previous_log_index equal at this point?
@@ -681,7 +696,7 @@ namespace raft {
 
 	  // // TODO: For efficiency avoid sending actual data in messages unless p.is_next_index_reliable_ == true
 	  uint64_t log_entries_sent = (uint64_t) (last_log_entry_index() - p.next_index_);
-	  comm_.append_entry(p.peer_id, p.address, i, current_term_, my_cluster_id(), previous_log_index, previous_log_term,
+	  comm_.append_entry(p.peer_id, p.address, request_id_, i, current_term_, my_cluster_id(), previous_log_index, previous_log_term,
 			     std::min(last_committed_index_, previous_log_index+log_entries_sent),
 			     log_entries_sent,
 			     [this, &p](uint64_t i) -> const log_entry_type & {
@@ -698,8 +713,8 @@ namespace raft {
 	peer_type & p(*peer_it);
 	if (p.peer_id != my_cluster_id() && p.requires_heartbeat_ <= clock_now) {
 	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	    " sending empty append_entry to peer " << p.peer_id << " as heartbeat";
-	  comm_.append_entry(p.peer_id, p.address, p.peer_id, current_term_, my_cluster_id(), 0, 0,
+	    " sending empty append_entry to peer " << p.peer_id << " as heartbeat with request id " << request_id_;
+	  comm_.append_entry(p.peer_id, p.address, request_id_, p.peer_id, current_term_, my_cluster_id(), 0, 0,
 			     0,
 			     0,
 			     [this, &p](uint64_t i) {
@@ -742,6 +757,7 @@ namespace raft {
       p.checkpoint_->last_block_sent_ = p.checkpoint_->data_->block_at_offset(p.checkpoint_->checkpoint_next_byte_);
 
       comm_.append_checkpoint_chunk(peer_id, p.address,
+				    request_id_,
 				    peer_id,
 				    current_term_,
 				    my_cluster_id(),
@@ -893,6 +909,7 @@ namespace raft {
       typedef append_entry_traits_type ae;
       auto req_leader_id = ae::leader_id(req);
       auto req_term_number = ae::term_number(req);
+      auto req_id = ae::request_id(req);
 
       BOOST_LOG_TRIVIAL(trace) << "[internal_append_entry] Server(" << my_cluster_id() << ") at term " << current_term_
 			       << " processing append_entry from  Server(" << req_leader_id
@@ -929,6 +946,7 @@ namespace raft {
 				    my_cluster_id(),
 				    current_term_,
 				    req_term_number,
+                                    req_id,
 				    last_log_entry_index(),
 				    last_log_entry_index(),
 				    false);
@@ -949,6 +967,7 @@ namespace raft {
 				    my_cluster_id(),
 				    current_term_,
 				    req_term_number,
+                                    req_id,
 				    ae::previous_log_index(req),
 				    ae::previous_log_index(req),
 				    false);
@@ -1074,6 +1093,7 @@ namespace raft {
 	BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " last_synced_index_=" << last_synced_index_ <<
           ", waiting for log sync before sending append_entry response:  request_term_number=" << req_term_number <<
+	  " request_id=" << req_id <<
 	  " begin_index=" << entry_log_index <<
 	  " last_index=" << entry_end_index;
 	// Create a continuation for when the log is flushed to disk
@@ -1085,12 +1105,14 @@ namespace raft {
 	cont.begin_index = entry_log_index;
 	cont.end_index = entry_end_index;
 	cont.term = req_term_number;
+	cont.request_id = req_id;
 	append_entry_continuations_.insert(std::make_pair(cont.end_index, cont));
       } else {
 	// TODO: Can I respond to more than what was requested?  Possibly useful idea for pipelined append_entry
 	// requests in which we can sync the log once for multiple append_entries.
 	BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " sending append_entry response:  request_term_number=" << req_term_number <<
+	  " request_id=" << req_id <<
 	  " begin_index=" << entry_log_index <<
 	  " last_index=" << last_synced_index_ <<
           " success=true";
@@ -1098,6 +1120,7 @@ namespace raft {
 				    my_cluster_id(),
 				    current_term_,
 				    req_term_number,
+				    req_id,
 				    entry_log_index,
 				    last_synced_index_,
 				    true);
@@ -1131,6 +1154,7 @@ namespace raft {
       // details here for processing.
       auto req_checkpoint_done = acc::checkpoint_done(req);
       auto req_leader_id = acc::leader_id(req);
+      auto req_request_id = acc::request_id(req);
       
       auto ret = this->write_checkpoint_chunk(std::move(req));
 
@@ -1144,6 +1168,7 @@ namespace raft {
                                                my_cluster_id(),
                                                current_term_,
                                                current_term_,
+                                               req_request_id,
                                                ret.first);
       }
     }
@@ -1398,6 +1423,7 @@ namespace raft {
       last_synced_index_(0),
       last_applied_index_(0),
       cluster_clock_(now),
+      request_id_(0),
       configuration_(config_manager),
       send_vote_requests_(false)
     {
@@ -1621,6 +1647,7 @@ namespace raft {
 			    my_cluster_id(),
 			    current_term_,
 			    rv::term_number(req),
+			    rv::request_id(req),
 			    false);
 	return;
       }
@@ -1714,6 +1741,7 @@ namespace raft {
 	msg.candidate_id = rv::candidate_id(req);
 	msg.term_number = current_term_;
 	msg.request_term_number = rv::term_number(req);
+	msg.request_id = rv::request_id(req);
 	msg.granted = current_term_ == rv::term_number(req) && voted_for_ == &peer_from_id(rv::candidate_id(req));
 	vote_response_header_sync_continuations_.push_back(msg);
       } else {    
@@ -1721,6 +1749,7 @@ namespace raft {
 			    my_cluster_id(),
 			    current_term_,
 			    rv::term_number(req),
+			    rv::request_id(req),
 			    current_term_ == rv::term_number(req) && voted_for_ == &peer_from_id(rv::candidate_id(req)));
       }
     }
@@ -1760,8 +1789,10 @@ namespace raft {
 	    BOOST_ASSERT(!log_header_sync_required_);
 	    BOOST_ASSERT(current_term_ == vr::term_number(resp));
 	    BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	      " received vote " << vr::granted(resp) << " from peer " << vr::peer_id(resp);
+	      " received vote " << vr::granted(resp) << " from peer " << vr::peer_id(resp) <<
+              " in response to request_id " << vr::request_id(resp);
 	    peer_type & p(peer_from_id(vr::peer_id(resp)));
+            p.acknowledge_request_id(vr::request_id(resp));
 	    // TODO: What happens if we get multiple responses from the same peer
 	    // but with different votes?  Is that a protocol error????
 	    p.vote_ = vr::granted(resp);
@@ -1792,6 +1823,7 @@ namespace raft {
 				    my_cluster_id(),
 				    current_term_,
 				    ae::term_number(req),
+				    ae::request_id(req),
 				    last_log_entry_index(),
 				    last_log_entry_index(),
 				    false);
@@ -1886,6 +1918,7 @@ namespace raft {
         return;
       }
       peer_type & p(peer_from_id(ae::recipient_id(resp)));
+      p.acknowledge_request_id(ae::request_id(resp));
       if (ae::success(resp)) {
 	if (p.match_index_ > ae::last_index(resp)) {
 	  // TODO: This is unexpected if we don't pipeline append entries message,
@@ -1954,6 +1987,7 @@ namespace raft {
 					       my_cluster_id(),
 					       current_term_,
 					       acc::term_number(req),
+                                               acc::request_id(req),
 					       0);
 	return;
       }
@@ -2039,7 +2073,7 @@ namespace raft {
       }    
 
       peer_type & p(peer_from_id(acc::recipient_id(resp)));
-
+      p.acknowledge_request_id(acc::request_id(resp));
       if(!p.checkpoint_ || !p.checkpoint_->awaiting_ack_) {
 	BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	  " received unexpected append_checkpoint_chunk_message from peer " << acc::recipient_id(resp) <<
@@ -2086,6 +2120,7 @@ namespace raft {
 					my_cluster_id(),
 					current_term_,
 					it->second.term,
+                                        it->second.request_id,
 					it->second.begin_index,
 					it->second.end_index,
 					it->second.term == current_term_);
@@ -2126,6 +2161,7 @@ namespace raft {
 			    my_cluster_id(),
 			    vr.term_number,
 			    vr.request_term_number,
+                            vr.request_id,
 			    vr.granted);
       }
       vote_response_header_sync_continuations_.clear();
@@ -2249,6 +2285,7 @@ namespace raft {
                                              my_cluster_id(),
                                              resp.term_number,
                                              resp.request_term_number,
+                                             resp.request_id,
                                              resp.bytes_stored);
     }
   

@@ -242,6 +242,7 @@ public:
   }
   
   void vote_request(endpoint ep, const std::string & address,
+		    uint64_t request_id,
 		    uint64_t recipient_id,
 		    uint64_t term_number,
 		    uint64_t candidate_id,
@@ -249,6 +250,7 @@ public:
 		    uint64_t last_log_term)
   {
     typename _Messages::request_vote_type msg;
+    msg.request_id=request_id;
     msg.recipient_id=recipient_id;
     msg.term_number=term_number;
     msg.candidate_id=candidate_id;
@@ -259,6 +261,7 @@ public:
 
   template<typename EntryProvider>
   void append_entry(endpoint ep, const std::string& address,
+		    uint64_t request_id,
 		    uint64_t recipient_id,
 		    uint64_t term_number,
 		    uint64_t leader_id,
@@ -269,6 +272,7 @@ public:
 		    EntryProvider entries)
   {
     typename _Messages::append_entry_type msg;
+    msg.request_id=request_id;
     msg.set_recipient_id(recipient_id);
     msg.set_term_number(term_number);
     msg.set_leader_id(leader_id);
@@ -285,6 +289,7 @@ public:
 			     uint64_t recipient_id,
 			     uint64_t term_number,
 			     uint64_t request_term_number,
+                             uint64_t request_id,
 			     uint64_t begin_index,
 			     uint64_t last_index,
 			     bool success)
@@ -293,6 +298,7 @@ public:
     msg.recipient_id = recipient_id;
     msg.term_number = term_number;
     msg.request_term_number = request_term_number;
+    msg.request_id = request_id;
     msg.begin_index = begin_index;
     msg.last_index = last_index;
     msg.success = success;
@@ -303,17 +309,20 @@ public:
 		     uint64_t peer_id,
 		     uint64_t term_number,
 		     uint64_t request_term_number,
+                     uint64_t request_id,
 		     bool granted)
   {
     typename _Messages::vote_response_type msg;
     msg.peer_id = peer_id;
     msg.term_number = term_number;
     msg.request_term_number = request_term_number;
+    msg.request_id = request_id;
     msg.granted = granted;
     q.push_front(std::move(msg));
   }
 
   void append_checkpoint_chunk(endpoint ep, const std::string& address,
+                               uint64_t request_id,
 			       uint64_t recipient_id,
 			       uint64_t term_number,
 			       uint64_t leader_id,
@@ -324,6 +333,7 @@ public:
 			       raft::slice data)
   {
     typename _Messages::append_checkpoint_chunk_type msg;
+    msg.request_id=request_id;
     msg.recipient_id=recipient_id;
     msg.term_number=term_number;
     msg.leader_id=leader_id;
@@ -340,12 +350,14 @@ public:
 					uint64_t recipient_id,
 					uint64_t term_number,
 					uint64_t request_term_number,
+                                        uint64_t request_id,
 					uint64_t bytes_stored)
   {
     typename _Messages::append_checkpoint_chunk_response_type msg;    
     msg.recipient_id = recipient_id;
     msg.term_number = term_number;
     msg.request_term_number = request_term_number;
+    msg.request_id = request_id;
     msg.bytes_stored = bytes_stored;
     q.push_front(std::move(msg));
   }
@@ -386,18 +398,20 @@ public:
   }
   
   void vote_request(endpoint ep, const std::string & address,
+		    uint64_t request_id,
 		    uint64_t recipient_id,
 		    uint64_t term_number,
 		    uint64_t candidate_id,
 		    uint64_t last_log_index,
 		    uint64_t last_log_term)
   {
-    auto msg = request_vote_builder().recipient_id(recipient_id).term_number(term_number).candidate_id(candidate_id).last_log_index(last_log_index).last_log_term(last_log_term).finish();
+    auto msg = request_vote_builder().request_id(request_id).recipient_id(recipient_id).term_number(term_number).candidate_id(candidate_id).last_log_index(last_log_index).last_log_term(last_log_term).finish();
     send(ep, address, std::move(msg));	
   }
 
   template<typename EntryProvider>
   void append_entry(endpoint ep, const std::string& address,
+		    uint64_t request_id,
 		    uint64_t recipient_id,
 		    uint64_t term_number,
 		    uint64_t leader_id,
@@ -408,7 +422,7 @@ public:
 		    EntryProvider entries)
   {
     append_entry_builder bld;
-    bld.recipient_id(recipient_id).term_number(term_number).leader_id(leader_id).previous_log_index(previous_log_index).previous_log_term(previous_log_term).leader_commit_index(leader_commit_index);
+    bld.request_id(request_id).recipient_id(recipient_id).term_number(term_number).leader_id(leader_id).previous_log_index(previous_log_index).previous_log_term(previous_log_term).leader_commit_index(leader_commit_index);
     for(uint64_t i=0; i<num_entries; ++i) {
       bld.entry(entries(i));
     }
@@ -420,11 +434,12 @@ public:
 			     uint64_t recipient_id,
 			     uint64_t term_number,
 			     uint64_t request_term_number,
+			     uint64_t request_id,
 			     uint64_t begin_index,
 			     uint64_t last_index,
 			     bool success)
   {
-    auto msg = append_response_builder().recipient_id(recipient_id).term_number(term_number).request_term_number(request_term_number).begin_index(begin_index).last_index(last_index).success(success).finish();
+    auto msg = append_response_builder().recipient_id(recipient_id).term_number(term_number).request_term_number(request_term_number).request_id(request_id).begin_index(begin_index).last_index(last_index).success(success).finish();
     q.push_front(std::move(msg));
   }
 
@@ -432,13 +447,15 @@ public:
 		     uint64_t peer_id,
 		     uint64_t term_number,
 		     uint64_t request_term_number,
+		     uint64_t request_id,
 		     bool granted)
   {
-    auto msg = vote_response_builder().peer_id(peer_id).term_number(term_number).request_term_number(request_term_number).granted(granted).finish();
+    auto msg = vote_response_builder().peer_id(peer_id).term_number(term_number).request_term_number(request_term_number).request_id(request_id).granted(granted).finish();
     q.push_front(std::move(msg));
   }
 
   void append_checkpoint_chunk(endpoint ep, const std::string& address,
+			       uint64_t request_id,
 			       uint64_t recipient_id,
 			       uint64_t term_number,
 			       uint64_t leader_id,
@@ -449,7 +466,7 @@ public:
 			       raft::slice && data)
   {
     append_checkpoint_chunk_builder bld;
-    bld.recipient_id(recipient_id).term_number(term_number).leader_id(leader_id).checkpoint_begin(checkpoint_begin).checkpoint_end(checkpoint_end).checkpoint_done(checkpoint_done).data(std::move(data));
+    bld.request_id(request_id).recipient_id(recipient_id).term_number(term_number).leader_id(leader_id).checkpoint_begin(checkpoint_begin).checkpoint_end(checkpoint_end).checkpoint_done(checkpoint_done).data(std::move(data));
     {
       auto chb = bld.last_checkpoint_header();
       chb.last_log_entry_index(checkpoint_header_traits::last_log_entry_index(&last_checkpoint_header));
@@ -465,9 +482,10 @@ public:
 					uint64_t recipient_id,
 					uint64_t term_number,
 					uint64_t request_term_number,
+					uint64_t request_id,
 					uint64_t bytes_stored)
   {
-    auto msg = append_checkpoint_chunk_response_builder().recipient_id(recipient_id).term_number(term_number).request_term_number(request_term_number).bytes_stored(bytes_stored).finish();
+    auto msg = append_checkpoint_chunk_response_builder().recipient_id(recipient_id).term_number(term_number).request_term_number(request_term_number).request_id(request_id).bytes_stored(bytes_stored).finish();
     q.push_front(std::move(msg));
   }
 

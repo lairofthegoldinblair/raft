@@ -2030,7 +2030,8 @@ simple_configuration_description_builder to()
       }
 
       template<typename EntryProvider>
-      void send(uint64_t recipient_id,
+      void send(uint64_t request_id,
+                uint64_t recipient_id,
 		uint64_t term_number,
 		uint64_t leader_id,
 		uint64_t previous_log_index,
@@ -2055,6 +2056,7 @@ simple_configuration_description_builder to()
 	auto e = fbb->CreateVector(entries_vec);  
 	
 	raft::fbs::append_entryBuilder aeb(*fbb);
+	aeb.add_request_id(request_id);
 	aeb.add_recipient_id(recipient_id);
 	aeb.add_term_number(term_number);
 	aeb.add_leader_id(leader_id);
@@ -2089,14 +2091,15 @@ simple_configuration_description_builder to()
       {
       }
 
-      void send(uint64_t recipient_id,
+      void send(uint64_t request_id,
+                uint64_t recipient_id,
 		uint64_t term_number,
 		uint64_t candidate_id,
 		uint64_t last_log_index,
 		uint64_t last_log_term)
       {
 	request_vote_builder bld;
-	bld.recipient_id(recipient_id).term_number(term_number).candidate_id(candidate_id).last_log_index(last_log_index).last_log_term(last_log_term);
+	bld.request_id(request_id).recipient_id(recipient_id).term_number(term_number).candidate_id(candidate_id).last_log_index(last_log_index).last_log_term(last_log_term);
 	// Send on to communicator
 	comm_.send(ep_, address_, bld.finish());
       }
@@ -2122,10 +2125,11 @@ simple_configuration_description_builder to()
       void send(uint64_t peer_id,
 		uint64_t term_number,
 		uint64_t request_term_number,
+		uint64_t request_id,
 		bool granted)
       {
 	vote_response_builder bld;
-	bld.peer_id(peer_id).term_number(term_number).request_term_number(request_term_number).granted(granted);
+	bld.peer_id(peer_id).term_number(term_number).request_term_number(request_term_number).request_id(request_id).granted(granted);
 	comm_.send(ep_, address_, bld.finish());	
       }
     };
@@ -2150,6 +2154,7 @@ simple_configuration_description_builder to()
       void send(uint64_t recipient_id,
 		uint64_t term_number,
 		uint64_t request_term_number,
+		uint64_t request_id,
 		uint64_t begin_index,
 		uint64_t last_index,
 		bool success)
@@ -2159,6 +2164,7 @@ simple_configuration_description_builder to()
 	aeb.add_recipient_id(recipient_id);
 	aeb.add_term_number(term_number);
 	aeb.add_request_term_number(request_term_number);
+	aeb.add_request_id(request_id);
 	aeb.add_begin_index(begin_index);
 	aeb.add_last_index(last_index);
 	aeb.add_success(success);

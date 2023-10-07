@@ -58,6 +58,8 @@ namespace raft {
     uint64_t next_index_;
     // One past the index of last log entry known to be replicated to peer
     uint64_t match_index_;
+    // The last request_id this peer has acknowledged
+    uint64_t last_request_id_;
     // Vote we got from this peer.  boost::logic::indeterminate means we haven't heard back yet.
     boost::logic::tribool vote_;
     // Used only when LEADER; when does this peer need another heartbeat?
@@ -71,6 +73,12 @@ namespace raft {
     // State for tracking whether a peer that is newly added to a configuration tracking
     // log appends
     std::shared_ptr<configuration_change_type> configuration_change_;
+
+    void acknowledge_request_id(uint64_t request_id)
+    {
+      // TODO: Should we allow request id to go backwards?
+      last_request_id_ = request_id;
+    }
 
     void exit()
     {
