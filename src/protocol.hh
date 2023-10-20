@@ -673,7 +673,7 @@ namespace raft {
 	    // We have checkpointed a portion of the log the peer requires
 	    // we must send a checkpoint instead and then we can apply log entries.
 	    send_checkpoint_chunk(clock_now, i);
-	    return;
+	    continue;
 	  }
 
 	  // Last time we sent to the peer it was at this term
@@ -701,7 +701,7 @@ namespace raft {
 	    // In any case, sending checkpoint seems to be the right response as we can't determine the previously sent
 	    // term since the second checkpoint could be at a different term than the one that truncated up to p.next_index_.
 	    send_checkpoint_chunk(clock_now, i);
-	    return;
+	    continue;
 	  }
 
 	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
