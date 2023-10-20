@@ -415,7 +415,114 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAppendCheckpointChunkResponseSerializationTest
   BOOST_CHECK_EQUAL(236U, append_checkpoint_chunk_response_traits::bytes_stored(msg2));
 }
 
-BOOST_AUTO_TEST_CASE_TEMPLATE(RaftOpenSessionRequestSerializationTest, _TestType, test_types)
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftRequestVoteAsioSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::request_vote_traits_type request_vote_traits;
+  typedef typename _TestType::builders_type::request_vote_builder_type request_vote_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  
+  auto msg = request_vote_builder().recipient_id(99).term_number(1).candidate_id(887).request_id(192345).last_log_index(888542).last_log_term(16).finish();
+
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_CHECK_EQUAL(serialization_type::VOTE_REQUEST, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg2 = serialization_type::deserialize_request_vote(result.first[1], std::move(result.second));
+  BOOST_CHECK_EQUAL(99U, request_vote_traits::recipient_id(msg2));
+  BOOST_CHECK_EQUAL(1U, request_vote_traits::term_number(msg2));
+  BOOST_CHECK_EQUAL(887U, request_vote_traits::candidate_id(msg2));
+  BOOST_CHECK_EQUAL(192345U, request_vote_traits::request_id(msg2));
+  BOOST_CHECK_EQUAL(888542U, request_vote_traits::last_log_index(msg2));
+  BOOST_CHECK_EQUAL(16U, request_vote_traits::last_log_term(msg2));
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftVoteResponseAsioSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::vote_response_traits_type vote_response_traits;
+  typedef typename _TestType::builders_type::vote_response_builder_type vote_response_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  
+  auto msg = vote_response_builder().peer_id(1).term_number(1).request_term_number(1).request_id(192345).granted(false).finish();
+
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_CHECK_EQUAL(serialization_type::VOTE_RESPONSE, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg2 = serialization_type::deserialize_vote_response(result.first[1], std::move(result.second));
+  BOOST_CHECK_EQUAL(1U, vote_response_traits::peer_id(msg2));
+  BOOST_CHECK_EQUAL(1U, vote_response_traits::term_number(msg2));
+  BOOST_CHECK_EQUAL(1U, vote_response_traits::request_term_number(msg2));
+  BOOST_CHECK_EQUAL(192345U, vote_response_traits::request_id(msg2));
+  BOOST_CHECK(!vote_response_traits::granted(msg2));
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAppendEntryResponseAsioSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::append_entry_response_traits_type append_entry_response_traits;
+  typedef typename _TestType::builders_type::append_response_builder_type append_response_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  
+  auto msg = append_response_builder().recipient_id(222).term_number(10).request_term_number(1).request_id(192345).begin_index(236).last_index(851).success(false).finish();
+
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_CHECK_EQUAL(serialization_type::APPEND_ENTRY_RESPONSE, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg2 = serialization_type::deserialize_append_entry_response(result.first[1], std::move(result.second));
+  BOOST_CHECK_EQUAL(222U, append_entry_response_traits::recipient_id(msg2));
+  BOOST_CHECK_EQUAL(10U, append_entry_response_traits::term_number(msg2));
+  BOOST_CHECK_EQUAL(1U, append_entry_response_traits::request_term_number(msg2));
+  BOOST_CHECK_EQUAL(192345U, append_entry_response_traits::request_id(msg2));
+  BOOST_CHECK_EQUAL(236U, append_entry_response_traits::begin_index(msg2));
+  BOOST_CHECK_EQUAL(851U, append_entry_response_traits::last_index(msg2));
+  BOOST_CHECK(!append_entry_response_traits::success(msg2));
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAppendCheckpointChunkAsioSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::append_checkpoint_chunk_traits_type append_checkpoint_chunk_traits;
+  typedef typename _TestType::builders_type::append_checkpoint_chunk_builder_type append_checkpoint_chunk_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+
+  std::string data_str("This is some checkpoint chunk data");
+  auto msg = append_checkpoint_chunk_builder().recipient_id(222).term_number(10).leader_id(1).request_id(192345).checkpoint_begin(236).checkpoint_end(8643).data(raft::slice::create(data_str)).checkpoint_done(false).finish();
+
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_CHECK_EQUAL(serialization_type::APPEND_CHECKPOINT_CHUNK_REQUEST, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg2 = serialization_type::deserialize_append_checkpoint_chunk(result.first[1], std::move(result.second));
+  BOOST_CHECK_EQUAL(222U, append_checkpoint_chunk_traits::recipient_id(msg2));
+  BOOST_CHECK_EQUAL(10U, append_checkpoint_chunk_traits::term_number(msg2));
+  BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::leader_id(msg2));
+  BOOST_CHECK_EQUAL(192345U, append_checkpoint_chunk_traits::request_id(msg2));
+  BOOST_CHECK_EQUAL(236U, append_checkpoint_chunk_traits::checkpoint_begin(msg2));
+  BOOST_CHECK_EQUAL(8643U, append_checkpoint_chunk_traits::checkpoint_end(msg2));
+  BOOST_CHECK_EQUAL(0, string_slice_compare(data_str, append_checkpoint_chunk_traits::data(msg2)));
+  BOOST_CHECK(!append_checkpoint_chunk_traits::checkpoint_done(msg2));
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAppendCheckpointChunkResponseAsioSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::append_checkpoint_chunk_response_traits_type append_checkpoint_chunk_response_traits;
+  typedef typename _TestType::builders_type::append_checkpoint_chunk_response_builder_type append_checkpoint_chunk_response_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  
+  auto msg = append_checkpoint_chunk_response_builder().recipient_id(222).term_number(10).request_term_number(1).request_id(192345).bytes_stored(236).finish();
+
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_CHECK_EQUAL(serialization_type::APPEND_CHECKPOINT_CHUNK_RESPONSE, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg2 = serialization_type::deserialize_append_checkpoint_chunk_response(result.first[1], std::move(result.second));
+  BOOST_CHECK_EQUAL(222U, append_checkpoint_chunk_response_traits::recipient_id(msg2));
+  BOOST_CHECK_EQUAL(10U, append_checkpoint_chunk_response_traits::term_number(msg2));
+  BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_response_traits::request_term_number(msg2));
+  BOOST_CHECK_EQUAL(192345U, append_checkpoint_chunk_response_traits::request_id(msg2));
+  BOOST_CHECK_EQUAL(236U, append_checkpoint_chunk_response_traits::bytes_stored(msg2));
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftOpenSessionRequestAsioSerializationTest, _TestType, test_types)
 {
   typedef typename _TestType::builders_type::open_session_request_builder_type open_session_builder;
   typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
@@ -430,7 +537,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftOpenSessionRequestSerializationTest, _TestType
   auto msg1 = serialization_type::deserialize_open_session_request(result.first[1], std::move(result.second));
 }
 
-BOOST_AUTO_TEST_CASE_TEMPLATE(RaftOpenSessionResponseSerializationTest, _TestType, test_types)
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftOpenSessionResponseAsioSerializationTest, _TestType, test_types)
 {
   typedef typename _TestType::messages_type::open_session_response_traits_type open_session_response_traits;
   typedef typename _TestType::builders_type::open_session_response_builder_type open_session_builder;
@@ -447,7 +554,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftOpenSessionResponseSerializationTest, _TestTyp
   BOOST_CHECK_EQUAL(9975314U, open_session_response_traits::session_id(msg1));
 }
 
-BOOST_AUTO_TEST_CASE_TEMPLATE(RaftCloseSessionRequestSerializationTest, _TestType, test_types)
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftCloseSessionRequestAsioSerializationTest, _TestType, test_types)
 {
   typedef typename _TestType::messages_type::close_session_request_traits_type close_session_request_traits;
   typedef typename _TestType::builders_type::close_session_request_builder_type close_session_builder;
@@ -464,7 +571,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftCloseSessionRequestSerializationTest, _TestTyp
   BOOST_CHECK_EQUAL(8886234U, close_session_request_traits::session_id(msg1));
 }
 
-BOOST_AUTO_TEST_CASE_TEMPLATE(RaftCloseSessionResponseSerializationTest, _TestType, test_types)
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftCloseSessionResponseAsioSerializationTest, _TestType, test_types)
 {
   typedef typename _TestType::builders_type::close_session_response_builder_type close_session_builder;
   typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
@@ -479,7 +586,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftCloseSessionResponseSerializationTest, _TestTy
   auto msg1 = serialization_type::deserialize_close_session_response(result.first[1], std::move(result.second));
 }
 
-BOOST_AUTO_TEST_CASE_TEMPLATE(RaftLinearizableCommandSerializationTest, _TestType, test_types)
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftLinearizableCommandAsioSerializationTest, _TestType, test_types)
 {
   typedef typename _TestType::messages_type::linearizable_command_traits_type linearizable_command_traits;
   typedef typename _TestType::builders_type::linearizable_command_builder_type linearizable_command_builder;
@@ -500,7 +607,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftLinearizableCommandSerializationTest, _TestTyp
   BOOST_CHECK_EQUAL(0, string_slice_compare(command_str, linearizable_command_traits::command(msg1)));
 }
 
-BOOST_AUTO_TEST_CASE_TEMPLATE(RaftClientResponseSerializationTest, _TestType, test_types)
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftClientResponseAsioSerializationTest, _TestType, test_types)
 {
   typedef typename _TestType::messages_type::client_response_traits_type client_response_traits;
   typedef typename _TestType::builders_type::client_response_builder_type client_response_builder;
@@ -606,6 +713,8 @@ struct logger
   typedef typename messages_type::linearizable_command_traits_type linearizable_command_traits_type;
   typedef typename messages_type::log_entry_command_traits_type log_entry_command_traits_type;
   typedef typename serialization_type::log_entry_command_view_deserialization_type log_entry_command_view_deserialization_type;
+  typedef raft::checkpoint_data_store<messages_type> checkpoint_data_store_type;
+  typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
   struct continuation
   {
     log_entry_command_view_deserialization_type cmd;
@@ -621,6 +730,12 @@ struct logger
   };
   std::vector<std::string> commands;
   std::unique_ptr<continuation> cont;
+  std::vector<uint8_t> checkpoint_buffer_;
+  enum checkpoint_restore_state { START, READ_COMMANDS_SIZE, READ_COMMAND_SIZE, READ_COMMAND };
+  checkpoint_restore_state state_;
+  raft::slice checkpoint_slice_;
+  std::size_t checkpoint_commands_size_;
+  std::size_t checkpoint_command_size_;
   bool async = false;
   void complete()
   {
@@ -642,6 +757,102 @@ struct logger
     cont = std::make_unique<continuation>(std::move(cmd), std::move(cb));
     if (!async) {
       complete();
+    }
+  }
+  void checkpoint(checkpoint_data_ptr ckpt)
+  {
+    boost::endian::little_uint32_t sz = commands.size();
+    ckpt->write(reinterpret_cast<const uint8_t *>(&sz), sizeof(boost::endian::little_uint32_t));    
+    for(auto & c : commands) {
+      sz = c.size();
+      ckpt->write(reinterpret_cast<const uint8_t *>(&sz), sizeof(boost::endian::little_uint32_t));
+      ckpt->write(reinterpret_cast<const uint8_t *>(c.c_str()), c.size());
+    }
+  }
+  void restore_checkpoint_block(raft::slice && s, bool is_final)
+  {
+    if (nullptr == s.data()) {
+      state_ = START;
+    }
+    checkpoint_slice_ = std::move(s);
+
+    switch(state_) {
+    case START:
+      commands.resize(0);
+      if (1024 > checkpoint_buffer_.capacity()) {
+        checkpoint_buffer_.reserve(1024);
+      }
+      checkpoint_buffer_.resize(0);
+      while (true) {
+        if (0 == checkpoint_slice_.size()) {
+          state_ = READ_COMMANDS_SIZE;
+          return;
+        case READ_COMMANDS_SIZE:
+          ;
+        }
+        BOOST_ASSERT(0 < checkpoint_slice_.size());
+        if (0 == checkpoint_buffer_.size() && s.size() >= sizeof(boost::endian::little_uint32_t)) {
+          checkpoint_commands_size_ = *reinterpret_cast<const boost::endian::little_uint32_t *>(checkpoint_slice_.data());
+          checkpoint_slice_ += sizeof(boost::endian::little_uint32_t);
+          break;
+        } else {
+          std::size_t to_insert = sizeof(boost::endian::little_uint32_t) > checkpoint_buffer_.size() ? sizeof(boost::endian::little_uint32_t) - checkpoint_buffer_.size() : 0;
+          to_insert = to_insert > checkpoint_slice_.size() ? checkpoint_slice_.size() : to_insert;
+          auto begin = reinterpret_cast<const uint8_t *>(checkpoint_slice_.data());
+          auto end = begin + to_insert;
+          checkpoint_buffer_.insert(checkpoint_buffer_.end(), begin, end);
+          checkpoint_slice_ += to_insert;
+          if (checkpoint_buffer_.size() >= sizeof(boost::endian::little_uint32_t)) {
+            checkpoint_commands_size_ = *reinterpret_cast<const boost::endian::little_uint32_t *>(&checkpoint_buffer_[0]);
+            checkpoint_buffer_.resize(0);
+            break;
+          }
+        }
+      }
+      while(commands.size() < checkpoint_commands_size_) {
+        while (true) {
+          if (0 == checkpoint_slice_.size()) {
+            state_ = READ_COMMAND_SIZE;
+            return;
+          case READ_COMMAND_SIZE:
+            ;
+          }
+          BOOST_ASSERT(0 < checkpoint_slice_.size());
+          if (0 == checkpoint_buffer_.size() && s.size() >= sizeof(boost::endian::little_uint32_t)) {
+            checkpoint_command_size_ = *reinterpret_cast<const boost::endian::little_uint32_t *>(checkpoint_slice_.data());
+            checkpoint_slice_ += sizeof(boost::endian::little_uint32_t);
+            break;
+          } else {
+            std::size_t to_insert = sizeof(boost::endian::little_uint32_t) > checkpoint_buffer_.size() ? sizeof(boost::endian::little_uint32_t) - checkpoint_buffer_.size() : 0;
+            to_insert = to_insert > checkpoint_slice_.size() ? checkpoint_slice_.size() : to_insert;
+            auto begin = reinterpret_cast<const uint8_t *>(checkpoint_slice_.data());
+            auto end = begin + to_insert;
+            checkpoint_buffer_.insert(checkpoint_buffer_.end(), begin, end);
+            checkpoint_slice_ += to_insert;
+            if (checkpoint_buffer_.size() >= sizeof(boost::endian::little_uint32_t)) {
+              checkpoint_command_size_ = *reinterpret_cast<const boost::endian::little_uint32_t *>(&checkpoint_buffer_[0]);
+              checkpoint_buffer_.resize(0);
+              break;
+            }
+          }
+        }
+        commands.push_back(std::string());
+        while(commands.back().size() < checkpoint_command_size_) {
+          if (0 == checkpoint_slice_.size()) {
+            state_ = READ_COMMAND;
+            return;
+          case READ_COMMAND:
+            ;
+          }
+          std::size_t to_append =  checkpoint_command_size_ - commands.back().size();
+          to_append = to_append > checkpoint_slice_.size() ? checkpoint_slice_.size() : to_append;
+          commands.back().append(reinterpret_cast<const char *>(checkpoint_slice_.data()), to_append);
+          checkpoint_slice_ += to_append;
+        }
+        if (commands.size() == checkpoint_commands_size_ && !is_final) {
+          throw std::runtime_error("INVALID CHECKPOINT");
+        }
+      }
     }
   }
 };

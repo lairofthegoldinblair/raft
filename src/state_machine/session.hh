@@ -5,7 +5,9 @@
 #include <map>
 #include <memory>
 #include <tuple>
+#include <vector>
 
+#include "boost/endian/arithmetic.hpp"
 #include <boost/log/trivial.hpp>
 
 namespace raft {
@@ -18,6 +20,7 @@ namespace raft {
       typedef typename messages_type::client_response_traits_type::arg_type client_response_arg_type;
       typedef typename messages_type::linearizable_command_traits_type linearizable_command_traits_type;
       typedef typename messages_type::linearizable_command_traits_type::const_view_type linearizable_command_const_view_type;
+
     private:
 
       // For timeout of session, the last cluster time of a command we've received
@@ -84,8 +87,78 @@ namespace raft {
         auto it = memo_.find(sequence_number);
         return it != memo_.end() ? raft::slice(reinterpret_cast<const uint8_t *>(it->second.first.data()), it->second.first.size()) : raft::slice();
       }
+
+      static std::size_t serialize_helper(const std::pair<const uint64_t, std::unique_ptr<client_session_state>> & s);
+      static std::size_t serialize_helper(raft::mutable_slice && b, const std::pair<const uint64_t, std::unique_ptr<client_session_state>> & s);
+      static std::size_t deserialize_helper(raft::slice && b, std::pair<uint64_t, std::unique_ptr<client_session_state>> & s);
     };
 
+    template<typename _Messages>
+    std::size_t client_session_state<_Messages>::serialize_helper(const std::pair<const uint64_t, std::unique_ptr<client_session_state<_Messages>>> & s)
+    {
+      std::size_t sz = 0;
+      sz += sizeof(boost::endian::little_uint64_t);
+      sz += sizeof(boost::endian::little_uint64_t);
+      sz += sizeof(boost::endian::little_uint64_t);
+      sz += sizeof(boost::endian::little_uint64_t);
+      for(auto & m : s.second->memo_) {
+        sz += sizeof(boost::endian::little_uint64_t);
+        sz += sizeof(boost::endian::little_uint64_t);
+        sz += m.second.first.size();
+      }
+      return sz;
+    }
+    
+    template<typename _Messages>
+    std::size_t client_session_state<_Messages>::serialize_helper(raft::mutable_slice && b, const std::pair<const uint64_t, std::unique_ptr<client_session_state<_Messages>>> & s)
+    {
+      std::size_t sz = 0;
+      *reinterpret_cast<boost::endian::little_uint64_t *>((b+sz).data()) = s.first;
+      sz += sizeof(boost::endian::little_uint64_t);
+      *reinterpret_cast<boost::endian::little_uint64_t *>((b+sz).data()) = s.second->last_command_received_cluster_time_;
+      sz += sizeof(boost::endian::little_uint64_t);
+      *reinterpret_cast<boost::endian::little_uint64_t *>((b+sz).data()) = s.second->first_unacknowledged_sequence_number_;
+      sz += sizeof(boost::endian::little_uint64_t);
+      *reinterpret_cast<boost::endian::little_uint64_t *>((b+sz).data()) = s.second->memo_.size();
+      sz += sizeof(boost::endian::little_uint64_t);
+      for(auto & m : s.second->memo_) {
+        *reinterpret_cast<boost::endian::little_uint64_t *>((b+sz).data()) = m.first;
+        sz += sizeof(boost::endian::little_uint64_t);
+        *reinterpret_cast<boost::endian::little_uint64_t *>((b+sz).data()) = m.second.first.size();
+        sz += sizeof(boost::endian::little_uint64_t);
+        ::memcpy((b+sz).data(), m.second.first.data(), m.second.first.size());
+        sz += m.second.first.size();
+      }
+      return sz;
+    }
+    
+    template<typename _Messages>
+    std::size_t client_session_state<_Messages>::deserialize_helper(raft::slice && b, std::pair<uint64_t, std::unique_ptr<client_session_state<_Messages>>> & s)
+    {
+      std::size_t sz = 0;
+      s.first = *reinterpret_cast<const boost::endian::little_uint64_t *>((b+sz).data());
+      sz += sizeof(boost::endian::little_uint64_t);
+      s.second.reset(new client_session_state<_Messages>(0));
+      s.second->last_command_received_cluster_time_ = *reinterpret_cast<const boost::endian::little_uint64_t *>((b+sz).data());
+      sz += sizeof(boost::endian::little_uint64_t);
+      s.second->first_unacknowledged_sequence_number_ =  *reinterpret_cast<const boost::endian::little_uint64_t *>((b+sz).data());
+      sz += sizeof(boost::endian::little_uint64_t);
+      std::size_t memo_sz =  *reinterpret_cast<const boost::endian::little_uint64_t *>((b+sz).data());
+      sz += sizeof(boost::endian::little_uint64_t);
+      for(std::size_t i=0 ; i<memo_sz; ++i) {
+        uint64_t id = *reinterpret_cast<const boost::endian::little_uint64_t *>((b+sz).data());
+        sz += sizeof(boost::endian::little_uint64_t);
+        std::size_t buf_sz = *reinterpret_cast<const boost::endian::little_uint64_t *>((b+sz).data());
+        sz += sizeof(boost::endian::little_uint64_t);
+        uint8_t * buf = new uint8_t [buf_sz];        
+        ::memcpy(buf, (b+sz).data(), buf_sz);
+        sz += buf_sz;
+        raft::util::call_on_delete deleter = [buf] () { delete [] buf; };
+        s.second->memo_[id] = std::make_pair(raft::slice(buf, buf_sz), std::move(deleter));
+      }
+      return sz;      
+    }
+    
     template<typename _Messages, typename _Builders, typename _Serialization, typename _Protocol, typename _Communicator, typename _StateMachine>
     class client_session_manager
     {
@@ -176,6 +249,8 @@ namespace raft {
         }
       };
       command_application_state command_application_;
+      std::vector<uint8_t> checkpoint_buffer_;
+      bool checkpoint_in_progress_ = false;
 
       void expire_sessions(uint64_t cluster_time)
       {
@@ -183,6 +258,9 @@ namespace raft {
           uint64_t expired = session_timeout_nanos_ < cluster_time ? cluster_time - session_timeout_nanos_ : 0U;
           if (it->second->last_command_received_cluster_time() < expired &&
               (!command_application_.is_outstanding() || command_application_.session_id() != it->first)) {
+            BOOST_LOG_TRIVIAL(info) << "[session_manager::expire_sessions] Expiring session with id " << it->first
+                                    << " last command received " << std::chrono::duration_cast<std::chrono::seconds>(std::chrono::nanoseconds(cluster_time - it->second->last_command_received_cluster_time())).count()
+                                    << " seconds ago.";
             it = sessions_.erase(it);
           } else {
             ++it;
@@ -252,6 +330,10 @@ namespace raft {
         // but I don't think it is worth the risk.
         if (command_application_.is_outstanding()) {
           BOOST_LOG_TRIVIAL(debug) << "[session_manager::apply] Log entry at " << idx << " cannot be applied because command is oustanding.";
+          return;
+        }
+        if (checkpoint_in_progress_) {
+          BOOST_LOG_TRIVIAL(debug) << "[session_manager::apply] Log entry at " << idx << " cannot be applied because checkpoint is in progress.";
           return;
         }
         auto log_term = log_entry_traits_type::term(le);
@@ -390,6 +472,99 @@ namespace raft {
         }
       }
 
+      void on_protocol_state_change(typename protocol_type::state s, uint64_t current_term)
+      {
+        BOOST_ASSERT(s == protocol_.get_state());
+        BOOST_ASSERT(current_term == protocol_.current_term());
+
+        // Cancel all outstanding requests
+        if (s != protocol_type::LEADER) {
+          for (auto & r : open_session_responses_) {
+            BOOST_LOG_TRIVIAL(info) << "[session_manager::on_protocol_state_change] Protocol lost leadership, responding to open_session request"
+                                    << " at index " << r.first << " to endpoint " << r.second.first;
+            auto resp = open_session_response_builder().session_id(0).finish();
+            comm_.send_open_session_response(std::move(resp), r.second.first);
+          }
+          for (auto & r : close_session_responses_) {
+            BOOST_LOG_TRIVIAL(info) << "[session_manager::on_protocol_state_change] Protocol lost leadership, responding to close_session request"
+                                    << " at index " << r.first << " to endpoint " << r.second.first;
+            auto resp = close_session_response_builder().finish();
+            comm_.send_close_session_response(std::move(resp), r.second.first);
+          }
+          for (auto & r : client_responses_) {
+            BOOST_LOG_TRIVIAL(info) << "[session_manager::on_protocol_state_change] Protocol lost leadership, responding to send_command request"
+                                    << " at index " << r.first << " to endpoint " << r.second.first;
+            auto resp = client_response_builder().result(messages_type::client_result_not_leader()).index(0).leader_id(protocol_.leader_id()).finish();
+            comm_.send_client_response(std::move(resp), r.second.first);
+          }
+        }
+      }
+      
+      // This is a blocking implementation of checkpointing
+      void on_checkpoint_request(std::chrono::time_point<std::chrono::steady_clock> clock_now)
+      {
+        // TODO: We need to wait for any state machine applications to complete.
+        // Block processing of any state machine commands
+        checkpoint_in_progress_ = true;
+        auto ckpt = protocol_.begin_checkpoint(protocol_.applied_index());
+        // TODO: Externalize the serialization of session checkpoint state.
+        auto sz = serialize_helper(*this);
+        // Make it easier to deserialize safely by writing the size
+        boost::endian::little_uint64_t little_sz = sz;
+        ckpt->write(reinterpret_cast<const uint8_t *>(&little_sz), sizeof(boost::endian::little_uint64_t));
+        std::vector<uint8_t> tmp(sz);
+        serialize_helper(raft::mutable_slice(&tmp[0], sz), *this);
+        ckpt->write(&tmp[0], sz);
+        // Synchronous call to state machine to checkpoint.
+        state_machine_.checkpoint(ckpt);
+        protocol_.complete_checkpoint(ckpt);
+        checkpoint_in_progress_ = false;
+      }
+
+      std::size_t checkpoint_session_buffer_size() const
+      {
+        return checkpoint_buffer_.size() >= sizeof(boost::endian::little_uint64_t) ?
+          *reinterpret_cast<const boost::endian::little_uint64_t *>(&checkpoint_buffer_[0]) + sizeof(boost::endian::little_uint64_t) :
+          std::numeric_limits<std::size_t>::max();
+      }
+
+      bool checkpoint_buffer_has_all_session_data() const
+      {
+        return checkpoint_session_buffer_size() <= checkpoint_buffer_.size();
+      }
+
+      void restore_checkpoint_block(raft::slice && b, bool is_final)
+      {
+        if (nullptr == b.data()) {
+          sessions_.clear();
+          if (1024 > checkpoint_buffer_.capacity()) {
+            checkpoint_buffer_.reserve(1024);
+          }
+          checkpoint_buffer_.resize(0);
+          // Clear the state machine
+          state_machine_.restore_checkpoint_block(raft::slice(nullptr, 0), false);
+        } else {
+          bool sessions_restored = checkpoint_buffer_has_all_session_data();
+          if (!sessions_restored) {
+            auto begin = reinterpret_cast<const uint8_t *>(b.data());
+            auto end = begin + b.size();
+            checkpoint_buffer_.insert(checkpoint_buffer_.end(), begin, end);
+            if (checkpoint_buffer_has_all_session_data()) {
+              std::size_t sz = *reinterpret_cast<const boost::endian::little_uint64_t *>(&checkpoint_buffer_[0]);
+              deserialize_helper(raft::slice(&checkpoint_buffer_[sizeof(boost::endian::little_uint64_t)], sz), *this);
+              if (checkpoint_buffer_.size() > checkpoint_session_buffer_size()) {
+                // Send the remainder of to the state machine
+                state_machine_.restore_checkpoint_block(raft::slice(&checkpoint_buffer_[checkpoint_session_buffer_size()], checkpoint_buffer_.size() - checkpoint_session_buffer_size()), is_final);
+              }
+            }
+          } else {
+            // Session state is restored everything else is bound for the state machine
+            // If this is the first data to be sent to the state machine clear it first
+            state_machine_.restore_checkpoint_block(std::move(b), is_final);
+          }
+        }
+      }
+
       client_session_manager(protocol_type & protocol, communicator_type & comm, state_machine_type & state_machine)
         :
         protocol_(protocol),
@@ -406,6 +581,42 @@ namespace raft {
       std::size_t size() const
       {
         return sessions_.size();
+      }
+
+      static std::size_t serialize_helper(const client_session_manager & s)
+      {
+        std::size_t sz = 0;
+        sz += sizeof(boost::endian::little_uint64_t);
+        for(const std::pair<const uint64_t, std::unique_ptr<client_session_type>> & s : s.sessions_) {
+          sz += client_session_type::serialize_helper(s);
+        }
+        return sz;
+      }
+      
+      static std::size_t serialize_helper(raft::mutable_slice && b, const client_session_manager & s)
+      {
+        std::size_t sz = 0;
+        if (nullptr != b.data()) {
+          *reinterpret_cast<boost::endian::little_uint64_t *>((b+sz).data()) = s.sessions_.size();
+        }
+        sz += sizeof(boost::endian::little_uint64_t);
+        for(const std::pair<const uint64_t, std::unique_ptr<client_session_type>> & s : s.sessions_) {
+          sz += client_session_type::serialize_helper((b+sz), s);
+        }
+        return sz;
+      }
+      
+      static std::size_t deserialize_helper(raft::slice && b, client_session_manager & s)
+      {
+        std::size_t sz = 0;
+        std::size_t num_sessions = *reinterpret_cast<const boost::endian::little_uint64_t *>((b+sz).data());
+        sz += sizeof(boost::endian::little_uint64_t);
+        for(std::size_t i=0; i<num_sessions; ++i) {
+          std::pair<uint64_t, std::unique_ptr<client_session_type>> tmp;
+          sz += client_session_type::deserialize_helper((b+sz), tmp);
+          s.sessions_.insert(std::move(tmp));
+        }
+        return sz;
       }
     };
   }

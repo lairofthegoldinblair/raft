@@ -125,6 +125,8 @@ struct protocol_mock
   typedef typename log_type::index_type log_index_type;
   typedef typename std::function<void(log_entry_const_arg_type, uint64_t, std::size_t)> response_type;
 
+  enum state { LEADER, FOLLOWER, CANDIDATE };
+
   uint64_t last_applied_index_=0;
   // Last committed index is ALWAYS equal to log.last_index()
   uint64_t last_committed_index_=0;
@@ -210,6 +212,9 @@ struct logger
   typedef typename messages_type::linearizable_command_traits_type linearizable_command_traits_type;
   typedef typename messages_type::log_entry_command_traits_type log_entry_command_traits_type;
   typedef typename serialization_type::log_entry_command_view_deserialization_type log_entry_command_view_deserialization_type;
+  typedef raft::checkpoint_data_store<messages_type> checkpoint_data_store_type;
+  typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
+
   struct continuation
   {
     log_entry_command_view_deserialization_type cmd;
@@ -225,6 +230,13 @@ struct logger
   };
   std::vector<std::string> commands;
   std::unique_ptr<continuation> cont;
+  std::vector<uint8_t> checkpoint_buffer_;
+  enum checkpoint_restore_state { START, READ_COMMANDS_SIZE, READ_COMMAND_SIZE, READ_COMMAND };
+  checkpoint_restore_state state_;
+  raft::slice checkpoint_slice_;
+  std::size_t checkpoint_commands_size_;
+  std::size_t checkpoint_command_size_;
+  
   bool async = false;
   void complete()
   {
@@ -248,6 +260,102 @@ struct logger
     cont = std::make_unique<continuation>(std::move(cmd), std::move(cb));
     if (!async) {
       complete();
+    }
+  }
+  void checkpoint(checkpoint_data_ptr ckpt)
+  {
+    boost::endian::little_uint32_t sz = commands.size();
+    ckpt->write(reinterpret_cast<const uint8_t *>(&sz), sizeof(boost::endian::little_uint32_t));    
+    for(auto & c : commands) {
+      sz = c.size();
+      ckpt->write(reinterpret_cast<const uint8_t *>(&sz), sizeof(boost::endian::little_uint32_t));
+      ckpt->write(reinterpret_cast<const uint8_t *>(c.c_str()), c.size());
+    }
+  }
+  void restore_checkpoint_block(raft::slice && s, bool is_final)
+  {
+    if (nullptr == s.data()) {
+      state_ = START;
+    }
+    checkpoint_slice_ = std::move(s);
+
+    switch(state_) {
+    case START:
+      commands.resize(0);
+      if (1024 > checkpoint_buffer_.capacity()) {
+        checkpoint_buffer_.reserve(1024);
+      }
+      checkpoint_buffer_.resize(0);
+      while (true) {
+        if (0 == checkpoint_slice_.size()) {
+          state_ = READ_COMMANDS_SIZE;
+          return;
+        case READ_COMMANDS_SIZE:
+          ;
+        }
+        BOOST_ASSERT(0 < checkpoint_slice_.size());
+        if (0 == checkpoint_buffer_.size() && s.size() >= sizeof(boost::endian::little_uint32_t)) {
+          checkpoint_commands_size_ = *reinterpret_cast<const boost::endian::little_uint32_t *>(checkpoint_slice_.data());
+          checkpoint_slice_ += sizeof(boost::endian::little_uint32_t);
+          break;
+        } else {
+          std::size_t to_insert = sizeof(boost::endian::little_uint32_t) > checkpoint_buffer_.size() ? sizeof(boost::endian::little_uint32_t) - checkpoint_buffer_.size() : 0;
+          to_insert = to_insert > checkpoint_slice_.size() ? checkpoint_slice_.size() : to_insert;
+          auto begin = reinterpret_cast<const uint8_t *>(checkpoint_slice_.data());
+          auto end = begin + to_insert;
+          checkpoint_buffer_.insert(checkpoint_buffer_.end(), begin, end);
+          checkpoint_slice_ += to_insert;
+          if (checkpoint_buffer_.size() >= sizeof(boost::endian::little_uint32_t)) {
+            checkpoint_commands_size_ = *reinterpret_cast<const boost::endian::little_uint32_t *>(&checkpoint_buffer_[0]);
+            checkpoint_buffer_.resize(0);
+            break;
+          }
+        }
+      }
+      while(commands.size() < checkpoint_commands_size_) {
+        while (true) {
+          if (0 == checkpoint_slice_.size()) {
+            state_ = READ_COMMAND_SIZE;
+            return;
+          case READ_COMMAND_SIZE:
+            ;
+          }
+          BOOST_ASSERT(0 < checkpoint_slice_.size());
+          if (0 == checkpoint_buffer_.size() && s.size() >= sizeof(boost::endian::little_uint32_t)) {
+            checkpoint_command_size_ = *reinterpret_cast<const boost::endian::little_uint32_t *>(checkpoint_slice_.data());
+            checkpoint_slice_ += sizeof(boost::endian::little_uint32_t);
+            break;
+          } else {
+            std::size_t to_insert = sizeof(boost::endian::little_uint32_t) > checkpoint_buffer_.size() ? sizeof(boost::endian::little_uint32_t) - checkpoint_buffer_.size() : 0;
+            to_insert = to_insert > checkpoint_slice_.size() ? checkpoint_slice_.size() : to_insert;
+            auto begin = reinterpret_cast<const uint8_t *>(checkpoint_slice_.data());
+            auto end = begin + to_insert;
+            checkpoint_buffer_.insert(checkpoint_buffer_.end(), begin, end);
+            checkpoint_slice_ += to_insert;
+            if (checkpoint_buffer_.size() >= sizeof(boost::endian::little_uint32_t)) {
+              checkpoint_command_size_ = *reinterpret_cast<const boost::endian::little_uint32_t *>(&checkpoint_buffer_[0]);
+              checkpoint_buffer_.resize(0);
+              break;
+            }
+          }
+        }
+        commands.push_back(std::string());
+        while(commands.back().size() < checkpoint_command_size_) {
+          if (0 == checkpoint_slice_.size()) {
+            state_ = READ_COMMAND;
+            return;
+          case READ_COMMAND:
+            ;
+          }
+          std::size_t to_append =  checkpoint_command_size_ - commands.back().size();
+          to_append = to_append > checkpoint_slice_.size() ? checkpoint_slice_.size() : to_append;
+          commands.back().append(reinterpret_cast<const char *>(checkpoint_slice_.data()), to_append);
+          checkpoint_slice_ += to_append;
+        }
+        if (commands.size() == checkpoint_commands_size_ && !is_final) {
+          throw std::runtime_error("INVALID CHECKPOINT");
+        }
+      }
     }
   }
 };
@@ -863,15 +971,14 @@ public:
       BOOST_CHECK_EQUAL(1U, l.last_index());
       BOOST_CHECK_EQUAL(initial_cluster_time, l.last_entry_cluster_time());
     }
-    // Not using this in these tests yet
-    // protocol->set_state_machine_for_checkpoint([this](raft::checkpoint_block b, bool is_final) {
-    //                                       if (!b.is_null()) {
-    //                                         auto buf = reinterpret_cast<const uint8_t *>(b.data());
-    //                                         this->checkpoint_load_state.insert(this->checkpoint_load_state.end(), buf, buf+b.size());
-    //                                       } else {
-    //                                         this->checkpoint_load_state.clear();
-    //                                       }
-    //                                     });
+    protocol->set_state_machine_for_checkpoint([this](raft::checkpoint_block b, bool is_final) {
+                                          if (!b.is_null()) {
+                                            auto buf = reinterpret_cast<const uint8_t *>(b.data());
+                                            this->checkpoint_load_state.insert(this->checkpoint_load_state.end(), buf, buf+b.size());
+                                          } else {
+                                            this->checkpoint_load_state.clear();
+                                          }
+                                        });
   }
   ~RaftTestFixtureBase() {}
 
@@ -1941,6 +2048,66 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
     BOOST_TEST(called);
     BOOST_TEST(cr == messages_type::client_result_not_leader());
   }
+
+  void TestCheckpointSessions()
+  {
+    // Now make leader and open a session
+    uint64_t term = 1;
+    this->make_leader(term);
+    BOOST_CHECK_EQUAL(1, this->protocol->last_log_entry_index());
+    
+    open_session(0, term, 1);
+  
+    // Create and send a command.
+    send_command(0, 1, 0, 0, "foo", term, 2);
+
+    // Make a new session and send command using the same sequence number as the other session
+    open_session(1, term, 3);
+    send_command(1, 3, 0, 0, "bar", term, 4);
+
+    BOOST_TEST(0U == this->l.start_index());
+    BOOST_TEST(5U == this->l.last_index());
+    BOOST_TEST(!this->l.empty());
+    session_manager.on_checkpoint_request(this->now);
+    BOOST_TEST(5U == this->l.start_index());
+    BOOST_TEST(5U == this->l.last_index());
+    BOOST_TEST(this->l.empty());
+
+    // This is a bit funky.    We create a new protocol instance
+    // that shares the underlying checkpoint store so we can load the just
+    // created checkpoint into it without doing a full transfer.!
+    {
+      // Glue log to log_header_write
+      typename raft_type::communicator_type comm2;
+      typename raft_type::log_type l2;
+      std::shared_ptr<raft_type> protocol2;
+      log_header_write_test log_header_write2;
+      client_communicator_type communicator2;
+      state_machine_type state_machine2;
+
+      l2.set_log_header_writer(&log_header_write2);
+      protocol2.reset(new raft_type(comm2, l2, this->store, *this->cm.get(), this->now));
+      session_manager_type session_manager2(*protocol2.get(), communicator2, state_machine2);
+      protocol2->set_state_machine([&session_manager2](log_entry_const_arg_type le, uint64_t idx, size_t leader_id) { session_manager2.apply(le, idx, leader_id); });
+      protocol2->set_state_machine_for_checkpoint([&session_manager2](raft::checkpoint_block b, bool is_final) {
+                                                    session_manager2.restore_checkpoint_block(raft::slice(b.block_data_, b.block_length_), is_final);
+                                                  });
+      protocol2->load_checkpoint(this->now);
+      BOOST_TEST_REQUIRE(2U == state_machine2.commands.size());
+      BOOST_TEST(boost::algorithm::equals("foo", state_machine2.commands[0]));
+      BOOST_TEST(boost::algorithm::equals("bar", state_machine2.commands[1]));
+      BOOST_TEST(term == protocol2->last_checkpoint_term());
+      BOOST_TEST(5U == protocol2->last_checkpoint_index());
+      BOOST_TEST(this->initial_cluster_time == protocol2->last_checkpoint_cluster_time());
+      BOOST_TEST(0U == protocol2->current_term());
+      BOOST_TEST(5U == protocol2->applied_index());
+      BOOST_TEST(5U == protocol2->commit_index());
+      BOOST_TEST(5U == l2.start_index());
+      BOOST_TEST(5U == l2.last_index());
+      BOOST_TEST(l2.empty());
+      BOOST_TEST(2U == session_manager2.size());
+    }
+  }  
 };
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TestLinearizableCommand, _TestType, test_types)
@@ -1995,4 +2162,10 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TestReadOnlyQueryUnknownCommitIndexOutOfDatePeersT
 {
   SessionManagerTestFixture<_TestType> t;
   t.TestReadOnlyQueryUnknownCommitIndexOutOfDatePeersThenLoseLeadership();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TestCheckpointSessions, _TestType, test_types)
+{
+  SessionManagerTestFixture<_TestType> t;
+  t.TestCheckpointSessions();
 }

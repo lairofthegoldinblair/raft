@@ -522,6 +522,9 @@ namespace raft {
     // This is the state machine to which committed log entries are applied
     std::function<void(log_entry_const_arg_type, uint64_t, std::size_t)> state_machine_;
 
+    // TODO: Fold this into the state machine
+    std::function<void(state, uint64_t)> state_change_listener_;
+
     // The consistent cluster wide clock
     cluster_clock cluster_clock_;
 
@@ -756,7 +759,7 @@ namespace raft {
       for(auto peer_it = configuration().begin_peers(), peer_end = configuration().end_peers(); peer_it != peer_end; ++peer_it) {
 	peer_type & p(*peer_it);
 	if (p.peer_id != my_cluster_id() && (force || p.requires_heartbeat_ <= clock_now)) {
-	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+	  BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	    " sending empty append_entry to peer " << p.peer_id << " as heartbeat with request id " << request_id_;
 	  comm_.append_entry(p.peer_id, p.address, request_id_, p.peer_id, current_term_, my_cluster_id(), 0, 0,
 			     0,
@@ -1345,6 +1348,9 @@ namespace raft {
 	leader_id_ = INVALID_PEER_ID;
 	log_.update_header(current_term_, INVALID_PEER_ID);
 
+        // Notify listener of state change
+        state_change_listener_(state_, current_term_);
+
         // We do NOT request the log sync here because if we became follower
         // due to vote request, the voted_for_ part of the header is potentially going
         // to be updated.  We want to wait for that information before the sync is requested.
@@ -1440,6 +1446,8 @@ namespace raft {
 	// flag is basically a continuation).  TODO: Do we really need this flag or should this be
 	// based on checking that state_ == CANDIDATE after the log header sync is done (in on_log_header_sync)?
 	send_vote_requests_ = true;
+        // Notify listener of state change
+        state_change_listener_(state_, current_term_);
       } else {
 	// TODO: Perhaps make a continuation here and make the candidate transition after the sync?
 	BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
@@ -1479,6 +1487,9 @@ namespace raft {
       // TODO: Should we set the election timeout to infinity?
       election_timeout_ = new_election_timeout(clock_now);
 
+      // Notify listener of state change
+      state_change_listener_(state_, current_term_);
+      
       // TODO: Make this relative to the configuration.  I do think this is already correct; send out to all known servers.
       // Send out empty append entries to assert leadership
       for(auto peer_it = configuration().begin_peers(), peer_end = configuration().end_peers(); peer_it != peer_end; ++peer_it) {
@@ -1607,6 +1618,8 @@ namespace raft {
       // Default dummy state machine that synchronously completes every entry as noop
       state_machine_ = [this](log_entry_const_arg_type , uint64_t idx, size_t ) { this->on_command_applied(idx); };
 
+      state_change_listener_ = [](state s, uint64_t current_term) { };
+
       // TODO: Read the log if non-empty and apply configuration entries as necessary
       // TODO: This should be async.
       for(auto idx = log_.start_index(); idx < log_.last_index(); ++idx) {
@@ -1644,6 +1657,12 @@ namespace raft {
     void set_state_machine(_Callback && state_machine)
     {
       state_machine_ = std::move(state_machine);
+    }
+
+    template<typename _Callback>
+    void set_state_change_listener(_Callback && listener)
+    {
+      state_change_listener_ = std::move(listener);
     }
 
     // Events
@@ -1873,7 +1892,7 @@ namespace raft {
       bool candidate_log_more_complete_than_mine = rv::last_log_term(req) > last_log_entry_term() ||
 	(rv::last_log_term(req) == last_log_entry_term() && rv::last_log_index(req) >= last_log_entry_index());
 
-      BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_
                                << " with current vote = " << (voted_for_ != nullptr ? boost::lexical_cast<std::string>(voted_for_->peer_id) : "null")
                                << " candidate_log_more_complete_than_mine = rv::last_log_term(req) > last_log_entry_term() ||"
                                << " (rv::last_log_term(req) == last_log_entry_term() && rv::last_log_index(req) >= last_log_entry_index()) = "
@@ -2113,10 +2132,16 @@ namespace raft {
 	    "," << ae::last_index(resp) <<
 	    ") but we already had acknowledgment up to index " << p.match_index_;
 	} else {
-	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	    " peer " << ae::recipient_id(resp) << " acknowledged index entries [" << ae::begin_index(resp) <<
-	    "," << ae::last_index(resp) << ") at request id " << ae::request_id(resp);
-	  p.match_index_ = ae::last_index(resp);
+          if (p.match_index_ != ae::last_index(resp)) {
+            BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+              " peer " << ae::recipient_id(resp) << " acknowledged index entries [" << ae::begin_index(resp) <<
+              "," << ae::last_index(resp) << ") at request id " << ae::request_id(resp);
+            p.match_index_ = ae::last_index(resp);
+          } else {
+            BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+              " peer " << ae::recipient_id(resp) << " acknowledged index entries [" << ae::begin_index(resp) <<
+              "," << ae::last_index(resp) << ") at request id " << ae::request_id(resp);
+          }
 	  // Now figure out whether we have a majority of peers ack'ing and can commit something
 	  try_to_commit(clock_now);
 	}

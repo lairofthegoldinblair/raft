@@ -30,7 +30,7 @@ namespace raft {
     template<typename _Messages, typename _Serialization>
     struct serialization
     {
-      enum Operation { OPEN_SESSION_REQUEST=11, OPEN_SESSION_RESPONSE=12, CLOSE_SESSION_REQUEST=13, CLOSE_SESSION_RESPONSE=14, LINEARIZABLE_COMMAND=15 };
+      enum Operation { VOTE_REQUEST=0, VOTE_RESPONSE=1, APPEND_ENTRY_REQUEST=2, APPEND_ENTRY_RESPONSE=3, APPEND_CHECKPOINT_CHUNK_REQUEST=9, APPEND_CHECKPOINT_CHUNK_RESPONSE=10, OPEN_SESSION_REQUEST=11, OPEN_SESSION_RESPONSE=12, CLOSE_SESSION_REQUEST=13, CLOSE_SESSION_RESPONSE=14, LINEARIZABLE_COMMAND=15 };
       typedef typename _Messages::request_vote_traits_type::arg_type request_vote_arg_type;
       typedef typename _Messages::vote_response_traits_type::arg_type vote_response_arg_type;
       typedef typename _Messages::append_entry_traits_type::arg_type append_entry_arg_type;
@@ -118,6 +118,32 @@ namespace raft {
 	header->payload_length = inner.first.size();
 	header->service = 0;
 	header->operation = 3;
+	return make_return(b.data(), sz, std::move(inner));
+      };
+
+      static std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete> serialize_append_checkpoint_chunk_request(boost::asio::mutable_buffer b, append_checkpoint_chunk_arg_type && msg)
+      {
+	// TODO: Make sure the msg fits in our buffer; either throw or support by allocating a new buffer
+	auto inner = serialization_type::serialize(std::move(msg));
+	std::size_t sz = sizeof(rpc_header);
+	rpc_header * header = reinterpret_cast<rpc_header *>(b.data());
+	header->magic = rpc_header::MAGIC();
+	header->payload_length = inner.first.size();
+	header->service = 0;
+	header->operation = APPEND_CHECKPOINT_CHUNK_REQUEST;
+	return make_return(b.data(), sz, std::move(inner));
+      }
+
+      static std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete> serialize_append_checkpoint_chunk_response(boost::asio::mutable_buffer b, append_checkpoint_chunk_response_arg_type && msg)
+      {
+	auto inner = serialization_type::serialize(std::move(msg));
+	static const std::size_t sz = sizeof(rpc_header);
+	BOOST_ASSERT(boost::asio::buffer_size(b) >= sz);
+	rpc_header * header = reinterpret_cast<rpc_header *>(b.data());
+	header->magic = rpc_header::MAGIC();
+	header->payload_length = inner.first.size();
+	header->service = 0;
+	header->operation = APPEND_CHECKPOINT_CHUNK_RESPONSE;
 	return make_return(b.data(), sz, std::move(inner));
       };
 
@@ -234,6 +260,22 @@ namespace raft {
       template<typename _M = _Messages, typename _S = _Serialization>
       static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::request_vote_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
+	        typename _M::append_checkpoint_chunk_traits_type::arg_type && msg)
+      {
+	return serialize_append_checkpoint_chunk_request(b, std::move(msg));
+      }
+      
+      template<typename _M = _Messages, typename _S = _Serialization>
+      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::request_vote_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      serialize(boost::asio::mutable_buffer b,
+	        typename _M::append_checkpoint_chunk_response_traits_type::arg_type && msg)
+      {
+	return serialize_append_checkpoint_chunk_response(b, std::move(msg));
+      }
+      
+      template<typename _M = _Messages, typename _S = _Serialization>
+      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::request_vote_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      serialize(boost::asio::mutable_buffer b,
 	        typename _M::client_response_traits_type::arg_type && msg)
       {
 	return serialize_client_response(b, std::move(msg));
@@ -303,6 +345,10 @@ namespace raft {
       	  return serialize_append_entry_response(b, std::move(msg));
       	case 5:
       	  return serialize_client_response(b, std::move(msg));
+      	case 9:
+      	  return serialize_append_checkpoint_chunk_request(b, std::move(msg));
+      	case 10:
+      	  return serialize_append_checkpoint_chunk_response(b, std::move(msg));
       	default:
       	  throw std::runtime_error("Not yet implemented");
       	}

@@ -755,6 +755,9 @@ namespace raft {
       log_writer_type & log_writer_;
       uint64_t last_log_index_written_;
 
+      // Checkpoint when the log has this many entries
+      uint32_t checkpoint_interval_ = 100000;
+
     public:
       protocol_box(uint64_t server_id,
                    std::pair<const log_entry_type *, raft::util::call_on_delete> && config,
@@ -776,6 +779,7 @@ namespace raft {
         // Create the session manager and connect it up to the protocol box
         session_manager_.reset(new session_manager_type(*protocol_.get(), client_comm, state_machine_));
         protocol_->set_state_machine([this](log_entry_const_arg_type le, uint64_t idx, size_t leader_id) { this->session_manager_->apply(le, idx, leader_id); });
+        protocol_->set_state_change_listener([this](typename raft_protocol_type::state s, uint64_t t) { this->session_manager_->on_protocol_state_change(s, t); });
       }
 
       void on_request_vote(request_vote_arg_type && req)
@@ -879,7 +883,27 @@ namespace raft {
               log_writer_.append_record(serialization_type::serialize(boost::asio::buffer(tmp_buf), l_.entry(last_log_index_written_)), last_log_index_written_);
             }
           }
+
+          // All of our checkpointing is to in-memory right now so immediately complete any required checkpoint
+          // sync
+          if (protocol_->checkpoint_sync_required()) {
+            protocol_->on_checkpoint_sync();
+          }
+
+          // Time to take a periodic checkpoint?
+          if (l_.start_index() + checkpoint_interval_ <= l_.last_index()) {
+            BOOST_LOG_TRIVIAL(info) << "[raft::asio::protocol_box::handle_timer] Server(" << config_manager_.configuration().my_cluster_id()
+                                    << ") initiating checkpoint";
+            session_manager_->on_checkpoint_request(std::chrono::steady_clock::now());
+            BOOST_LOG_TRIVIAL(info) << "[raft::asio::protocol_box::handle_timer] Server(" << config_manager_.configuration().my_cluster_id()
+                                    << ") completed checkpoint";
+          }
         }
+      }
+
+      void checkpoint_interval(uint32_t val)
+      {
+        checkpoint_interval_ = val;
       }
 
       // ONLY FOR TESTING!!!! Not safe to use when things are running!
@@ -1109,6 +1133,12 @@ namespace raft {
       {
       }
 
+
+      void checkpoint_interval(uint32_t val)
+      {
+        protocol_box_.checkpoint_interval(val);
+      }
+      
       // ONLY FOR TESTING!!!! Not safe to use when things are running!
       const state_machine_type & state_machine() const
       {
@@ -1413,6 +1443,7 @@ namespace raft {
           protocol_->handle_timer();
           log_files_->handle_timer();
 	}
+        
         timer_.expires_from_now(boost::posix_time::milliseconds(1));
         timer_.async_wait(std::bind(&tcp_server::handle_timer, this, std::placeholders::_1));
       }
@@ -1499,6 +1530,11 @@ namespace raft {
       void append_record(std::pair<boost::asio::const_buffer, raft::util::call_on_delete> && serialize_bufs, uint64_t log_index)
       {
         log_files_->append_record(std::move(serialize_bufs), log_index);
+      }
+
+      void checkpoint_interval(uint32_t val)
+      {
+        protocol_->checkpoint_interval(val);
       }
 
       ///
