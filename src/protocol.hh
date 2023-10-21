@@ -197,6 +197,7 @@ namespace raft {
       auto req_request_id = acc::request_id(req);
       auto req_data = acc::data(req);
       auto req_checkpoint_begin = acc::checkpoint_begin(req);
+      auto req_checkpoint_end = acc::checkpoint_end(req);
       
       if (!current_checkpoint_) {
 	const auto & header(acc::last_checkpoint_header(req));
@@ -213,6 +214,11 @@ namespace raft {
       }
 
       current_checkpoint_->write(std::move(req_data));
+      BOOST_LOG_TRIVIAL(info) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
+        " received checkpoint chunk from leader_id=" << req_leader_id << " request_id=" << req_request_id <<
+        " containing byte_range=[" << req_checkpoint_begin << "," << req_checkpoint_end << ")"
+        " for checkpoint at index " << req_last_checkpoint_index;
+
       if (req_checkpoint_done) {
 	if (req_last_checkpoint_index < last_checkpoint_index()) {
 	  BOOST_LOG_TRIVIAL(warning) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
@@ -228,6 +234,8 @@ namespace raft {
           resp.request_id = req_request_id;
 	  resp.bytes_stored = current_checkpoint_->end();
 	  sync(resp);
+          BOOST_LOG_TRIVIAL(info) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
+            " received final checkpoint chunk, waiting for checkpoint sync.";
         }
       }
       // If checkpoint not done then we can respond immediately.
@@ -258,6 +266,10 @@ namespace raft {
       return last_checkpoint_cluster_time_;
     }
 
+    bool checkpoint_sync_required() const {
+      return !checkpoint_chunk_response_sync_continuations_.empty();
+    }
+
     void abandon_checkpoint() {
       if (!!current_checkpoint_) {
 	store_.discard(current_checkpoint_->file_);
@@ -274,6 +286,11 @@ namespace raft {
     {
       auto header = protocol()->create_checkpoint_header(last_index_in_checkpoint);
       if (header.first != nullptr) {
+	BOOST_LOG_TRIVIAL(info) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
+	  " initiated checkpoint at index " << last_index_in_checkpoint << " with checkpoint header" <<
+          " last_index=" <<checkpoint_header_traits_type::last_log_entry_index(header.first) <<
+          " last_term=" <<  checkpoint_header_traits_type::last_log_entry_term(header.first) <<
+          " last_cluster_time=" << checkpoint_header_traits_type::last_log_entry_cluster_time(header.first);
         return store_.create(std::move(header));
       } else {
         return checkpoint_data_ptr();
@@ -799,7 +816,10 @@ namespace raft {
 	" checkpoint.last_log_entry_term=" << checkpoint_header_traits_type::last_log_entry_term(&p.checkpoint_->checkpoint_last_header_) <<
 	" checkpoint.last_log_entry_cluster_time=" << checkpoint_header_traits_type::last_log_entry_cluster_time(&p.checkpoint_->checkpoint_last_header_) <<
 	" bytes_sent=" << (p.checkpoint_->data_->block_end(p.checkpoint_->last_block_sent_) -
-			   p.checkpoint_->data_->block_begin(p.checkpoint_->last_block_sent_));
+			   p.checkpoint_->data_->block_begin(p.checkpoint_->last_block_sent_)) <<
+        " byte_range=[" << p.checkpoint_->data_->block_begin(p.checkpoint_->last_block_sent_) << "," <<
+        p.checkpoint_->data_->block_end(p.checkpoint_->last_block_sent_) << ")" <<
+        " checkpoint_done=" << (p.checkpoint_->data_->is_final(p.checkpoint_->last_block_sent_) ? "true" : "false");
 
       p.requires_heartbeat_ = new_heartbeat_timeout(clock_now);
     }
@@ -2218,9 +2238,20 @@ namespace raft {
       // Peer tells us what is needed next
       p.checkpoint_->checkpoint_next_byte_ = acc::bytes_stored(resp);
 
-      // Send next chunk
       p.checkpoint_->awaiting_ack_ = false;
-      send_checkpoint_chunk(clock_now, acc::recipient_id(resp));
+      if (!p.checkpoint_->data_->is_final(p.checkpoint_->last_block_sent_)) {
+        // Send next chunk
+        send_checkpoint_chunk(clock_now, acc::recipient_id(resp));
+      } else {
+        // Final chunk ack'd so we're done and can update our knowledge of the peer log and clear the peer checkpoint state
+        p.next_index_ = checkpoint_header_traits_type::last_log_entry_index(&p.checkpoint_->checkpoint_last_header_);
+        p.match_index_ = p.next_index_;
+        p.checkpoint_.reset();
+        BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+          " successfully transferred checkpoint to peer " << acc::recipient_id(resp) <<
+          " setting p.next_index_=" << p.next_index_ <<
+          " p.match_index_=" << p.match_index_;
+      }
     }  
 
 

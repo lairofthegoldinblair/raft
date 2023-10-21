@@ -2184,7 +2184,6 @@ public:
     make_leader(term);
 
     const char * cmd = "1";
-    uint64_t expected_cluster_time = initial_cluster_time;
     uint64_t client_index=l.last_index();
     // Send success response from all peers except 1.  This will commit entry
     // so that it can be checkpointed.
@@ -2197,19 +2196,21 @@ public:
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
     BOOST_CHECK(nullptr == s->last_checkpoint().get());
   
-    auto ckpt = s->begin_checkpoint(1U);
+    BOOST_CHECK_EQUAL(2U, s->applied_index());
+    uint64_t expected_cluster_time = initial_cluster_time;
+    auto ckpt = s->begin_checkpoint(2U);
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
     BOOST_REQUIRE(nullptr != ckpt.get());
-    BOOST_CHECK_EQUAL(1U, checkpoint_header_traits::last_log_entry_index(&ckpt->header()));
+    BOOST_CHECK_EQUAL(2U, checkpoint_header_traits::last_log_entry_index(&ckpt->header()));
     BOOST_CHECK_EQUAL(1U, checkpoint_header_traits::last_log_entry_term(&ckpt->header()));
     BOOST_CHECK_EQUAL(expected_cluster_time, checkpoint_header_traits::last_log_entry_cluster_time(&ckpt->header()));
     BOOST_CHECK(nullptr == s->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
     s->complete_checkpoint(ckpt);
-    BOOST_CHECK_EQUAL(1U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(2U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
     BOOST_CHECK(ckpt == s->last_checkpoint());
@@ -2223,7 +2224,7 @@ public:
     BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_traits::checkpoint_begin(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(2U, append_checkpoint_chunk_traits::checkpoint_end(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_index(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(2U, append_checkpoint_chunk_traits::last_checkpoint_index(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_term(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(expected_cluster_time, append_checkpoint_chunk_traits::last_checkpoint_cluster_time(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(0U, checkpoint_header_traits::index(&append_checkpoint_chunk_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back()))));
@@ -2249,7 +2250,7 @@ public:
       BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
       BOOST_CHECK_EQUAL(2U, append_checkpoint_chunk_traits::checkpoint_begin(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
       BOOST_CHECK_EQUAL(4U, append_checkpoint_chunk_traits::checkpoint_end(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
-      BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_index(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(2U, append_checkpoint_chunk_traits::last_checkpoint_index(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
       BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_term(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
       BOOST_CHECK_EQUAL(expected_cluster_time, append_checkpoint_chunk_traits::last_checkpoint_cluster_time(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
       BOOST_CHECK_EQUAL(0U, checkpoint_header_traits::index(&append_checkpoint_chunk_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back()))));
@@ -2264,7 +2265,7 @@ public:
     BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(4U, append_checkpoint_chunk_traits::checkpoint_begin(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(5U, append_checkpoint_chunk_traits::checkpoint_end(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_index(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(2U, append_checkpoint_chunk_traits::last_checkpoint_index(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_term(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(expected_cluster_time, append_checkpoint_chunk_traits::last_checkpoint_cluster_time(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(0U, checkpoint_header_traits::index(&append_checkpoint_chunk_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back()))));
@@ -2273,6 +2274,9 @@ public:
     resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(1U).request_term_number(1U).bytes_stored(5U).finish();
     s->on_append_checkpoint_chunk_response(std::move(resp));  
     BOOST_REQUIRE_EQUAL(0U, comm.q.size());
+
+    // Now test that we can append to all peers
+    send_client_request_and_commit(term, cmd, client_index++);
   }
 
   // Test that a checkpoint transfer is properly cancelled by a term update
@@ -2551,6 +2555,22 @@ public:
     resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(1U).request_term_number(1U).bytes_stored(5U).finish();
     s->on_append_checkpoint_chunk_response(std::move(resp), now);  
     BOOST_REQUIRE_EQUAL(0U, comm.q.size());
+
+    // We only checkpointed the first log entry, so peer 1 is still missing log entry 2.
+    // Check that we get an append entry for it!   Get rid of the last increment to timestamp to avoid getting
+    // heartbeats.
+    now -= std::chrono::milliseconds(600);
+    s->on_timer(now);
+    BOOST_REQUIRE_EQUAL(1U, comm.q.size());
+    BOOST_CHECK_EQUAL(1, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(2U, append_entry_traits::leader_commit_index(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK(log_entry_traits::is_command(&append_entry_traits::get_entry(boost::get<append_entry_arg_type>(comm.q.back()), 0U)));
+    comm.q.pop_back();
   }
 
   void JointConsensusAddServer()
