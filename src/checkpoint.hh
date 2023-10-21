@@ -67,14 +67,13 @@ namespace raft {
     const header_type * header_;
     raft::util::call_on_delete header_deleter_;
     std::vector<uint8_t> data_;
-    // TODO: Configure block size
     std::size_t block_size_;
   public:
-    checkpoint_data(const header_type * header, raft::util::call_on_delete && deleter)
+    checkpoint_data(const header_type * header, raft::util::call_on_delete && deleter, std::size_t block_size)
       :
       header_(header),
       header_deleter_(std::move(deleter)),
-      block_size_(2)
+      block_size_(block_size)
     {
     }
 
@@ -147,14 +146,23 @@ namespace raft {
     typedef typename _Messages::configuration_checkpoint_type configuration_type;
   private:
     checkpoint_data_ptr last_checkpoint_;
+    std::size_t block_size_ = 1024*1024;
   public:
+    std::size_t block_size() const
+    {
+      return block_size_;
+    }
+    void block_size(std::size_t val)
+    {
+      block_size_ = val;
+    }
     checkpoint_data_ptr create(const header_type * header, raft::util::call_on_delete && deleter) const
     {
-      return checkpoint_data_ptr(new checkpoint_data_type(header, std::move(deleter)));
+      return checkpoint_data_ptr(new checkpoint_data_type(header, std::move(deleter), block_size_));
     }
     checkpoint_data_ptr create(std::pair<const header_type *, raft::util::call_on_delete> && header) const
     {
-      return checkpoint_data_ptr(new checkpoint_data_type(header.first, std::move(header.second)));
+      return checkpoint_data_ptr(new checkpoint_data_type(header.first, std::move(header.second), block_size_));
     }
     void commit(checkpoint_data_ptr f)
     {
