@@ -30,6 +30,8 @@ namespace raft {
     // Last block sent.  We do not assume that the checkpoint bytes are contiguous in memory
     // so cannot use checkpoint_next_byte_ to know where the next chunk is in data_.
     block_type last_block_sent_;
+    // The time the last block was sent
+    std::chrono::steady_clock::time_point last_block_sent_time_;
     // Has the last block been acked?  TODO: Generalize to a window/credit system?
     bool awaiting_ack_;
 

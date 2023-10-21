@@ -762,13 +762,15 @@ namespace raft {
 	p.checkpoint_.reset(new peer_checkpoint_type(header, this->last_checkpoint()));
       }
 
-      // Are we waiting for a response to a previous chunk?
-      if (p.checkpoint_->awaiting_ack_) {
+      // Are we waiting for a response to a previous chunk?  If so and sent within the last second then
+      // keep waiting for a response.
+      if (p.checkpoint_->awaiting_ack_ && p.checkpoint_->last_block_sent_time_ + std::chrono::seconds(1) > clock_now) {
 	return;
       }
 
-      // Did we already finish the checkpoint?
-      if (p.checkpoint_->data_->is_final(p.checkpoint_->last_block_sent_)) {
+      // Did we already finish the checkpoint? 
+      if (p.checkpoint_->data_->is_final(p.checkpoint_->last_block_sent_) &&
+          (!p.checkpoint_->awaiting_ack_ || p.checkpoint_->last_block_sent_time_ + std::chrono::seconds(1) > clock_now)) {
 	return;
       }
 
@@ -787,6 +789,7 @@ namespace raft {
 				    slice(p.checkpoint_->last_block_sent_.block_data_,
 					  p.checkpoint_->last_block_sent_.block_length_));
       p.checkpoint_->awaiting_ack_ = true;
+      p.checkpoint_->last_block_sent_time_ = clock_now;
 
       BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" sending append_checkpoint_chunk to peer " << peer_id << "; log_start_index()=" << log_start_index() <<

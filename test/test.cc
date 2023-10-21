@@ -1339,15 +1339,34 @@ public:
   ~RaftTestBase() {}
 
   void make_leader(uint64_t term, bool respond_to_noop=true);
+  std::chrono::steady_clock::time_point make_leader(uint64_t term, std::chrono::steady_clock::time_point now, bool respond_to_noop=true);
   void make_follower_with_checkpoint(uint64_t term, uint64_t log_entry);
   void become_follower_with_vote_request(uint64_t term);
   void send_client_request_and_commit(uint64_t term, const char * cmd, uint64_t client_index);
-  void send_client_request(uint64_t term, const char * cmd, uint64_t client_index, const boost::dynamic_bitset<> & send_responses_from);
-  void send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
-                           const boost::dynamic_bitset<> & expect_append_entries_for,
-                           const boost::dynamic_bitset<> & send_responses_from);
+  std::chrono::steady_clock::time_point send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
+                                                            const boost::dynamic_bitset<> & send_responses_from,
+                                                            std::chrono::steady_clock::time_point now);
+  std::chrono::steady_clock::time_point send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
+                                                            const boost::dynamic_bitset<> & expect_append_entries_for,
+                                                            const boost::dynamic_bitset<> & send_responses_from,
+                                                            std::chrono::steady_clock::time_point now);
   std::size_t num_known_peers() { return cm->configuration().num_known_peers(); }
   void stage_new_server(uint64_t term, uint64_t commit_index);
+
+  void check_heartbeat(uint64_t recipient_id, const typename raft_type::communicator_type::any_msg_type & resp)
+  {
+    BOOST_CHECK_EQUAL(recipient_id, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(resp)));
+    BOOST_CHECK_EQUAL(s->current_term(), append_entry_traits::term_number(boost::get<append_entry_arg_type>(resp)));
+    BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(resp)));
+    BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(resp)));
+    BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(resp)));
+    BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_commit_index(boost::get<append_entry_arg_type>(resp)));
+    BOOST_CHECK_EQUAL(0U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(resp)));
+  }
+  void check_heartbeat(uint64_t recipient_id)
+  {
+    check_heartbeat(recipient_id, comm.q.back());
+  }
 
   void AppendEntriesLogSync()
   {
@@ -2172,7 +2191,7 @@ public:
     boost::dynamic_bitset<> responses;
     responses.resize(num_known_peers(), true);
     responses.flip(1);
-    send_client_request(term, cmd, client_index++, responses);
+    send_client_request(term, cmd, client_index++, responses, std::chrono::steady_clock::now());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
@@ -2271,7 +2290,7 @@ public:
     boost::dynamic_bitset<> responses;
     responses.resize(num_known_peers(), true);
     responses.flip(1);
-    send_client_request(term, cmd, client_index++, responses);
+    send_client_request(term, cmd, client_index++, responses, std::chrono::steady_clock::now());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
@@ -2338,7 +2357,7 @@ public:
     boost::dynamic_bitset<> responses;
     responses.resize(num_known_peers(), true);
     responses.flip(1);
-    send_client_request(term, cmd, client_index++, responses);
+    send_client_request(term, cmd, client_index++, responses, std::chrono::steady_clock::now());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
@@ -2390,9 +2409,150 @@ public:
     comm.q.pop_back();
 
     // Check that we can send client request to other peers.
-    send_client_request(term, cmd, client_index++, responses, responses);    
+    send_client_request(term, cmd, client_index++, responses, responses, std::chrono::steady_clock::now());    
   }
   
+  // Test that append_entries will send a checkpoint that needs log entries the leader has discarded
+  // post checkpoint
+  void AppendEntriesCheckpointResend()
+  {
+    auto now = std::chrono::steady_clock::now();
+    
+    uint64_t term = 1;
+    now = make_leader(term, now);
+
+    const char * cmd = "1";
+    uint64_t expected_cluster_time = initial_cluster_time;
+    uint64_t client_index=l.last_index();
+    // Send success response from all peers except 1.  This will commit entry
+    // so that it can be checkpointed.
+    boost::dynamic_bitset<> responses;
+    responses.resize(num_known_peers(), true);
+    responses.flip(1);
+    now = send_client_request(term, cmd, client_index++, responses, now);
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
+  
+    auto ckpt = s->begin_checkpoint(1U);
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
+    BOOST_REQUIRE(nullptr != ckpt.get());
+    BOOST_CHECK_EQUAL(1U, checkpoint_header_traits::last_log_entry_index(&ckpt->header()));
+    BOOST_CHECK_EQUAL(1U, checkpoint_header_traits::last_log_entry_term(&ckpt->header()));
+    BOOST_CHECK_EQUAL(expected_cluster_time, checkpoint_header_traits::last_log_entry_cluster_time(&ckpt->header()));
+    BOOST_CHECK(nullptr == s->last_checkpoint().get());
+    uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
+    ckpt->write(&data[0], 5U);
+    s->complete_checkpoint(ckpt);
+    BOOST_CHECK_EQUAL(1U, s->last_checkpoint_index());
+    BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
+    BOOST_CHECK(ckpt == s->last_checkpoint());
+
+    // Fire timer.  Peer 1 still doesn't have first log entry but since that entry is
+    // discarded, a checkpoint will need to be sent to 1.   Don't respond to the first
+    // message and wait.   Eventually it will be sent again.
+    // Note that we'll get heartbeats for the other peers as well
+    for(std::size_t j=0; j<3; ++j) {
+      s->on_timer(now);
+      BOOST_REQUIRE(1 <= comm.q.size());
+      if (j == 0 || j == 2) {
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_traits::checkpoint_begin(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(2U, append_checkpoint_chunk_traits::checkpoint_end(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK(!append_checkpoint_chunk_traits::checkpoint_done(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_index(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_term(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(expected_cluster_time, append_checkpoint_chunk_traits::last_checkpoint_cluster_time(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(0U, checkpoint_header_traits::index(&append_checkpoint_chunk_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back()))));
+        {
+          const auto & cfg(checkpoint_header_traits::configuration(&append_checkpoint_chunk_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back()))));
+          BOOST_CHECK_EQUAL(0U, simple_configuration_description_traits::size(&configuration_description_traits::to(&cfg)));
+          BOOST_REQUIRE_EQUAL(5U, simple_configuration_description_traits::size(&configuration_description_traits::from(&cfg)));
+          for(std::size_t i=0; i<5; ++i) {
+            BOOST_CHECK_EQUAL(i, server_description_traits::id(&simple_configuration_description_traits::get(&configuration_description_traits::from(&cfg), i)));
+            BOOST_CHECK_EQUAL(0, server_description_traits::address(&simple_configuration_description_traits::get(&configuration_description_traits::from(&cfg), i)).compare((boost::format("192.168.1.%1%") % (i+1)).str()));
+          }
+        }
+      } else {
+        check_heartbeat(1);
+      }
+      comm.q.pop_back();
+      if (j == 0) {
+        BOOST_REQUIRE_EQUAL(0U, comm.q.size());
+      } else {
+        BOOST_REQUIRE_EQUAL(num_known_peers()-2, comm.q.size());
+        for(uint64_t k=2; k<num_known_peers(); ++k) {
+          check_heartbeat(k);
+          comm.q.pop_back();
+        }
+      }
+      now += std::chrono::milliseconds(600);
+    }
+
+    // Ack with bytes_stored=2 twice to validate the checkpoint protocol will resend data if requested
+    for(int i=0; i<2; ++i) {
+      auto resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(1U).request_term_number(1U).bytes_stored(2U).finish();
+      s->on_append_checkpoint_chunk_response(std::move(resp), now);  
+      BOOST_REQUIRE_EQUAL(1U, comm.q.size());
+      BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(2U, append_checkpoint_chunk_traits::checkpoint_begin(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(4U, append_checkpoint_chunk_traits::checkpoint_end(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+      BOOST_CHECK(!append_checkpoint_chunk_traits::checkpoint_done(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_index(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_term(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(expected_cluster_time, append_checkpoint_chunk_traits::last_checkpoint_cluster_time(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, checkpoint_header_traits::index(&append_checkpoint_chunk_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back()))));
+      comm.q.pop_back();
+    }
+
+    auto resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(1U).request_term_number(1U).bytes_stored(4U).finish();
+    s->on_append_checkpoint_chunk_response(std::move(resp), now);
+    // Check resending of the final block as well.
+    for(std::size_t j=0; j<3; ++j) {
+      if (j>0) {
+        s->on_timer(now);
+      }
+      BOOST_REQUIRE(1 <= comm.q.size());
+      if (j == 0 || j == 2) {
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(4U, append_checkpoint_chunk_traits::checkpoint_begin(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(5U, append_checkpoint_chunk_traits::checkpoint_end(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK(append_checkpoint_chunk_traits::checkpoint_done(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_index(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::last_checkpoint_term(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(expected_cluster_time, append_checkpoint_chunk_traits::last_checkpoint_cluster_time(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
+        BOOST_CHECK_EQUAL(0U, checkpoint_header_traits::index(&append_checkpoint_chunk_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back()))));
+      } else {
+        check_heartbeat(1);
+      }
+      comm.q.pop_back();
+      if (j == 0) {
+        BOOST_REQUIRE_EQUAL(0U, comm.q.size());
+      } else {
+        BOOST_REQUIRE_EQUAL(num_known_peers()-2, comm.q.size());
+        for(uint64_t k=2; k<num_known_peers(); ++k) {
+          check_heartbeat(k);
+          comm.q.pop_back();
+        }
+      }
+      now += std::chrono::milliseconds(600);
+    }
+
+    resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(1U).request_term_number(1U).bytes_stored(5U).finish();
+    s->on_append_checkpoint_chunk_response(std::move(resp), now);  
+    BOOST_REQUIRE_EQUAL(0U, comm.q.size());
+  }
+
   void JointConsensusAddServer()
   {
     uint64_t term=1;
@@ -2696,32 +2856,71 @@ void RaftTestBase<_TestType>::make_leader(uint64_t term, bool respond_to_noop)
 }
 
 template<typename _TestType>
+std::chrono::steady_clock::time_point RaftTestBase<_TestType>::make_leader(uint64_t term, std::chrono::steady_clock::time_point now, bool respond_to_noop)
+{
+  now += std::chrono::milliseconds(500);
+  s->on_timer(now);
+  // TODO: Check this once we start using a synthetic clock in tests
+  auto cluster_time = s->cluster_time();
+  BOOST_CHECK_EQUAL(term, s->current_term());
+  BOOST_CHECK_EQUAL(raft_type::CANDIDATE, s->get_state());
+  BOOST_CHECK(s->log_header_sync_required());
+  s->on_log_header_sync(now);
+  BOOST_CHECK(!s->log_header_sync_required());
+  BOOST_CHECK_EQUAL(num_known_peers()-1, comm.q.size());
+  while(comm.q.size() > 0) {
+    comm.q.pop_back();
+  }
+  for(uint64_t p=1; p!=num_known_peers(); ++p) {
+    auto vote_response_msg = vote_response_builder().peer_id(p).term_number(term).request_term_number(term).granted(true).finish();
+    s->on_vote_response(std::move(vote_response_msg), now);
+  }
+  BOOST_CHECK_EQUAL(raft_type::LEADER, s->get_state());
+  BOOST_TEST(cluster_time < s->cluster_time());
+  BOOST_CHECK_EQUAL(num_known_peers()-1, comm.q.size());
+  for(uint64_t p=1; p!=num_known_peers(); ++p) {
+    BOOST_CHECK(log_entry_traits::is_noop(&append_entry_traits::get_entry(boost::get<append_entry_arg_type>(comm.q.back()), 0)));
+    if (respond_to_noop) {
+      auto resp = append_response_builder().recipient_id(p).term_number(term).request_term_number(term).begin_index(0).last_index(append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(comm.q.back()))+1).success(true).finish();
+      s->on_append_response(std::move(resp), now);
+    }
+    comm.q.pop_back();
+  }
+  // Update intial_cluster_time to current
+  initial_cluster_time = s->cluster_time();
+  return now;
+}
+
+template<typename _TestType>
 void RaftTestBase<_TestType>::send_client_request_and_commit(uint64_t term, const char * cmd, uint64_t client_index)
 {
   boost::dynamic_bitset<> responses;
   responses.resize(num_known_peers(), 1);
-  send_client_request(term, cmd, client_index, responses);
+  send_client_request(term, cmd, client_index, responses, std::chrono::steady_clock::now());
   BOOST_CHECK_EQUAL(client_index+1, s->commit_index());
 }
 
 template<typename _TestType>
-void RaftTestBase<_TestType>::send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
-						  const boost::dynamic_bitset<> & send_responses_from)
+std::chrono::steady_clock::time_point RaftTestBase<_TestType>::send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
+                                                                                   const boost::dynamic_bitset<> & send_responses_from,
+                                                                                   std::chrono::steady_clock::time_point now)
 {
   boost::dynamic_bitset<> expected_append_entries;
   expected_append_entries.resize(num_known_peers(), 1);
-  send_client_request(term, cmd, client_index, expected_append_entries, send_responses_from);
+  return send_client_request(term, cmd, client_index, expected_append_entries, send_responses_from, now);
 }
 
 template<typename _TestType>
-void RaftTestBase<_TestType>::send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
-                                                  const boost::dynamic_bitset<> & expect_append_entries_for,
-						  const boost::dynamic_bitset<> & send_responses_from)
+std::chrono::steady_clock::time_point RaftTestBase<_TestType>::send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
+                                                                                   const boost::dynamic_bitset<> & expect_append_entries_for,
+                                                                                   const boost::dynamic_bitset<> & send_responses_from,
+                                                                                   std::chrono::steady_clock::time_point now)
 {
   // Fire off a client_request
+  now += std::chrono::milliseconds(1);
   BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
   auto cli_req = client_request_builder().command(raft::slice(reinterpret_cast<const uint8_t *>(cmd), ::strlen(cmd))).finish();
-  s->on_client_request(c, std::move(cli_req));
+  s->on_client_request(c, std::move(cli_req), now);
   BOOST_CHECK_EQUAL(term, s->current_term());
   // TODO: Use synthetic time and be more precise about this
   BOOST_TEST(initial_cluster_time < s->cluster_time());
@@ -2730,7 +2929,7 @@ void RaftTestBase<_TestType>::send_client_request(uint64_t term, const char * cm
   initial_cluster_time = s->cluster_time();
   // This will send append_entries request to everyone in the cluster
   // When a majority of responses have come back we are committed.  Here log doesn't sync to disk.
-  s->on_timer();
+  s->on_timer(now);
   BOOST_CHECK_EQUAL(term, s->current_term());
   BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
   BOOST_CHECK_EQUAL(raft_type::LEADER, s->get_state());
@@ -2758,7 +2957,7 @@ void RaftTestBase<_TestType>::send_client_request(uint64_t term, const char * cm
       num_responses += 1;
     }
     auto resp = append_response_builder().recipient_id(expected).term_number(term).request_term_number(term).begin_index(client_index).last_index(client_index+1).success(send_responses_from.test(expected)).finish();
-    s->on_append_response(std::move(resp));
+    s->on_append_response(std::move(resp), now);
     if (num_responses!=3) {
       BOOST_CHECK_EQUAL(0U, c.responses.size());
     } else {
@@ -2768,6 +2967,7 @@ void RaftTestBase<_TestType>::send_client_request(uint64_t term, const char * cm
     }
     comm.q.pop_back();
   }
+  return now;
 }
 
 template<typename _TestType>
@@ -2957,6 +3157,12 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesCheckpointAppendWhileSending
 {
   RaftTestBase<_TestType> t;
   t.AppendEntriesCheckpointAppendWhileSendingCheckpoint();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesCheckpointResend, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.AppendEntriesCheckpointResend();
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedJointConsensusAddServer, _TestType, test_types)
