@@ -2839,6 +2839,65 @@ public:
       comm.q.pop_back();
     }
   }
+
+  void CandidateAppendEntriesAtSameTerm()
+  {
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    s->on_timer();
+    BOOST_CHECK_EQUAL(raft_type::CANDIDATE, s->get_state());
+    BOOST_CHECK(s->log_header_sync_required());
+    BOOST_CHECK_EQUAL(1U, s->current_term());
+    BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
+
+    // Append entry from old term gets immediate negative response
+    {
+      auto msg = append_entry_builder().recipient_id(0).request_id(2).term_number(0).leader_id(1).previous_log_index(1).previous_log_term(0).leader_commit_index(0).entry(log_entry_traits::create_noop(0, initial_cluster_time)).finish();
+      s->on_append_entry(std::move(msg));
+      BOOST_CHECK_EQUAL(raft_type::CANDIDATE, s->get_state());
+      BOOST_CHECK(s->log_header_sync_required());
+      BOOST_CHECK_EQUAL(0U, append_response_traits::recipient_id(boost::get<append_response_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(1U, append_response_traits::term_number(boost::get<append_response_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_response_traits::request_term_number(boost::get<append_response_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(2U, append_response_traits::request_id(boost::get<append_response_arg_type>(comm.q.back())));
+      BOOST_CHECK(!append_response_traits::success(boost::get<append_response_arg_type>(comm.q.back())));
+      comm.q.pop_back();
+    }
+
+    // Header sync will send vote requests
+    s->on_log_header_sync();
+    BOOST_CHECK(!s->log_header_sync_required());
+    BOOST_CHECK_EQUAL(4U, comm.q.size());
+    uint32_t expected = 1;
+    while(comm.q.size() > 0) {
+      BOOST_CHECK_EQUAL(expected, request_vote_traits::recipient_id(boost::get<request_vote_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, request_vote_traits::candidate_id(boost::get<request_vote_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(1U, request_vote_traits::term_number(boost::get<request_vote_arg_type>(comm.q.back())));
+      expected += 1;
+      comm.q.pop_back();
+    }
+
+    // Now another server independently gets leadership at term 1 and sends append entry.
+    // We become follower without log header sync.
+    auto msg = append_entry_builder().recipient_id(0).request_id(2).term_number(1).leader_id(1).previous_log_index(0).previous_log_term(0).leader_commit_index(0).entry(log_entry_traits::create_noop(0, initial_cluster_time)).finish();
+    s->on_append_entry(std::move(msg));
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
+    BOOST_CHECK_EQUAL(1U, s->current_term());
+    BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
+    BOOST_CHECK(!s->log_header_sync_required());
+    BOOST_CHECK_EQUAL(0U, comm.q.size());
+
+    // Once log is sync'd we'll send the response.
+    s->on_log_sync(1);
+    BOOST_REQUIRE_EQUAL(1U, comm.q.size());
+    BOOST_CHECK_EQUAL(0U, append_response_traits::recipient_id(boost::get<append_response_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_response_traits::term_number(boost::get<append_response_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_response_traits::request_term_number(boost::get<append_response_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(2U, append_response_traits::request_id(boost::get<append_response_arg_type>(comm.q.back())));
+    BOOST_CHECK(append_response_traits::success(boost::get<append_response_arg_type>(comm.q.back())));
+    comm.q.pop_back();
+  }
+
   void JointConsensusAddServerNewLeaderFinishesCommit()
   {
     // As FOLLOWER, get a transitional config from the leader
@@ -3281,6 +3340,18 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedJointConsensusAddServerLostLeadershipSucc
 {
   RaftTestBase<_TestType> t;
   t.JointConsensusAddServerLostLeadershipSuccess();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedCandidateVoteRequestAtSameTerm, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.CandidateVoteRequestAtSameTerm();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedCandidateAppendEntriesAtSameTerm, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.CandidateAppendEntriesAtSameTerm();
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedJointConsensusAddServerNewLeaderFinishesCommit, _TestType, test_types)

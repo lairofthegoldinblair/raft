@@ -1313,6 +1313,7 @@ namespace raft {
     ////////////////////////////
     void become_follower(uint64_t term, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
+      BOOST_ASSERT(term >= current_term_);
       if (term > current_term_) {
 	BOOST_ASSERT(can_become_follower_at_term(term));
 	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
@@ -1354,6 +1355,18 @@ namespace raft {
           }
         }
         state_machine_applied_continuations_.clear();
+      } else if (state_ != FOLLOWER) {
+        // If we are LEADER then can't become FOLLOWER at same term, so must be CANDIDATE
+        BOOST_ASSERT(state_ == CANDIDATE);
+        BOOST_ASSERT(0 == request_id_quorum_continuations_.size());
+        BOOST_ASSERT(0 == state_machine_applied_continuations_.size());
+        BOOST_ASSERT(leader_read_only_commit_fence_ == std::numeric_limits<uint64_t>::max());
+        // TODO: We cancel checkpoint when becoming CANDIDATE, is it worth adding a method to server_checkpoint
+        // just to be able to assert that there isn't an in-progress checkpoint?
+        BOOST_ASSERT(can_become_follower_at_term(term));
+        BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+          " becoming FOLLOWER at term " << term;
+        state_ = FOLLOWER;
       }
 
       // TODO: If transitioning from leader there may be a log sync to disk
