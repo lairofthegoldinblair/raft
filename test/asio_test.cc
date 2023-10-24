@@ -11,6 +11,8 @@
 #include <boost/log/sinks/text_file_backend.hpp>
 #include <boost/mpl/list.hpp>
 
+#include "test_utilities.hh"
+
 #include "asio/asio_server.hh"
 #include "asio/asio_block_device.hh"
 #include "leveldb_log.hh"
@@ -518,6 +520,83 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftClientResponseSerializationTest, _TestType, te
   BOOST_TEST(client_response_traits::leader_id(msg1) == 23);
 }
 
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioWriteQueueTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::linearizable_command_traits_type linearizable_command_traits;
+  typedef typename _TestType::builders_type::linearizable_command_builder_type linearizable_command_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  typedef std::deque<std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>> write_queue_type;
+
+  write_queue_type write_queue;
+
+  std::string command_str("This is a command");
+
+  uint64_t next_push_sequence_number = 0;
+  uint64_t next_pop_sequence_number = 0;
+
+  for ( ; next_push_sequence_number < 10; ++next_push_sequence_number) {
+    linearizable_command_builder bld;
+    auto msg = bld.session_id(8886234).first_unacknowledged_sequence_number(62355342).sequence_number(next_push_sequence_number).command(raft::slice::create(command_str)).finish();    
+    auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+    BOOST_TEST_REQUIRE((nullptr != result.first[0].data() && nullptr != result.first[1].data()));
+    auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+    BOOST_CHECK_EQUAL(serialization_type::LINEARIZABLE_COMMAND, header->operation);
+    BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+    write_queue.push_front(std::move(result));
+  }
+  for (; next_pop_sequence_number<10; ++next_pop_sequence_number) {
+    BOOST_TEST_REQUIRE((nullptr != write_queue.back().first[0].data() && nullptr != write_queue.back().first[1].data()));
+    auto result = std::move(write_queue.back());
+    auto msg1 = serialization_type::deserialize_linearizable_command(result.first[1], std::move(result.second));
+    BOOST_CHECK_EQUAL(8886234U, linearizable_command_traits::session_id(msg1));
+    BOOST_CHECK_EQUAL(62355342U, linearizable_command_traits::first_unacknowledged_sequence_number(msg1));
+    BOOST_CHECK_EQUAL(next_pop_sequence_number, linearizable_command_traits::sequence_number(msg1));
+    BOOST_CHECK_EQUAL(0, string_slice_compare(command_str, linearizable_command_traits::command(msg1)));
+    write_queue.pop_back();
+  }
+  for ( ; next_push_sequence_number < 15; ++next_push_sequence_number) {
+    linearizable_command_builder bld;
+    auto msg = bld.session_id(8886234).first_unacknowledged_sequence_number(62355342).sequence_number(next_push_sequence_number).command(raft::slice::create(command_str)).finish();    
+    auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+    BOOST_TEST_REQUIRE((nullptr != result.first[0].data() && nullptr != result.first[1].data()));
+    auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+    BOOST_CHECK_EQUAL(serialization_type::LINEARIZABLE_COMMAND, header->operation);
+    BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+    write_queue.push_front(std::move(result));
+  }
+  for (; next_pop_sequence_number<13; ++next_pop_sequence_number) {
+    BOOST_TEST_REQUIRE((nullptr != write_queue.back().first[0].data() && nullptr != write_queue.back().first[1].data()));
+    auto result = std::move(write_queue.back());
+    auto msg1 = serialization_type::deserialize_linearizable_command(result.first[1], std::move(result.second));
+    BOOST_CHECK_EQUAL(8886234U, linearizable_command_traits::session_id(msg1));
+    BOOST_CHECK_EQUAL(62355342U, linearizable_command_traits::first_unacknowledged_sequence_number(msg1));
+    BOOST_CHECK_EQUAL(next_pop_sequence_number, linearizable_command_traits::sequence_number(msg1));
+    BOOST_CHECK_EQUAL(0, string_slice_compare(command_str, linearizable_command_traits::command(msg1)));
+    write_queue.pop_back();
+  }
+  for ( ; next_push_sequence_number < 20; ++next_push_sequence_number) {
+    linearizable_command_builder bld;
+    auto msg = bld.session_id(8886234).first_unacknowledged_sequence_number(62355342).sequence_number(next_push_sequence_number).command(raft::slice::create(command_str)).finish();    
+    auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+    BOOST_TEST_REQUIRE((nullptr != result.first[0].data() && nullptr != result.first[1].data()));
+    auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+    BOOST_CHECK_EQUAL(serialization_type::LINEARIZABLE_COMMAND, header->operation);
+    BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+    write_queue.push_front(std::move(result));
+  }
+  for (; next_pop_sequence_number<20; ++next_pop_sequence_number) {
+    BOOST_TEST_REQUIRE((nullptr != write_queue.back().first[0].data() && nullptr != write_queue.back().first[1].data()));
+    auto result = std::move(write_queue.back());
+    auto msg1 = serialization_type::deserialize_linearizable_command(result.first[1], std::move(result.second));
+    BOOST_CHECK_EQUAL(8886234U, linearizable_command_traits::session_id(msg1));
+    BOOST_CHECK_EQUAL(62355342U, linearizable_command_traits::first_unacknowledged_sequence_number(msg1));
+    BOOST_CHECK_EQUAL(next_pop_sequence_number, linearizable_command_traits::sequence_number(msg1));
+    BOOST_CHECK_EQUAL(0, string_slice_compare(command_str, linearizable_command_traits::command(msg1)));
+    write_queue.pop_back();
+  }
+  BOOST_CHECK_EQUAL(0U, write_queue.size());
+}
+
 // This is the state machine.
 template<typename _Messages, typename _Serialization>
 struct logger
@@ -567,6 +646,35 @@ struct logger
   }
 };
 
+struct auto_io_service_thread
+{
+  bool shutdown_;
+  std::thread server_thread_;
+  auto_io_service_thread(boost::asio::io_service & ios)
+    :
+    shutdown_(false),
+    server_thread_([this, &ios]() {
+                     while(!this->shutdown_) {
+                       boost::system::error_code ec;
+                       ios.run_one(ec);
+                     }
+                   })
+  {
+  }
+  ~auto_io_service_thread()
+  {
+    shutdown();
+  }
+
+  void shutdown()
+  {
+    shutdown_ = true;
+    if (server_thread_.joinable()) {
+      server_thread_.join();
+    }
+  }
+};
+
 BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioTest, _TestType, test_types)
 {
   typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
@@ -611,14 +719,8 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioTest, _TestType, test_types)
 
   std::array<boost::asio::ip::tcp::endpoint, 3> client_endpoints = { cep1, cep2, cep3 };
 
-  bool shutdown = false;
-  std::thread server_thread([&shutdown, &ios]() {
-                              while(!shutdown) {
-                                boost::system::error_code ec;
-                                ios.run_one(ec);
-                              }
-                            });
-
+  auto_io_service_thread server_thread(ios);
+  
   // Wait for leadership to settle
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
@@ -675,7 +777,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioTest, _TestType, test_types)
     }
   }
   // Should be exactly one leader
-  BOOST_TEST(leader_id != std::numeric_limits<uint64_t>::max());
+  BOOST_TEST_REQUIRE(leader_id != std::numeric_limits<uint64_t>::max());
 
   // Append the following strings to the state machine
   std::array<std::string, 4> cmds = { "foo", "bar", "baz", "bat" };
@@ -748,8 +850,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioTest, _TestType, test_types)
     }
   }
 
-  shutdown = true;
-  server_thread.join();
+  server_thread.shutdown();
 
   for(auto s : servers) {
     BOOST_TEST_REQUIRE(cmds.size() == s->state_machine().commands.size());
@@ -1065,111 +1166,15 @@ BOOST_AUTO_TEST_CASE(RaftFlatBufferCreateBootstrapEntryTest)
   BOOST_CHECK_EQUAL(0, expected.compare(sdt::address(&scdt::get(&cdt::from(&let::configuration(msg.first)), 0))));
 }
 
-class flatbuffer_test_communicator
+class flatbuffer_base_communicator
 {
 public:
   typedef size_t endpoint;
 
-  void send(endpoint ep, const std::string& address, raft::fbs::flatbuffer_builder_adapter && msg)
-  {
-    q.push_front(std::move(msg));
-  }
-  
   void send(endpoint ep, const std::string& address, std::pair<const raft::fbs::raft_message *, raft::util::call_on_delete> && msg)
   {
     q2.push_front(std::move(msg));
   }
-  
-  void vote_request(endpoint ep, const std::string & address,
-		    uint64_t request_id,
-		    uint64_t recipient_id,
-		    uint64_t term_number,
-		    uint64_t candidate_id,
-		    uint64_t last_log_index,
-		    uint64_t last_log_term)
-  {
-    raft::fbs::request_vote_sender<flatbuffer_test_communicator> sender(*this, ep, address);
-    sender.send(request_id,
-                recipient_id,
-		term_number,
-		candidate_id,
-		last_log_index,
-		last_log_term);
-  }
-
-  template<typename EntryProvider>
-  void append_entry(endpoint ep, const std::string& address,
-	    uint64_t request_id,
-	    uint64_t recipient_id,
-	    uint64_t term_number,
-	    uint64_t leader_id,
-	    uint64_t previous_log_index,
-	    uint64_t previous_log_term,
-	    uint64_t leader_commit_index,
-	    uint64_t num_entries,
-	    EntryProvider entries)
-  {
-    raft::fbs::append_entry_sender<flatbuffer_test_communicator> sender(*this, ep, address);
-    sender.send(request_id,
-                recipient_id,
-		term_number,
-		leader_id,
-		previous_log_index,
-		previous_log_term,
-		leader_commit_index,
-		num_entries,
-		entries);
-  }
-	
-  void append_entry_response(endpoint ep, const std::string& address,
-			     uint64_t recipient_id,
-			     uint64_t term_number,
-			     uint64_t request_term_number,
-			     uint64_t request_id,
-			     uint64_t begin_index,
-			     uint64_t last_index,
-			     bool success)
-  {
-    raft::fbs::append_entry_response_sender<flatbuffer_test_communicator> sender(*this, ep, address);
-    sender.send(recipient_id, term_number, request_term_number, request_id, begin_index, last_index, success);
-  }
-
-  void vote_response(endpoint ep, const std::string& address,
-		     uint64_t peer_id,
-		     uint64_t term_number,
-		     uint64_t request_term_number,
-		     uint64_t request_id,
-		     bool granted)
-  {
-    raft::fbs::vote_response_sender<flatbuffer_test_communicator> sender(*this, ep, address);
-    sender.send(peer_id, term_number, request_term_number, request_id, granted);
-  }
-
-  void append_checkpoint_chunk(endpoint ep, const std::string& address,
-			       uint64_t request_id,
-			       uint64_t recipient_id,
-			       uint64_t term_number,
-			       uint64_t leader_id,
-			       const raft::fbs::checkpoint_header & last_checkpoint_header,
-			       uint64_t checkpoint_begin,
-			       uint64_t checkpoint_end,
-			       bool checkpoint_done,
-			       raft::slice data)
-  {
-  }		       
-  
-  void append_checkpoint_chunk_response(endpoint ep, const std::string& address,
-					uint64_t recipient_id,
-					uint64_t term_number,
-					uint64_t request_term_number,
-					uint64_t request_id,
-					uint64_t bytes_stored)
-  {
-    raft::fbs::append_checkpoint_chunk_response_sender<flatbuffer_test_communicator> sender(*this, ep, address);
-    sender.send(recipient_id, term_number, request_term_number, bytes_stored);
-  }
-
-  std::deque<raft::fbs::flatbuffer_builder_adapter> q;
   std::deque<std::pair<const raft::fbs::raft_message *, raft::util::call_on_delete>> q2;
 };
 
@@ -1178,7 +1183,7 @@ struct flatbuffer_communicator_metafunction
   template <typename _Messages>
   struct apply
   {
-    typedef flatbuffer_test_communicator type;
+    typedef raft::util::builder_communicator<raft::fbs::messages, raft::fbs::builders, flatbuffer_base_communicator> type;
   };
 };
 
@@ -1224,16 +1229,7 @@ public:
   }
 };
   
-struct native_client_metafunction
-{
-  template <typename _Messages>
-  struct apply
-  {
-    typedef raft::native::client<_Messages> type;
-  };
-};
-
-typedef raft::protocol<flatbuffer_communicator_metafunction, native_client_metafunction, raft::fbs::messages> test_raft_type;
+typedef raft::protocol<flatbuffer_communicator_metafunction, raft::test::native_client_metafunction, raft::fbs::messages> test_raft_type;
 
 BOOST_AUTO_TEST_CASE(RaftFlatBufferConstructProtocolTest)
 {
