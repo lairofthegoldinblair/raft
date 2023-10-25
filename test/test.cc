@@ -1904,6 +1904,30 @@ public:
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_response_traits::request_term_number(boost::get<append_checkpoint_chunk_response_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_response_traits::bytes_stored(boost::get<append_checkpoint_chunk_response_arg_type>(comm.q.back())));
     comm.q.pop_back();
+
+    BOOST_CHECK(l.empty());
+    BOOST_CHECK_EQUAL(2U, l.start_index());
+    BOOST_CHECK_EQUAL(2U, l.last_index());
+
+    // Make sure we can append the next entry
+    {
+      auto le = log_entry_builder().term(1U).cluster_time(initial_cluster_time).data("4").finish();
+      auto msg = append_entry_builder().recipient_id(0).term_number(1).leader_id(1).previous_log_index(2).previous_log_term(1).leader_commit_index(2).entry(le).finish();
+      s->on_append_entry(std::move(msg));
+    }
+    BOOST_CHECK_EQUAL(0U, comm.q.size());
+    s->on_log_sync(3);
+    BOOST_CHECK_EQUAL(1U, s->current_term());
+    BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
+    BOOST_REQUIRE_EQUAL(1U, comm.q.size());
+    BOOST_CHECK_EQUAL(0U, append_response_traits::recipient_id(boost::get<append_response_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_response_traits::term_number(boost::get<append_response_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_response_traits::request_term_number(boost::get<append_response_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(2, append_response_traits::begin_index(boost::get<append_response_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(3, append_response_traits::last_index(boost::get<append_response_arg_type>(comm.q.back())));
+    BOOST_CHECK(append_response_traits::success(boost::get<append_response_arg_type>(comm.q.back())));
+    comm.q.pop_back();
   }
 
   void AppendCheckpointChunkSlowHeaderSync()
