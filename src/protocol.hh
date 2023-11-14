@@ -729,6 +729,7 @@ namespace raft {
 	  // TODO: The answer appears to be yes and it is just confusing to be using both of them
 	  // at this point.  Pick one or the other.
 	  //
+          BOOST_ASSERT(p.next_index_ == previous_log_index);
 
 	  // // TODO: For efficiency avoid sending actual data in messages unless p.is_next_index_reliable_ == true
 	  uint64_t log_entries_sent = (uint64_t) (last_log_entry_index() - p.next_index_);
@@ -1045,8 +1046,8 @@ namespace raft {
 	  continue;
 	}
 	if (last_log_entry_index() > entry_log_index) {
-	  if (log_.term(entry_log_index) == current_term_) {
-	    // We've already got this message, keep looking for something new.
+	  if (log_.term(entry_log_index) == log_entry_traits_type::term(&ae::get_entry(req, it))) {
+	    // We've already got this log entry, keep looking for something new.
 	    continue;
 	  }
 	  // We've got some uncommitted cruft in our log.  Truncate it and then start appending with

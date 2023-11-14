@@ -1856,6 +1856,85 @@ public:
     BOOST_CHECK(log_header_write_.empty());
   }
 
+  void AppendEntriesTruncateUncommitted()
+  {
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    // Append 3 committed entries at each of term 1 and 2, 3 uncommitted entries at term 3
+    uint64_t idx=0;
+    uint64_t commit_idx=0;
+    for(uint64_t term=1; term<4; ++term) {
+      for(std::size_t i=0; i<3; ++i, ++idx) {
+        // This term sequence goes 0,1,1,1,2,2,2,3,3,3,...
+        auto current_term = (idx+2)/3;
+        // auto current_term = s->current_term();
+        if (term < 3) {
+          ++commit_idx;
+        }
+        {
+          // Term not valid when index=0 (empty log)
+          auto le = log_entry_builder().term(term).cluster_time(7823).data("1").finish();
+          auto msg = append_entry_builder().recipient_id(0).term_number(term).leader_id(1).previous_log_index(idx).previous_log_term(current_term).leader_commit_index(commit_idx).entry(le).finish();
+          this->s->on_append_entry(std::move(msg));
+        }
+        if (term != current_term) {
+          BOOST_CHECK_EQUAL(initial_cluster_time, this->s->cluster_time());
+          BOOST_CHECK(this->s->log_header_sync_required());
+          this->s->on_log_header_sync();
+        }
+        BOOST_CHECK(!this->s->log_header_sync_required());
+        BOOST_CHECK_EQUAL(term, this->s->current_term());
+        BOOST_CHECK_EQUAL(7823U, this->s->cluster_time());
+        BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
+        BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+        initial_cluster_time = 7823U;
+
+        this->s->on_log_sync(idx+1);
+        BOOST_CHECK_EQUAL(term, this->s->current_term());
+        BOOST_CHECK_EQUAL(7823U, this->s->cluster_time());
+        BOOST_CHECK_EQUAL(commit_idx, this->s->commit_index());
+        BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
+        BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+        BOOST_CHECK_EQUAL(0U, append_response_traits::recipient_id(boost::get<append_response_arg_type>(this->comm.q.back())));
+        BOOST_CHECK_EQUAL(term, append_response_traits::term_number(boost::get<append_response_arg_type>(this->comm.q.back())));
+        BOOST_CHECK_EQUAL(term, append_response_traits::request_term_number(boost::get<append_response_arg_type>(this->comm.q.back())));
+        BOOST_CHECK_EQUAL(idx, append_response_traits::begin_index(boost::get<append_response_arg_type>(this->comm.q.back())));
+        BOOST_CHECK_EQUAL(idx+1U, append_response_traits::last_index(boost::get<append_response_arg_type>(this->comm.q.back())));
+        BOOST_CHECK(append_response_traits::success(boost::get<append_response_arg_type>(this->comm.q.back())));
+        this->comm.q.pop_back();
+      }
+    }
+    // New leader sends the existing 3 committed entries at each of term 1 and 2 plus 3 new committed entries at term 4 that
+    // truncating of log suffix from [6,9) prior to replacement
+    idx=0;
+    append_entry_builder bld;
+    bld.recipient_id(0).term_number(10).leader_id(2).previous_log_index(0).previous_log_term(0).leader_commit_index(9U);
+    std::array<uint64_t,3> terms = {1,2,4};
+    std::array<uint64_t,9> previous_log_term = { 0,1,1,1,2,2,2,4,4 };
+    for(auto term : terms) {
+      for(std::size_t i=0; i<3; ++i, ++idx) {
+        bld.entry(log_entry_builder().term(term).cluster_time(7823).data("1").finish());
+      }
+    }
+    this->s->on_append_entry(bld.finish());
+    uint64_t term=10;
+    BOOST_CHECK_EQUAL(initial_cluster_time, this->s->cluster_time());
+    BOOST_CHECK(this->s->log_header_sync_required());
+    this->s->on_log_header_sync();
+    this->s->on_log_sync(9U);
+    BOOST_CHECK_EQUAL(term, this->s->current_term());
+    BOOST_CHECK_EQUAL(7823U, this->s->cluster_time());
+    BOOST_CHECK_EQUAL(9U, this->s->commit_index());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
+    BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, append_response_traits::recipient_id(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_response_traits::term_number(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_response_traits::request_term_number(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(6U, append_response_traits::begin_index(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(9U, append_response_traits::last_index(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK(append_response_traits::success(boost::get<append_response_arg_type>(this->comm.q.back())));
+    this->comm.q.pop_back();
+  }
+  
   // Test the transition from follower to candiate to follower
   void FollowerToCandidateToFollower()
   {
@@ -3432,6 +3511,12 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesSlowHeaderSync, _TestType, t
 {
   RaftTestBase<_TestType> t;
   t.AppendEntriesSlowHeaderSync();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesTruncateUncommitted, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.AppendEntriesTruncateUncommitted();
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedFollowerToCandidateToFollower, _TestType, test_types)
