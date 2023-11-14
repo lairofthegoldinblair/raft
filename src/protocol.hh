@@ -1059,6 +1059,9 @@ namespace raft {
 	    ".  Committed portion of log is [0," << last_committed_index_ << ")";
 	  BOOST_ASSERT(last_committed_index_ <= entry_log_index);
 	  log_.truncate_suffix(entry_log_index);
+          if (last_synced_index_ > entry_log_index) {
+            last_synced_index_ = entry_log_index;
+          }
 	  // If we are truncating a transitional configuration then we have learned that an attempt to set
 	  // configuration has failed.  We need to tell the client this and reset to the prior stable configuration.
 	  // TODO: Is this necessarily only going to be true where the config change originated?  E.g. couldn't I be a
@@ -1276,6 +1279,10 @@ namespace raft {
 	configuration_.truncate_prefix(last_index);
 	configuration_.truncate_suffix(last_index);
 
+        if (last_synced_index_ > last_index) {
+          last_synced_index_ = last_index;
+        }
+
         // Log is emptied so cluster time needs to be reset to the cluster time of the
         // checkpoint itself
         cluster_clock_.set(last_cluster_time, clock_now);
@@ -1416,6 +1423,7 @@ namespace raft {
 	state_ = CANDIDATE;
 	election_timeout_ = new_election_timeout(clock_now);
 	voted_for_ = &self();
+        leader_id_ = INVALID_PEER_ID;
 	// Log and flush
 	log_header_sync_required_ = true;
 	log_.update_header(current_term_, voted_for_->peer_id);

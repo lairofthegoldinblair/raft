@@ -1856,6 +1856,158 @@ public:
     BOOST_CHECK(log_header_write_.empty());
   }
 
+  // Test the transition from follower to candiate to follower
+  void FollowerToCandidateToFollower()
+  {
+    uint64_t term = 1;
+    uint64_t cluster_time = 7823;
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    {
+      // Term not valid when index=0 (empty log)
+      auto le = log_entry_builder().term(term).cluster_time(cluster_time).data("1").finish();
+      auto msg = append_entry_builder().recipient_id(0).term_number(term).leader_id(1).previous_log_index(0).previous_log_term(0).leader_commit_index(0).entry(le).finish();
+      this->s->on_append_entry(std::move(msg));
+    }
+    BOOST_CHECK_EQUAL(initial_cluster_time, this->s->cluster_time());
+    BOOST_CHECK(this->s->log_header_sync_required());
+    this->s->on_log_header_sync();
+    BOOST_CHECK(!this->s->log_header_sync_required());
+    BOOST_CHECK_EQUAL(term, this->s->current_term());
+    BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+
+    this->s->on_log_sync(1);
+    BOOST_CHECK_EQUAL(term, this->s->current_term());
+    BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
+    BOOST_CHECK_EQUAL(1U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, append_response_traits::recipient_id(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_response_traits::term_number(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_response_traits::request_term_number(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_response_traits::begin_index(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_response_traits::last_index(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK(append_response_traits::success(boost::get<append_response_arg_type>(this->comm.q.back())));
+    this->comm.q.pop_back();
+
+    // Run timer then we should become CANDIDATE
+    auto now = std::chrono::steady_clock::now();
+    now += std::chrono::milliseconds(500);
+    s->on_timer(now);
+    BOOST_CHECK_EQUAL(term+1U, s->current_term());
+    BOOST_CHECK_EQUAL(cluster_time, s->cluster_time());
+    BOOST_CHECK_EQUAL(test_raft_type::CANDIDATE, s->get_state());
+    BOOST_CHECK(s->log_header_sync_required());
+    now += std::chrono::milliseconds(500);
+    s->on_log_header_sync(now);
+    BOOST_CHECK(!s->log_header_sync_required());
+    BOOST_CHECK_EQUAL(test_raft_type::CANDIDATE, s->get_state());
+    
+    BOOST_CHECK_EQUAL(4U, comm.q.size());
+    uint32_t expected = 1;
+    while(comm.q.size() > 0) {
+      BOOST_CHECK_EQUAL(expected, request_vote_traits::recipient_id(boost::get<request_vote_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, request_vote_traits::candidate_id(boost::get<request_vote_arg_type>(comm.q.back())));
+      BOOST_CHECK_EQUAL(term + 1U, request_vote_traits::term_number(boost::get<request_vote_arg_type>(comm.q.back())));
+      expected += 1;
+      comm.q.pop_back();
+    }
+
+    // Now transition back to FOLLOWER with append entry and a different leader
+    term += 1;
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    {
+      // Term not valid when index=0 (empty log)
+      auto le = log_entry_builder().term(term).cluster_time(cluster_time).data("1").finish();
+      auto msg = append_entry_builder().recipient_id(0).term_number(term).leader_id(2).previous_log_index(0).previous_log_term(0).leader_commit_index(0).entry(le).finish();
+      this->s->on_append_entry(std::move(msg));
+    }
+    BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
+    // No header sync necessary because term didn't change
+    BOOST_CHECK(!this->s->log_header_sync_required());
+    BOOST_CHECK_EQUAL(term, this->s->current_term());
+    BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    this->s->on_log_sync(1);
+    BOOST_CHECK_EQUAL(term, this->s->current_term());
+    BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
+    BOOST_CHECK_EQUAL(1U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, append_response_traits::recipient_id(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_response_traits::term_number(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_response_traits::request_term_number(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_response_traits::begin_index(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_response_traits::last_index(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK(append_response_traits::success(boost::get<append_response_arg_type>(this->comm.q.back())));
+    this->comm.q.pop_back();
+  }
+  
+  // Test the transition from follower to follower
+  void FollowerToFollower()
+  {
+    uint64_t term = 1;
+    uint64_t cluster_time = 7823;
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    {
+      // Term not valid when index=0 (empty log)
+      auto le = log_entry_builder().term(term).cluster_time(cluster_time).data("1").finish();
+      auto msg = append_entry_builder().recipient_id(0).term_number(term).leader_id(1).previous_log_index(0).previous_log_term(0).leader_commit_index(0).entry(le).finish();
+      this->s->on_append_entry(std::move(msg));
+    }
+    BOOST_CHECK_EQUAL(initial_cluster_time, this->s->cluster_time());
+    BOOST_CHECK(this->s->log_header_sync_required());
+    this->s->on_log_header_sync();
+    BOOST_CHECK(!this->s->log_header_sync_required());
+    BOOST_CHECK_EQUAL(term, this->s->current_term());
+    BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+
+    this->s->on_log_sync(1);
+    BOOST_CHECK_EQUAL(term, this->s->current_term());
+    BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
+    BOOST_CHECK_EQUAL(1U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, append_response_traits::recipient_id(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_response_traits::term_number(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_response_traits::request_term_number(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_response_traits::begin_index(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_response_traits::last_index(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK(append_response_traits::success(boost::get<append_response_arg_type>(this->comm.q.back())));
+    this->comm.q.pop_back();
+
+    // Now append entry with a different leader and term
+    term += 1;
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    {
+      // Term not valid when index=0 (empty log)
+      auto le = log_entry_builder().term(term).cluster_time(cluster_time).data("1").finish();
+      auto msg = append_entry_builder().recipient_id(0).term_number(term).leader_id(2).previous_log_index(0).previous_log_term(0).leader_commit_index(0).entry(le).finish();
+      this->s->on_append_entry(std::move(msg));
+    }
+    BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
+    BOOST_CHECK(this->s->log_header_sync_required());
+    this->s->on_log_header_sync();
+    BOOST_CHECK(!this->s->log_header_sync_required());
+    BOOST_CHECK_EQUAL(term, this->s->current_term());
+    BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    this->s->on_log_sync(1);
+    BOOST_CHECK_EQUAL(term, this->s->current_term());
+    BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
+    BOOST_CHECK_EQUAL(1U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, append_response_traits::recipient_id(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_response_traits::term_number(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_response_traits::request_term_number(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_response_traits::begin_index(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_response_traits::last_index(boost::get<append_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK(append_response_traits::success(boost::get<append_response_arg_type>(this->comm.q.back())));
+    this->comm.q.pop_back();
+  }
+  
   void AppendCheckpointChunk()
   {
     {
@@ -3280,6 +3432,18 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesSlowHeaderSync, _TestType, t
 {
   RaftTestBase<_TestType> t;
   t.AppendEntriesSlowHeaderSync();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedFollowerToCandidateToFollower, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.FollowerToCandidateToFollower();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedFollowerToFollower, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.FollowerToFollower();
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendCheckpointChunk, _TestType, test_types)
