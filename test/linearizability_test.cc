@@ -1846,7 +1846,11 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
       expected += 1;
       this->comm.q.pop_back();
     }
-    // Timer goes off and we resend append entries to finish commit
+    // Retransmit timer goes off and we resend append entries to finish commit
+    this->now = this->now + std::chrono::milliseconds(1);
+    this->protocol->on_timer(this->now);
+    BOOST_TEST(0U == this->comm.q.size());
+    this->now = this->now + std::chrono::milliseconds(1);
     this->protocol->on_timer(this->now);
     BOOST_TEST(3U == this->comm.q.size());
     expected = 2;

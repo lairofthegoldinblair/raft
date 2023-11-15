@@ -45,6 +45,58 @@ namespace raft {
     }
   };
 
+  class peer_scheduler
+  {
+  private:
+    uint64_t max_index_sent_=0;
+    std::chrono::time_point<std::chrono::steady_clock> retransmit_timeout_;
+    uint32_t delay_milliseconds_=1;
+
+  public:
+    void init(std::chrono::time_point<std::chrono::steady_clock> now)
+    {
+      max_index_sent_ = 0;
+      retransmit_timeout_ = now;
+      // Should we remember this from the last time we were leader?
+      delay_milliseconds_ = 1;
+    }
+    
+    bool can_send(std::chrono::time_point<std::chrono::steady_clock> now, uint64_t max_index)
+    {
+      if (max_index > max_index_sent_) {
+        // No flow control yet, always allow new index to be sent
+        max_index_sent_ = max_index;
+        retransmit_timeout_ = now + std::chrono::milliseconds(delay_milliseconds_);
+        return true;
+      } else if (now > retransmit_timeout_) {
+        // This implies a dropped packet, so increase delay
+        delay_milliseconds_ *= 2;
+        retransmit_timeout_ = now + std::chrono::milliseconds(delay_milliseconds_);
+        return true;
+      }
+      return false;
+    }
+
+    void ack(std::chrono::time_point<std::chrono::steady_clock> now, uint64_t max_index)
+    {
+      if (max_index != max_index_sent_)
+        return;
+
+      // TOOD: How to account for retransmits (e.g. Karn's algorithm)?   We may be getting an ack for a previously
+      // sent message.
+      if (delay_milliseconds_ > 0) {
+        delay_milliseconds_ -= std::min(delay_milliseconds_-1, 10U);
+      } else {
+        delay_milliseconds_ = 1;
+      }
+    }
+
+    std::chrono::time_point<std::chrono::steady_clock> retransmit_timeout() const
+    {
+      return retransmit_timeout_;
+    }
+  };
+
   // A peer encapsulates what a server knows about other servers in the cluster
   template<typename checkpoint_data_store_type, typename configuration_change_type>
   class peer
@@ -75,7 +127,10 @@ namespace raft {
     // State for tracking whether a peer that is newly added to a configuration tracking
     // log appends
     std::shared_ptr<configuration_change_type> configuration_change_;
-
+    // Used only when LEADER; this is for congestion control when sending append entries to a potentially slow peer.
+    // tells us when we can next send an append entries.
+    peer_scheduler scheduler_;
+    
     void acknowledge_request_id(uint64_t request_id)
     {
       // TODO: Should we allow request id to go backwards?

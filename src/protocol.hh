@@ -721,26 +721,33 @@ namespace raft {
 	    continue;
 	  }
 
-	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	    " sending append_entry to peer " << i << "; request_id=" << request_id_ << " last_log_entry_index()=" << last_log_entry_index() <<
-	    " peer.match_index=" << p.match_index_ << "; peer.next_index_=" << p.next_index_;
+          if (p.scheduler_.can_send(clock_now, last_log_entry_index())) {
+            BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+              " sending append_entry to peer " << i << "; request_id=" << request_id_ << " last_log_entry_index()=" << last_log_entry_index() <<
+              " peer.match_index=" << p.match_index_ << "; peer.next_index_=" << p.next_index_;
 
-	  // Are p.next_index_ and previous_log_index equal at this point?
-	  // TODO: The answer appears to be yes and it is just confusing to be using both of them
-	  // at this point.  Pick one or the other.
-	  //
-          BOOST_ASSERT(p.next_index_ == previous_log_index);
+            // Are p.next_index_ and previous_log_index equal at this point?
+            // TODO: The answer appears to be yes and it is just confusing to be using both of them
+            // at this point.  Pick one or the other.
+            //
+            BOOST_ASSERT(p.next_index_ == previous_log_index);
 
-	  // // TODO: For efficiency avoid sending actual data in messages unless p.is_next_index_reliable_ == true
-	  uint64_t log_entries_sent = (uint64_t) (last_log_entry_index() - p.next_index_);
-	  comm_.append_entry(p.peer_id, p.address, request_id_, i, current_term_, my_cluster_id(), previous_log_index, previous_log_term,
-			     std::min(last_committed_index_, previous_log_index+log_entries_sent),
-			     log_entries_sent,
-			     [this, &p](uint64_t i) -> const log_entry_type & {
-			       return this->log_.entry(p.next_index_ + i);
-			     });
-	  p.requires_heartbeat_ = new_heartbeat_timeout(clock_now);
-	}
+            // // TODO: For efficiency avoid sending actual data in messages unless p.is_next_index_reliable_ == true
+            uint64_t log_entries_sent = (uint64_t) (last_log_entry_index() - p.next_index_);
+            comm_.append_entry(p.peer_id, p.address, request_id_, i, current_term_, my_cluster_id(), previous_log_index, previous_log_term,
+                               std::min(last_committed_index_, previous_log_index+log_entries_sent),
+                               log_entries_sent,
+                               [this, &p](uint64_t i) -> const log_entry_type & {
+                                 return this->log_.entry(p.next_index_ + i);
+                               });
+            p.requires_heartbeat_ = new_heartbeat_timeout(clock_now);
+          } else {
+            BOOST_LOG_TRIVIAL(trace) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+              " can't send append_entry to peer " << i << " for range [" << p.next_index_ << ","
+                                     << last_log_entry_index() << ") for " << std::chrono::duration_cast<std::chrono::milliseconds>(p.scheduler_.retransmit_timeout()-clock_now).count()
+                                     << " milliseconds";
+          }
+        }          
       }
     }
 
@@ -1483,6 +1490,7 @@ namespace raft {
 	  p.next_index_ = last_log_entry_index();
 	  p.is_next_index_reliable_ = false;
 	  p.match_index_ = 0;
+          p.scheduler_.init(clock_now);
 	  p.checkpoint_.reset();
 	} else {
 	  // TODO: Is this really guaranteed to be true (i.e. the last log entry is synced)?
@@ -2093,6 +2101,7 @@ namespace raft {
       }
       peer_type & p(peer_from_id(ae::recipient_id(resp)));
       p.acknowledge_request_id(ae::request_id(resp));
+      p.scheduler_.ack(clock_now, ae::last_index(resp));
       update_last_request_id_quorum();        
       if (ae::success(resp)) {
 	if (p.match_index_ > ae::last_index(resp)) {

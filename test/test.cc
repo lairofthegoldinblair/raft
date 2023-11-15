@@ -23,6 +23,47 @@
 #define BOOST_TEST_MODULE RaftTests
 #include <boost/test/unit_test.hpp>
 
+BOOST_AUTO_TEST_CASE(PeerSchedulerTest)
+{
+  raft::peer_scheduler scheduler;
+  auto now = std::chrono::steady_clock::now();
+  scheduler.init(now);
+  // First multiplicative increase
+  BOOST_CHECK(scheduler.can_send(now, 1));
+  for(uint32_t j=1; j<=128; j*=2) {
+    for(uint32_t i=0; i<=j; ++i) {
+      BOOST_CHECK(!scheduler.can_send(now+std::chrono::milliseconds(i), 1));
+    }
+    BOOST_CHECK(scheduler.can_send(now+std::chrono::milliseconds(j+1), 1));
+    // Timer resets
+    now = now+std::chrono::milliseconds(j+1);
+  }
+  // A new max index will be sent using the same delay
+  BOOST_CHECK(scheduler.can_send(now, 2));
+  BOOST_CHECK(!scheduler.can_send(now+std::chrono::milliseconds(256), 2));
+  BOOST_CHECK(scheduler.can_send(now+std::chrono::milliseconds(257), 2));
+  now = now+std::chrono::milliseconds(257);
+  // Send ack for previous index, no change in delay
+  scheduler.ack(now, 1);
+  BOOST_CHECK(!scheduler.can_send(now+std::chrono::milliseconds(512), 2));
+  BOOST_CHECK(scheduler.can_send(now+std::chrono::milliseconds(513), 2));
+  now = now+std::chrono::milliseconds(513);
+  // Send an ack and we should get additive decrease of delay by 10 milliseconds
+  scheduler.ack(now, 2);
+  BOOST_CHECK(scheduler.can_send(now, 3));
+  BOOST_CHECK(!scheduler.can_send(now+std::chrono::milliseconds(1014), 3));
+  BOOST_CHECK(scheduler.can_send(now+std::chrono::milliseconds(1015), 3));
+  now = now+std::chrono::milliseconds(1015);
+  // Additive decrease of delay should stop at 1 milli
+  for(uint64_t idx=4; idx<250; ++idx) {
+    BOOST_CHECK(scheduler.can_send(now, idx));
+    scheduler.ack(now, idx);
+  }
+  BOOST_CHECK(scheduler.can_send(now, 250));
+  BOOST_CHECK(!scheduler.can_send(now+std::chrono::milliseconds(1), 250));
+  BOOST_CHECK(scheduler.can_send(now+std::chrono::milliseconds(2), 250));  
+}
+
 // Tests of native types and traits
 BOOST_AUTO_TEST_CASE(testSimpleConfigurationTraits)
 {
@@ -1524,25 +1565,33 @@ public:
   }
   void AppendEntriesNegativeResponse()
   {
+    auto now = std::chrono::steady_clock::now();
     // Make me leader
-    make_leader(1);
+    now = make_leader(1, now);
     // Client request to trigger append entries
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     std::string command_str("1");
     auto cli_req = client_request_builder().command(raft::slice::create(command_str)).finish();
-    s->on_client_request(c, std::move(cli_req));
-    // TODO: Use synthetic time and be more precise
-    BOOST_TEST(initial_cluster_time < s->cluster_time());
+    now = now + std::chrono::milliseconds(1);
+    s->on_client_request(c, std::move(cli_req), now);
+    BOOST_TEST(initial_cluster_time + 1000000 == s->cluster_time());
     initial_cluster_time = s->cluster_time();
     
     // On first attempt have clients respond negatively.  On second have them succeed
     for(std::size_t attempt=0; attempt<=1; ++attempt) {
       std::cout << "AppendEntriesNegativeResponse attempt " << attempt << std::endl;
       // Wait so the server will try to send log records.
-      s->on_timer();
+      s->on_timer(now);
       BOOST_CHECK_EQUAL(1U, s->current_term());
       BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
       BOOST_CHECK_EQUAL(raft_type::LEADER, s->get_state());
+      if (1 == attempt) {
+        BOOST_CHECK_EQUAL(0, comm.q.size());
+        s->on_timer(now + std::chrono::milliseconds(2));
+        BOOST_CHECK_EQUAL(1U, s->current_term());
+        BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
+        BOOST_CHECK_EQUAL(raft_type::LEADER, s->get_state());
+      }
       BOOST_CHECK_EQUAL(num_known_peers()-1, comm.q.size());
       uint64_t expected = 1;
       while(comm.q.size() > 0) {
@@ -1557,7 +1606,7 @@ public:
 	BOOST_CHECK_EQUAL(1U, log_entry_traits::term(&append_entry_traits::get_entry(boost::get<append_entry_arg_type>(comm.q.back()), attempt)));
 	BOOST_CHECK_EQUAL(0, string_slice_compare("1", log_entry_traits::data(&append_entry_traits::get_entry(boost::get<append_entry_arg_type>(comm.q.back()), attempt))));
 	auto resp = append_response_builder().recipient_id(expected).term_number(1).request_term_number(1).begin_index(attempt == 0 ? 1 : 0).last_index(attempt == 0 ? 1 : 2).success(attempt == 0 ? false : true).finish();
-	s->on_append_response(std::move(resp));
+	s->on_append_response(std::move(resp), now);
 	if (attempt==0 || expected!=3) {
 	  BOOST_CHECK_EQUAL(0U, c.responses.size());
 	} else {
@@ -3155,6 +3204,7 @@ public:
 
   void JointConsensusAddServerNewLeaderFinishesCommit()
   {
+    auto now = std::chrono::steady_clock::now();
     // As FOLLOWER, get a transitional config from the leader
     BOOST_CHECK(cm->configuration().is_stable());
     uint64_t term=0;
@@ -3172,19 +3222,25 @@ public:
       aeb.entry(leb.finish());
     }
     auto msg = aeb.finish();
-    s->on_append_entry(std::move(msg));
+    s->on_append_entry(std::move(msg), now);
     BOOST_CHECK(cm->configuration().is_transitional());
     auto & le(l.entry(l.last_index()-1));
     BOOST_CHECK(log_entry_traits::is_configuration(&le));
     BOOST_CHECK_EQUAL(5U, simple_configuration_description_traits::size(&configuration_description_traits::from(&log_entry_traits::configuration(&le))));
     BOOST_CHECK_EQUAL(6U, simple_configuration_description_traits::size(&configuration_description_traits::to(&log_entry_traits::configuration(&le))));
 
-    make_leader(term+1, false);
+    now = make_leader(term+1, now, false);
 
     // Now leader and have the config entry so should try to replicate it but a new leader
     // is optimistic and assumes that all peers have its log entries.  It will append a NOOP
-    // and replicate that.
-    s->on_timer();
+    // and replicate that.   We need the retransmit timer to go off so that we can see the entries
+    s->on_timer(now);
+    BOOST_CHECK_EQUAL(0, comm.q.size());
+    now += std::chrono::milliseconds(1);
+    s->on_timer(now);
+    BOOST_CHECK_EQUAL(0, comm.q.size());
+    now += std::chrono::milliseconds(1);
+    s->on_timer(now);
     uint64_t expected=1;
     BOOST_CHECK_EQUAL(num_known_peers() - 1U, comm.q.size());
     while(comm.q.size() > 0) {
@@ -3197,7 +3253,7 @@ public:
       BOOST_CHECK_EQUAL(term, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(comm.q.back())));
       BOOST_CHECK_EQUAL(1U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(comm.q.back())));
       auto resp = append_response_builder().recipient_id(expected).term_number(term+1).request_term_number(term+1).begin_index(log_index+1).last_index(log_index+2).success(true).finish();
-      s->on_append_response(std::move(resp));
+      s->on_append_response(std::move(resp), now);
       comm.q.pop_back();
 
       // We need quorum from both the old set of 5 servers and the new set of 6.
