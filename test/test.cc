@@ -654,7 +654,6 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(BasicTemplatedStateMachineTests, _TestType, test_t
   typedef typename _TestType::messages_type::append_checkpoint_chunk_traits_type append_checkpoint_chunk_traits;
   typedef typename _TestType::builders_type::append_checkpoint_chunk_builder_type append_checkpoint_chunk_builder;
   typedef typename _TestType::messages_type::log_entry_traits_type log_entry_traits;
-  typedef typename _TestType::builders_type::client_request_builder_type client_request_builder;
   typedef raft::protocol<raft::test::generic_communicator_metafunction, raft::test::native_client_metafunction, typename _TestType::messages_type> raft_type;
 
   auto time_base = std::chrono::steady_clock::now();
@@ -849,8 +848,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(BasicTemplatedStateMachineTests, _TestType, test_t
   now += std::chrono::milliseconds(500);
   cluster_now = now;
   std::string command_str("1");
-  auto cli_req = client_request_builder().command(raft::slice::create(command_str)).finish();
-  s.on_client_request(c, std::move(cli_req), now);
+  s.on_command(std::make_pair(raft::slice::create(command_str), raft::util::call_on_delete()), now);
   BOOST_CHECK_EQUAL(2U, s.current_term());
   BOOST_CHECK_EQUAL(get_cluster_time(time_base, cluster_now), s.cluster_time());
   BOOST_CHECK_EQUAL(test_raft_type::LEADER, s.get_state());
@@ -879,13 +877,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(BasicTemplatedStateMachineTests, _TestType, test_t
     BOOST_CHECK_EQUAL(0, string_slice_compare("1", log_entry_traits::data(&append_entry_traits::get_entry(boost::get<append_entry_arg_type>(comm.q.back()), 0))));
     auto resp = append_response_builder().recipient_id(expected).term_number(2).request_term_number(2).begin_index(1).last_index(2).success(true).finish();
     s.on_append_response(std::move(resp), now);
-    if (expected!=3) {
-      BOOST_CHECK_EQUAL(0U, c.responses.size());
-    } else {
-      // Majority vote!
-      BOOST_CHECK_EQUAL(1U, c.responses.size());
-      c.responses.pop_back();
-    }
+    BOOST_CHECK_EQUAL(0U, c.responses.size());
     if (expected<3) {
       BOOST_CHECK_EQUAL(1U, s.commit_index());
     } else {
@@ -900,8 +892,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(BasicTemplatedStateMachineTests, _TestType, test_t
   now += std::chrono::milliseconds(100);
   cluster_now = now;
   command_str.assign("2");
-  cli_req = client_request_builder().command(raft::slice::create(command_str)).finish();
-  s.on_client_request(c, std::move(cli_req), now);
+  s.on_command(std::make_pair(raft::slice::create(command_str), raft::util::call_on_delete()), now);
   BOOST_CHECK_EQUAL(2U, s.current_term());
   BOOST_CHECK_EQUAL(get_cluster_time(time_base, cluster_now), s.cluster_time());
   BOOST_CHECK_EQUAL(test_raft_type::LEADER, s.get_state());
@@ -909,8 +900,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(BasicTemplatedStateMachineTests, _TestType, test_t
   now += std::chrono::milliseconds(100);
   cluster_now = now;
   command_str.assign("3");
-  cli_req = client_request_builder().command(raft::slice::create(command_str)).finish();
-  s.on_client_request(c, std::move(cli_req), now);
+  s.on_command(std::make_pair(raft::slice::create(command_str), raft::util::call_on_delete()), now);
   BOOST_CHECK_EQUAL(2U, s.current_term());
   BOOST_CHECK_EQUAL(get_cluster_time(time_base, cluster_now), s.cluster_time());
   BOOST_CHECK_EQUAL(test_raft_type::LEADER, s.get_state());
@@ -946,14 +936,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(BasicTemplatedStateMachineTests, _TestType, test_t
     if (expected<=2) {
       s.on_append_response(std::move(resp), now);
     }
-    if (expected!=2) {
-      BOOST_CHECK_EQUAL(0U, c.responses.size());
-    } else {
-      // Majority vote!
-      BOOST_CHECK_EQUAL(2U, c.responses.size());
-      c.responses.pop_back();
-      c.responses.pop_back();
-    }
+    BOOST_CHECK_EQUAL(0U, c.responses.size());
     if (expected<2) {
       BOOST_CHECK_EQUAL(2U, s.commit_index());
     } else {
@@ -968,8 +951,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(BasicTemplatedStateMachineTests, _TestType, test_t
   now += std::chrono::milliseconds(100);
   cluster_now = now;
   command_str.assign("4");
-  cli_req = client_request_builder().command(raft::slice::create(command_str)).finish();
-  s.on_client_request(c, std::move(cli_req), now);
+  s.on_command(std::make_pair(raft::slice::create(command_str), raft::util::call_on_delete()), now);
   BOOST_CHECK_EQUAL(2U, s.current_term());
   BOOST_CHECK_EQUAL(get_cluster_time(time_base, cluster_now), s.cluster_time());
   BOOST_CHECK_EQUAL(test_raft_type::LEADER, s.get_state());
@@ -1006,13 +988,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(BasicTemplatedStateMachineTests, _TestType, test_t
     }
     auto resp = append_response_builder().recipient_id(expected).term_number(2).request_term_number(2).begin_index(expected <= 2 ? 4 : 2).last_index(5).success(true).finish();
     s.on_append_response(std::move(resp), now);
-    if (expected!=3) {
-      BOOST_CHECK_EQUAL(0U, c.responses.size());
-    } else {
-      // Majority vote!
-      BOOST_CHECK_EQUAL(1U, c.responses.size());
-      c.responses.pop_back();
-    }
+    BOOST_CHECK_EQUAL(0U, c.responses.size());
     expected += 1;
     comm.q.pop_back();
   }
@@ -1117,7 +1093,6 @@ public:
   typedef typename _TestType::builders_type::append_checkpoint_chunk_response_builder_type append_checkpoint_chunk_response_builder;
   typedef typename _TestType::messages_type::checkpoint_header_traits_type checkpoint_header_traits;
   typedef typename _TestType::messages_type::log_entry_traits_type log_entry_traits;
-  typedef typename _TestType::builders_type::client_request_builder_type client_request_builder;
   typedef typename _TestType::messages_type::server_description_traits_type server_description_traits;
   typedef typename _TestType::messages_type::simple_configuration_description_traits_type simple_configuration_description_traits;
   typedef typename _TestType::messages_type::configuration_description_traits_type configuration_description_traits;
@@ -1424,9 +1399,8 @@ public:
     // Client request to trigger append entries
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     std::string command_str("1");
-    auto cli_req = client_request_builder().command(raft::slice::create(command_str)).finish();
     now = now + std::chrono::milliseconds(1);
-    s->on_client_request(c, std::move(cli_req), now);
+    s->on_command(std::make_pair(raft::slice::create(command_str), raft::util::call_on_delete()), now);
     BOOST_TEST(initial_cluster_time + 1000000 == s->cluster_time());
     initial_cluster_time = s->cluster_time();
     
@@ -1460,13 +1434,11 @@ public:
 	BOOST_CHECK_EQUAL(0, string_slice_compare("1", log_entry_traits::data(&append_entry_traits::get_entry(boost::get<append_entry_arg_type>(comm.q.back()), attempt))));
 	auto resp = append_response_builder().recipient_id(expected).term_number(1).request_term_number(1).begin_index(attempt == 0 ? 1 : 0).last_index(attempt == 0 ? 1 : 2).success(attempt == 0 ? false : true).finish();
 	s->on_append_response(std::move(resp), now);
-	if (attempt==0 || expected!=3) {
-	  BOOST_CHECK_EQUAL(0U, c.responses.size());
-	} else {
-	  // Majority vote!
-	  BOOST_CHECK_EQUAL(1U, c.responses.size());
-	  c.responses.pop_back();
-	}
+        if (attempt==0 || expected<3) {
+          BOOST_CHECK_EQUAL(1U, s->commit_index());
+        } else {
+          BOOST_CHECK_EQUAL(2U, s->commit_index());
+        }
 	expected += 1;
 	comm.q.pop_back();
       }
@@ -3233,11 +3205,11 @@ std::chrono::steady_clock::time_point RaftTestBase<_TestType>::send_client_reque
                                                                                    const boost::dynamic_bitset<> & send_responses_from,
                                                                                    std::chrono::steady_clock::time_point now)
 {
+  auto initial_commit_index = s->commit_index();
   // Fire off a client_request
   now += std::chrono::milliseconds(1);
   BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
-  auto cli_req = client_request_builder().command(raft::slice(reinterpret_cast<const uint8_t *>(cmd), ::strlen(cmd))).finish();
-  s->on_client_request(c, std::move(cli_req), now);
+  s->on_command(std::make_pair(raft::slice(reinterpret_cast<const uint8_t *>(cmd), ::strlen(cmd)), raft::util::call_on_delete()), now);
   BOOST_CHECK_EQUAL(term, s->current_term());
   // TODO: Use synthetic time and be more precise about this
   BOOST_TEST(initial_cluster_time < s->cluster_time());
@@ -3275,12 +3247,11 @@ std::chrono::steady_clock::time_point RaftTestBase<_TestType>::send_client_reque
     }
     auto resp = append_response_builder().recipient_id(expected).term_number(term).request_term_number(term).begin_index(client_index).last_index(client_index+1).success(send_responses_from.test(expected)).finish();
     s->on_append_response(std::move(resp), now);
-    if (num_responses!=3) {
-      BOOST_CHECK_EQUAL(0U, c.responses.size());
+    if (num_responses<3) {
+      BOOST_CHECK_EQUAL(initial_commit_index, s->commit_index());
     } else {
       // Majority vote!
-      BOOST_CHECK_EQUAL(1U, c.responses.size());
-      c.responses.pop_back();
+      BOOST_CHECK_EQUAL(initial_commit_index + 1U, s->commit_index());
     }
     comm.q.pop_back();
   }

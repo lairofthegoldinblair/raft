@@ -51,11 +51,6 @@ namespace raft {
       uint8_t success;
     };
     
-    class little_client_request
-    {
-    public:
-    };
-    
     class little_client_response
     {
     public:
@@ -525,14 +520,6 @@ namespace raft {
 	return msg;
       }
     
-      static raft::native::messages::client_request_type deserialize_client_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
-      {
-	raft::native::messages::client_request_type msg;
-	BOOST_ASSERT(b.first.size() >= sizeof(little_client_request));
-	deserialize_helper(b.first+0, msg.command);
-	return msg;
-      }
-    
       static raft::native::messages::client_response_type deserialize_client_response(std::pair<raft::slice, raft::util::call_on_delete> && b)
       {
 	raft::native::messages::client_response_type msg;
@@ -709,16 +696,6 @@ namespace raft {
 								  [buf]() { delete buf; });
       }
     
-      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::client_request_type && msg)
-      {
-        auto to_alloc = sizeof(little_client_request) + serialize_helper(msg.command);
-	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
-	auto sz = sizeof(little_client_request);
-	sz += serialize_helper(b+sz, msg.command);
-	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
-	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
-      }
-
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::client_response_type && msg)
       {
         auto to_alloc = sizeof(little_client_response) + serialize_helper(msg.response);

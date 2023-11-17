@@ -170,7 +170,6 @@ namespace raft {
       typedef _Communicator communicator_type;
       typedef _StateMachine state_machine_type;
       typedef typename communicator_type::endpoint_type endpoint_type;
-      typedef typename messages_type::client_request_traits_type client_request_traits_type;
       typedef typename messages_type::client_result_type client_result_type;
       typedef typename messages_type::log_entry_traits_type::const_arg_type log_entry_const_arg_type;
       typedef typename messages_type::log_entry_traits_type log_entry_traits_type;

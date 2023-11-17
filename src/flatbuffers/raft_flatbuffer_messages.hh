@@ -61,21 +61,6 @@ namespace raft {
       }
     };
 
-    struct client_request_traits
-    {
-      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
-      typedef const arg_type & const_arg_type;
-      static const client_request *  get_client_request(const_arg_type ae)
-      {
-	return  ae.first->message_as_client_request();
-      }      
-      static slice get_command_data(const_arg_type cr)
-      {
-	return slice(reinterpret_cast<const uint8_t *>(get_client_request(cr)->command()->c_str()),
-		     get_client_request(cr)->command()->size());
-      }
-    };
-
     struct client_response_traits
     {
       typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
@@ -293,26 +278,6 @@ namespace raft {
     static const uint8_t & configuration(const_arg_type msg)
     {
       return *get_log_entry(msg)->configuration()->Data();
-    }
-    static std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete > create_command(uint64_t term, uint64_t cluster_time, client_request_traits::const_arg_type req)
-    {
-      auto fbb = new flatbuffers::FlatBufferBuilder();
-      // TODO: Would be better to avoid the copy and transfer ownership of the req memory to the log entry
-      auto cmd = client_request_traits::get_command_data(req);
-      auto data = fbb->CreateString(slice::buffer_cast<const char *>(cmd), slice::buffer_size(cmd));
-      raft::fbs::log_entryBuilder leb(*fbb);
-      leb.add_term(term);
-      leb.add_cluster_time(cluster_time);
-      leb.add_type(log_entry_type_COMMAND);
-      leb.add_data(data);
-      auto le = leb.Finish();
-      fbb->FinishSizePrefixed(le);
-
-      std::size_t size, offset;
-      auto buf = fbb->ReleaseRaw(size, offset);
-      delete fbb;
-      return std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete >(buf + offset,
-										 [buf]() { delete [] buf; });
     }
     static std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete > create_command(uint64_t term,
                                                                                                    uint64_t cluster_time,
@@ -890,8 +855,6 @@ namespace raft {
       typedef uint8_t log_entry_type;
       typedef log_entry_traits log_entry_traits_type;
       typedef log_entry_command_traits log_entry_command_traits_type;
-      typedef client_request client_request_type;
-      typedef client_request_traits client_request_traits_type;
       typedef client_response client_response_type;
       typedef client_response_traits client_response_traits_type;
       typedef request_vote request_vote_type;
@@ -1363,27 +1326,6 @@ simple_configuration_description_builder to()
       vote_response_builder & granted(bool val)
       {
 	granted_ = val;
-	return *this;
-      }
-    };
-
-    class client_request_builder : public raft_message_builder_base<client_request_builder, raft::fbs::client_request>
-    {
-    private:
-      ::flatbuffers::Offset<::flatbuffers::String> command_;
-    public:
-      void preinitialize()
-      {
-      }
-      
-      void initialize(fbs_builder_type * bld)
-      {
-	bld->add_command(command_);
-      }
-      client_request_builder & command(raft::slice && val)
-      {
-	command_ = fbb().CreateString(raft::slice::buffer_cast<const char *>(val),
-				      raft::slice::buffer_size(val));
 	return *this;
       }
     };
@@ -1996,7 +1938,6 @@ simple_configuration_description_builder to()
     public:
       typedef request_vote_builder request_vote_builder_type; 
       typedef vote_response_builder vote_response_builder_type;
-      typedef client_request_builder client_request_builder_type;
       typedef client_response_builder client_response_builder_type;
       typedef append_entry_builder append_entry_builder_type;
       typedef append_response_builder append_response_builder_type;

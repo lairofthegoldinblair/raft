@@ -475,12 +475,7 @@ namespace raft {
       void operator()(uint16_t op, boost::asio::const_buffer buf, raft::util::call_on_delete && deleter)
       {
     	switch(op) {
-    	case 4:
-    	  {
-    	    protocol_.on_client_request(*client_, serialization_type::deserialize_client_request(buf, std::move(deleter)));
-    	    break;
-    	  }
-    	case 6:
+    	case serialization_type::SET_CONFIGURATION_REQUEST:
     	  {
     	    protocol_.on_set_configuration(*client_, serialization_type::deserialize_set_configuration_request(buf, std::move(deleter)));
     	    break;
@@ -723,7 +718,6 @@ namespace raft {
     public:
       typedef protocol_box<_Messages, _Builders, _Serialization, _StateMachine, _ClientCommunicator, _LogWriter> this_type;
       typedef _Messages messages_type;
-      typedef typename messages_type::client_request_traits_type client_request_traits_type;
       typedef typename messages_type::log_entry_type log_entry_type;
       typedef typename messages_type::log_entry_traits_type::const_arg_type log_entry_const_arg_type;
       typedef typename messages_type::client_result_type client_result_type;
@@ -807,12 +801,6 @@ namespace raft {
       void on_append_checkpoint_chunk_response(append_checkpoint_chunk_response_arg_type && resp)
       {
         protocol_->on_append_checkpoint_chunk_response(std::move(resp), std::chrono::steady_clock::now());
-      }
-    
-      template<typename _Client>
-      void on_client_request(_Client & client, typename client_request_traits_type::arg_type && req)
-      {
-        protocol_->on_client_request(client, std::move(req), std::chrono::steady_clock::now());
       }
     
       template<typename _Client>
@@ -920,7 +908,6 @@ namespace raft {
       typedef protocol_box_thread<_Messages, _Builders, _Serialization, _StateMachine, _ClientCommunicator, _LogWriter> this_type;
       typedef protocol_box<_Messages, _Builders, _Serialization, _StateMachine, _ClientCommunicator, _LogWriter> protocol_box_type;
       typedef _Messages messages_type;
-      typedef typename messages_type::client_request_traits_type client_request_traits_type;
       typedef typename messages_type::log_entry_type log_entry_type;
       typedef typename messages_type::log_entry_traits_type::const_arg_type log_entry_const_arg_type;
       typedef typename messages_type::client_result_type client_result_type;
@@ -1081,13 +1068,6 @@ namespace raft {
       }
     
       template<typename _Client>
-      void on_client_request(_Client & client, typename client_request_traits_type::arg_type && req)
-      {
-        typedef raft::util::client_request_operation<messages_type, protocol_box_type, _Client> client_request_operation_type;
-        enqueue(new client_request_operation_type(client, std::move(req)));
-      }
-    
-      template<typename _Client>
       void on_set_configuration(_Client & client, set_configuration_request_arg_type && req)
       {
         typedef raft::util::set_configuration_request_operation<messages_type, protocol_box_type, _Client> set_configuration_request_operation_type;
@@ -1164,32 +1144,32 @@ namespace raft {
       void operator()(uint16_t op, boost::asio::const_buffer buf, raft::util::call_on_delete && deleter)
       {
 	switch(op) {
-	case 0:
+	case serialization_type::VOTE_REQUEST:
 	  {
 	    protocol_.on_request_vote(serialization_type::deserialize_request_vote(buf, std::move(deleter)));
 	    break;
 	  }
-	case 1:
+	case serialization_type::VOTE_RESPONSE:
 	  {
 	    protocol_.on_vote_response(serialization_type::deserialize_vote_response(buf, std::move(deleter)));
 	    break;
 	  }
-	case 2:
+	case serialization_type::APPEND_ENTRY_REQUEST:
 	  {
 	    protocol_.on_append_entry(serialization_type::deserialize_append_entry(buf, std::move(deleter)));
 	    break;
 	  }
-	case 3:
+	case serialization_type::APPEND_ENTRY_RESPONSE:
 	  {
 	    protocol_.on_append_response(serialization_type::deserialize_append_entry_response(buf, std::move(deleter)));
 	    break;
 	  }
-	case 9:
+	case serialization_type::APPEND_CHECKPOINT_CHUNK_REQUEST:
 	  {
 	    protocol_.on_append_checkpoint_chunk(serialization_type::deserialize_append_checkpoint_chunk(buf, std::move(deleter)));
 	    break;
 	  }
-	case 10:
+	case serialization_type::APPEND_CHECKPOINT_CHUNK_RESPONSE:
 	  {
 	    protocol_.on_append_checkpoint_chunk_response(serialization_type::deserialize_append_checkpoint_chunk_response(buf, std::move(deleter)));
 	    break;

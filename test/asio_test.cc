@@ -347,7 +347,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioSerializationTest, _TestType, test_types)
 
   auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
   auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
-  BOOST_CHECK_EQUAL(2U, header->operation);
+  BOOST_CHECK_EQUAL(serialization_type::APPEND_ENTRY_REQUEST, header->operation);
   BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
   auto msg1 = serialization_type::deserialize_append_entry(result.first[1], std::move(result.second));
   BOOST_CHECK_EQUAL(request_id, append_entry_traits::request_id(msg1));
@@ -619,7 +619,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftClientResponseAsioSerializationTest, _TestType
   auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
   auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
   BOOST_REQUIRE(nullptr != header);
-  BOOST_CHECK_EQUAL(5, header->operation);
+  BOOST_CHECK_EQUAL(serialization_type::CLIENT_RESPONSE, header->operation);
   BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
   auto msg1 = serialization_type::deserialize_client_response(result.first[1], std::move(result.second));
   BOOST_TEST(client_response_traits::result(msg1) == _TestType::messages_type::client_result_success());
@@ -1029,8 +1029,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioTest, _TestType, test_types)
       BOOST_TEST(bytes_transferred == sizeof(raft::asio::rpc_header));
       BOOST_TEST(header.magic == raft::asio::rpc_header::MAGIC());
       BOOST_TEST(header.payload_length > 0);
-      // TODO: Add enum to serialization_type
-      BOOST_TEST(header.operation == 5);
+      BOOST_TEST(header.operation == serialization_type::CLIENT_RESPONSE);
       uint8_t *  buf = new uint8_t [header.payload_length];
       raft::util::call_on_delete deleter([ptr = buf](){ delete [] ptr; });    
       bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&buf[0], header.payload_length));

@@ -55,9 +55,6 @@ struct append_checkpoint_chunkBuilder;
 struct append_checkpoint_chunk_response;
 struct append_checkpoint_chunk_responseBuilder;
 
-struct client_request;
-struct client_requestBuilder;
-
 struct client_response;
 struct client_responseBuilder;
 
@@ -235,25 +232,23 @@ enum any_message : uint8_t {
   any_message_vote_response = 2,
   any_message_append_entry = 3,
   any_message_append_response = 4,
-  any_message_client_request = 5,
-  any_message_client_response = 6,
-  any_message_set_configuration_request = 7,
-  any_message_set_configuration_response = 8,
-  any_message_configuration_checkpoint = 9,
-  any_message_append_checkpoint_chunk = 10,
-  any_message_append_checkpoint_chunk_response = 11,
+  any_message_client_response = 5,
+  any_message_set_configuration_request = 6,
+  any_message_set_configuration_response = 7,
+  any_message_configuration_checkpoint = 8,
+  any_message_append_checkpoint_chunk = 9,
+  any_message_append_checkpoint_chunk_response = 10,
   any_message_MIN = any_message_NONE,
   any_message_MAX = any_message_append_checkpoint_chunk_response
 };
 
-inline const any_message (&EnumValuesany_message())[12] {
+inline const any_message (&EnumValuesany_message())[11] {
   static const any_message values[] = {
     any_message_NONE,
     any_message_request_vote,
     any_message_vote_response,
     any_message_append_entry,
     any_message_append_response,
-    any_message_client_request,
     any_message_client_response,
     any_message_set_configuration_request,
     any_message_set_configuration_response,
@@ -265,13 +260,12 @@ inline const any_message (&EnumValuesany_message())[12] {
 }
 
 inline const char * const *EnumNamesany_message() {
-  static const char * const names[13] = {
+  static const char * const names[12] = {
     "NONE",
     "request_vote",
     "vote_response",
     "append_entry",
     "append_response",
-    "client_request",
     "client_response",
     "set_configuration_request",
     "set_configuration_response",
@@ -307,10 +301,6 @@ template<> struct any_messageTraits<raft::fbs::append_entry> {
 
 template<> struct any_messageTraits<raft::fbs::append_response> {
   static const any_message enum_value = any_message_append_response;
-};
-
-template<> struct any_messageTraits<raft::fbs::client_request> {
-  static const any_message enum_value = any_message_client_request;
 };
 
 template<> struct any_messageTraits<raft::fbs::client_response> {
@@ -1445,69 +1435,6 @@ inline ::flatbuffers::Offset<append_checkpoint_chunk_response> Createappend_chec
   return builder_.Finish();
 }
 
-struct client_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef client_requestBuilder Builder;
-  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_ID = 4,
-    VT_COMMAND = 6
-  };
-  uint64_t id() const {
-    return GetField<uint64_t>(VT_ID, 0);
-  }
-  const ::flatbuffers::String *command() const {
-    return GetPointer<const ::flatbuffers::String *>(VT_COMMAND);
-  }
-  bool Verify(::flatbuffers::Verifier &verifier) const {
-    return VerifyTableStart(verifier) &&
-           VerifyField<uint64_t>(verifier, VT_ID, 8) &&
-           VerifyOffset(verifier, VT_COMMAND) &&
-           verifier.VerifyString(command()) &&
-           verifier.EndTable();
-  }
-};
-
-struct client_requestBuilder {
-  typedef client_request Table;
-  ::flatbuffers::FlatBufferBuilder &fbb_;
-  ::flatbuffers::uoffset_t start_;
-  void add_id(uint64_t id) {
-    fbb_.AddElement<uint64_t>(client_request::VT_ID, id, 0);
-  }
-  void add_command(::flatbuffers::Offset<::flatbuffers::String> command) {
-    fbb_.AddOffset(client_request::VT_COMMAND, command);
-  }
-  explicit client_requestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
-        : fbb_(_fbb) {
-    start_ = fbb_.StartTable();
-  }
-  ::flatbuffers::Offset<client_request> Finish() {
-    const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<client_request>(end);
-    return o;
-  }
-};
-
-inline ::flatbuffers::Offset<client_request> Createclient_request(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    uint64_t id = 0,
-    ::flatbuffers::Offset<::flatbuffers::String> command = 0) {
-  client_requestBuilder builder_(_fbb);
-  builder_.add_id(id);
-  builder_.add_command(command);
-  return builder_.Finish();
-}
-
-inline ::flatbuffers::Offset<client_request> Createclient_requestDirect(
-    ::flatbuffers::FlatBufferBuilder &_fbb,
-    uint64_t id = 0,
-    const char *command = nullptr) {
-  auto command__ = command ? _fbb.CreateString(command) : 0;
-  return raft::fbs::Createclient_request(
-      _fbb,
-      id,
-      command__);
-}
-
 struct client_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef client_responseBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
@@ -2051,9 +1978,6 @@ struct raft_message FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const raft::fbs::append_response *message_as_append_response() const {
     return message_type() == raft::fbs::any_message_append_response ? static_cast<const raft::fbs::append_response *>(message()) : nullptr;
   }
-  const raft::fbs::client_request *message_as_client_request() const {
-    return message_type() == raft::fbs::any_message_client_request ? static_cast<const raft::fbs::client_request *>(message()) : nullptr;
-  }
   const raft::fbs::client_response *message_as_client_response() const {
     return message_type() == raft::fbs::any_message_client_response ? static_cast<const raft::fbs::client_response *>(message()) : nullptr;
   }
@@ -2095,10 +2019,6 @@ template<> inline const raft::fbs::append_entry *raft_message::message_as<raft::
 
 template<> inline const raft::fbs::append_response *raft_message::message_as<raft::fbs::append_response>() const {
   return message_as_append_response();
-}
-
-template<> inline const raft::fbs::client_request *raft_message::message_as<raft::fbs::client_request>() const {
-  return message_as_client_request();
 }
 
 template<> inline const raft::fbs::client_response *raft_message::message_as<raft::fbs::client_response>() const {
@@ -2216,10 +2136,6 @@ inline bool Verifyany_message(::flatbuffers::Verifier &verifier, const void *obj
     }
     case any_message_append_response: {
       auto ptr = reinterpret_cast<const raft::fbs::append_response *>(obj);
-      return verifier.VerifyTable(ptr);
-    }
-    case any_message_client_request: {
-      auto ptr = reinterpret_cast<const raft::fbs::client_request *>(obj);
       return verifier.VerifyTable(ptr);
     }
     case any_message_client_response: {

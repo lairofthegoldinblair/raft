@@ -288,8 +288,7 @@ namespace raft {
               BOOST_ASSERT(bytes_transferred == sizeof(raft::asio::rpc_header));
               BOOST_ASSERT(header.magic == raft::asio::rpc_header::MAGIC());
               BOOST_ASSERT(header.payload_length > 0);
-              // TODO: Add enum to serialization_type
-              BOOST_ASSERT(header.operation == 5);
+              BOOST_ASSERT(header.operation == serialization_type::CLIENT_RESPONSE);
               uint8_t *  buf = new uint8_t [header.payload_length];
               raft::util::call_on_delete deleter([ptr = buf](){ delete [] ptr; });    
               timer.start();

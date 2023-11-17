@@ -115,28 +115,6 @@ namespace raft {
     };
 
     enum client_result { SUCCESS, FAIL, RETRY, NOT_LEADER, SESSION_EXPIRED };
-    class client_request
-    {
-    public:
-      std::string command;
-      slice get_command_data() const
-      {
-	return slice::create(command);
-      }
-    };
-
-    class client_request_traits
-    {
-    public:
-      typedef client_request value_type;
-      typedef client_request arg_type;
-      typedef const value_type& const_arg_type;
-    
-      slice get_command_data(const_arg_type cr) const
-      {
-	return slice::create(cr.command);
-      }
-    };
 
     class client_response
     {
@@ -812,24 +790,6 @@ namespace raft {
       {
 	return msg->configuration;
       }
-      static std::pair<const log_entry<_Description> *, raft::util::call_on_delete > create_command(uint64_t term, uint64_t cluster_time, const client_request & req)
-      {
-	auto ret = new log_entry<_Description>();
-	ret->type = value_type::COMMAND;
-	ret->term = term;
-        ret->cluster_time = cluster_time;
-	ret->data = req.command;
-	return std::pair<const log_entry<_Description> *, raft::util::call_on_delete>(ret, [ret]() { delete ret; });
-      }
-      static std::pair<const log_entry<_Description> *, raft::util::call_on_delete > create_command(uint64_t term, uint64_t cluster_time, client_request && req)
-      {
-	auto ret = new log_entry<_Description>();
-	ret->type = value_type::COMMAND;
-	ret->term = term;
-        ret->cluster_time = cluster_time;
-	ret->data = std::move(req.command);
-	return std::pair<const log_entry<_Description> *, raft::util::call_on_delete>(ret, [ret]() { delete ret; });
-      }
       static std::pair<const log_entry<_Description> *, raft::util::call_on_delete > create_command(uint64_t term,
                                                                                                     uint64_t cluster_time,
                                                                                                     std::pair<raft::slice, raft::util::call_on_delete> && req)
@@ -922,8 +882,6 @@ namespace raft {
       typedef log_entry_traits<configuration_description> log_entry_traits_type;
       typedef log_entry_command log_entry_command_type;
       typedef log_entry_command_traits log_entry_command_traits_type;
-      typedef client_request client_request_type;
-      typedef client_request_traits client_request_traits_type;
       typedef client_response client_response_type;
       typedef client_response_traits client_response_traits_type;
       typedef request_vote_traits request_vote_traits_type;
@@ -1261,17 +1219,6 @@ namespace raft {
 	auto obj = *get_object();
 	obj_.reset();
 	return obj;
-      }
-    };
-
-    class client_request_builder : public builder_base<client_request>
-    {
-    public:
-      client_request_builder & command(raft::slice && val)
-      {
-	get_object()->command.assign(raft::slice::buffer_cast<const char *>(val),
-				     raft::slice::buffer_size(val));
-	return *this;
       }
     };
 
@@ -1823,7 +1770,6 @@ namespace raft {
     public:
       typedef request_vote_builder request_vote_builder_type;
       typedef vote_response_builder vote_response_builder_type;
-      typedef client_request_builder client_request_builder_type;
       typedef client_response_builder client_response_builder_type;
       typedef append_entry_builder<messages::log_entry_type> append_entry_builder_type;
       typedef append_response_builder append_response_builder_type;

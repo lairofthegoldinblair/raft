@@ -30,12 +30,11 @@ namespace raft {
     template<typename _Messages, typename _Serialization>
     struct serialization
     {
-      enum Operation { VOTE_REQUEST=0, VOTE_RESPONSE=1, APPEND_ENTRY_REQUEST=2, APPEND_ENTRY_RESPONSE=3, APPEND_CHECKPOINT_CHUNK_REQUEST=9, APPEND_CHECKPOINT_CHUNK_RESPONSE=10, OPEN_SESSION_REQUEST=11, OPEN_SESSION_RESPONSE=12, CLOSE_SESSION_REQUEST=13, CLOSE_SESSION_RESPONSE=14, LINEARIZABLE_COMMAND=15 };
+      enum Operation { VOTE_REQUEST=0, VOTE_RESPONSE=1, APPEND_ENTRY_REQUEST=2, APPEND_ENTRY_RESPONSE=3, CLIENT_RESPONSE=4, SET_CONFIGURATION_REQUEST=5, SET_CONFIGURATION_RESPONSE=6, APPEND_CHECKPOINT_CHUNK_REQUEST=8, APPEND_CHECKPOINT_CHUNK_RESPONSE=9, OPEN_SESSION_REQUEST=10, OPEN_SESSION_RESPONSE=11, CLOSE_SESSION_REQUEST=12, CLOSE_SESSION_RESPONSE=13, LINEARIZABLE_COMMAND=14 };
       typedef typename _Messages::request_vote_traits_type::arg_type request_vote_arg_type;
       typedef typename _Messages::vote_response_traits_type::arg_type vote_response_arg_type;
       typedef typename _Messages::append_entry_traits_type::arg_type append_entry_arg_type;
       typedef typename _Messages::append_entry_response_traits_type::arg_type append_entry_response_arg_type;
-      typedef typename _Messages::client_request_traits_type::arg_type client_request_arg_type;
       typedef typename _Messages::client_response_traits_type::arg_type client_response_arg_type;
       typedef typename _Messages::set_configuration_request_traits_type::arg_type set_configuration_request_arg_type;
       typedef typename _Messages::set_configuration_response_traits_type::arg_type set_configuration_response_arg_type;
@@ -74,7 +73,7 @@ namespace raft {
 	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
-	header->operation = 0;
+	header->operation = VOTE_REQUEST;
 	return make_return(b.data(), sz, std::move(inner));
       }
 
@@ -91,7 +90,7 @@ namespace raft {
 	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
-	header->operation = 1;
+	header->operation = VOTE_RESPONSE;
 	return make_return(b.data(), sz, std::move(inner));
       }
 
@@ -104,7 +103,7 @@ namespace raft {
 	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
-	header->operation = 2;
+	header->operation = APPEND_ENTRY_REQUEST;
 	return make_return(b.data(), sz, std::move(inner));
       }
 
@@ -117,7 +116,7 @@ namespace raft {
 	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
-	header->operation = 3;
+	header->operation = APPEND_ENTRY_RESPONSE;
 	return make_return(b.data(), sz, std::move(inner));
       };
 
@@ -156,7 +155,7 @@ namespace raft {
 	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
-	header->operation = 5;
+	header->operation = CLIENT_RESPONSE;
 	return make_return(b.data(), sz, std::move(inner));
       };
 
@@ -335,19 +334,19 @@ namespace raft {
       		typename _M::append_entry_traits_type::arg_type && msg)
       {
       	switch(serialization_type::classify(std::move(msg))) {
-      	case 0:
+      	case VOTE_REQUEST:
       	  return serialize_request_vote(b, std::move(msg));
-      	case 1:
+      	case VOTE_RESPONSE:
       	  return serialize_vote_response(b, std::move(msg));
-      	case 2:
+      	case APPEND_ENTRY_REQUEST:
       	  return serialize_append_entry(b, std::move(msg));
-      	case 3:
+      	case APPEND_ENTRY_RESPONSE:
       	  return serialize_append_entry_response(b, std::move(msg));
-      	case 5:
+      	case CLIENT_RESPONSE:
       	  return serialize_client_response(b, std::move(msg));
-      	case 9:
+      	case APPEND_CHECKPOINT_CHUNK_REQUEST:
       	  return serialize_append_checkpoint_chunk_request(b, std::move(msg));
-      	case 10:
+      	case APPEND_CHECKPOINT_CHUNK_RESPONSE:
       	  return serialize_append_checkpoint_chunk_response(b, std::move(msg));
       	default:
       	  throw std::runtime_error("Not yet implemented");
@@ -360,15 +359,15 @@ namespace raft {
       		typename _M::open_session_request_traits_type::arg_type && msg)
       {
       	switch(serialization_type::classify_log_entry_command(std::move(msg))) {
-      	case 11:
+      	case OPEN_SESSION_REQUEST:
       	  return serialize_open_session_request(b, std::move(msg));
-      	case 12:
+      	case OPEN_SESSION_RESPONSE:
       	  return serialize_open_session_response(b, std::move(msg));
-      	case 13:
+      	case CLOSE_SESSION_REQUEST:
       	  return serialize_close_session_request(b, std::move(msg));
-      	case 14:
+      	case CLOSE_SESSION_RESPONSE:
       	  return serialize_close_session_response(b, std::move(msg));
-      	case 15:
+      	case LINEARIZABLE_COMMAND:
       	  return serialize_linearizable_command(b, std::move(msg));
       	default:
       	  throw std::runtime_error("Not yet implemented");
@@ -405,13 +404,6 @@ namespace raft {
 	return serialization_type::deserialize_append_entry_response(std::make_pair(std::move(s), std::move(deleter)));
       };
       
-      static client_request_arg_type deserialize_client_request(boost::asio::const_buffer & b, raft::util::call_on_delete && deleter)
-      {
-	raft::slice s(reinterpret_cast<const uint8_t *>(b.data()), b.size());
-	return serialization_type::deserialize_client_request(std::make_pair(std::move(s), std::move(deleter)));
-
-      }
-
       static client_response_arg_type deserialize_client_response(boost::asio::const_buffer & b, raft::util::call_on_delete && deleter)
       {
 	raft::slice s(reinterpret_cast<const uint8_t *>(b.data()), b.size());

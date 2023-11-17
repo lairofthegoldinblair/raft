@@ -140,12 +140,6 @@ table append_checkpoint_chunk_response
 
 enum client_result:byte { SUCCESS=0, FAIL=1, RETRY=2, NOT_LEADER=3, SESSION_EXPIRED=4 }
 
-table client_request
-{
-  id:ulong;
-  command:string;
-}
-
 table client_response
 {
   id:ulong;
@@ -200,7 +194,7 @@ table log_entry_command
   command:any_log_entry_command;
 }
 
-union any_message { request_vote, vote_response, append_entry, append_response, client_request, client_response, set_configuration_request, set_configuration_response, configuration_checkpoint, append_checkpoint_chunk, append_checkpoint_chunk_response }
+union any_message { request_vote, vote_response, append_entry, append_response, client_response, set_configuration_request, set_configuration_response, configuration_checkpoint, append_checkpoint_chunk, append_checkpoint_chunk_response }
 
 table raft_message
 {

@@ -861,7 +861,6 @@ public:
   typedef typename _TestType::messages_type::checkpoint_header_traits_type checkpoint_header_traits;
   typedef typename _TestType::messages_type::log_entry_traits_type log_entry_traits;
   typedef typename _TestType::messages_type::log_entry_traits_type::const_arg_type log_entry_const_arg_type;
-  typedef typename _TestType::builders_type::client_request_builder_type client_request_builder;
   typedef typename _TestType::messages_type::server_description_traits_type server_description_traits;
   typedef typename _TestType::messages_type::simple_configuration_description_traits_type simple_configuration_description_traits;
   typedef typename _TestType::messages_type::configuration_description_traits_type configuration_description_traits;
@@ -1110,10 +1109,10 @@ template<typename _TestType>
 void RaftTestFixtureBase<_TestType>::send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
 						  const boost::dynamic_bitset<> & send_responses_from)
 {
+  auto initial_commit_index = protocol->commit_index();
   // Fire off a client_request
   BOOST_CHECK_EQUAL(initial_cluster_time, protocol->cluster_time());
-  auto cli_req = client_request_builder().command(raft::slice(reinterpret_cast<const uint8_t *>(cmd), ::strlen(cmd))).finish();
-  protocol->on_client_request(c, std::move(cli_req), now);
+  protocol->on_command(raft::slice(reinterpret_cast<const uint8_t *>(cmd), ::strlen(cmd)), now);
   BOOST_CHECK_EQUAL(term, protocol->current_term());
   // TODO: Use synthetic time and be more precise about this
   BOOST_TEST(initial_cluster_time < protocol->cluster_time());
@@ -1146,12 +1145,11 @@ void RaftTestFixtureBase<_TestType>::send_client_request(uint64_t term, const ch
     }
     auto resp = append_response_builder().recipient_id(expected).term_number(term).request_term_number(term).begin_index(client_index).last_index(client_index+1).success(send_responses_from.test(expected)).finish();
     protocol->on_append_response(std::move(resp), now);
-    if (num_responses!=3) {
-      BOOST_CHECK_EQUAL(0U, c.responses.size());
+    if (num_responses<3) {
+      BOOST_CHECK_EQUAL(initial_commit_index, protocol->commit_index());
     } else {
       // Majority vote!
-      BOOST_CHECK_EQUAL(1U, c.responses.size());
-      c.responses.pop_back();
+      BOOST_CHECK_EQUAL(initial_commit_index + 1U, protocol->commit_index());
     }
     expected += 1;
     comm.q.pop_back();

@@ -425,7 +425,6 @@ namespace raft {
 
     // Message argument types and traits for looking at them.    We don't have concrete/value types
     // so we can not call c'tors/d'tors etc.   That is quite intentional.
-    typedef typename messages_type::client_request_traits_type client_request_traits_type;
     typedef typename messages_type::client_result_type client_result_type;
     typedef typename messages_type::request_vote_traits_type request_vote_traits_type;
     typedef typename messages_type::request_vote_traits_type::arg_type request_vote_arg_type;
@@ -458,18 +457,6 @@ namespace raft {
     }
 
   private:
-
-    class client_response_continuation
-    {
-    public:
-      // Client to whom to respond
-      client_type * client;
-      // The log index we need flushed
-      uint64_t index;
-      // The term that the client request was part of
-      uint64_t term;
-      // TODO: Do we want/need this?  Time when the client request should simply timeout.
-    };
 
     communicator_type & comm_;
 
@@ -573,7 +560,6 @@ namespace raft {
     }
 
     // continuations depending on log sync events
-    std::multimap<uint64_t, client_response_continuation> client_response_continuations_;
     std::multimap<uint64_t, append_entry_continuation> append_entry_continuations_;
     // continuations depending on log header sync events
     std::vector<append_entry_arg_type> append_entry_header_sync_continuations_;
@@ -924,24 +910,6 @@ namespace raft {
 	BOOST_ASSERT(config_change_client_ != nullptr);
 	config_change_client_->on_configuration_response(messages_type::client_result_success());
 	config_change_client_ = nullptr;
-      }
-      // Based on the new commit point we may be able to complete some client requests/configuration change
-      // if we are leader or we may be able to respond to the leader for some
-      // append entries requests if we are follower
-      {
-        auto it = client_response_continuations_.begin();
-        auto e = client_response_continuations_.upper_bound(last_committed_index_);
-        for(; it != e; ++it) {
-          BOOST_ASSERT(it->second.index <= last_committed_index_);
-          // If I lost leadership I can't guarantee that I committed.
-          // TODO: Come up with some interesting test case here (e.g. we
-          // get a quorum to ack the entry but I've lost leadership by then;
-          // is it really not successful???).  Actually the answer is that the
-          // commit of a log entry occurs when a majority of peers have written
-          // the log entry to disk.  
-          it->second.client->on_client_response(it->second.term == current_term_ ? messages_type::client_result_success() : messages_type::client_result_not_leader(), it->second.index, leader_id_);
-        }
-        client_response_continuations_.erase(client_response_continuations_.begin(), e);
       }
     }
 
@@ -1727,48 +1695,9 @@ namespace raft {
       }
     }
 
-    void on_client_request(client_type & client, typename client_request_traits_type::arg_type && req)
-    {
-      on_client_request(client, std::move(req), std::chrono::steady_clock::now());
-    }
-    
-    void on_client_request(client_type & client,
-                           typename client_request_traits_type::arg_type && req,
-                           std::chrono::time_point<std::chrono::steady_clock> clock_now)
-    {
-      switch(state_) {
-      case FOLLOWER:
-      case CANDIDATE:
-	{
-	  // Not leader don't bother.
-	  client.on_client_response(messages_type::client_result_not_leader(), 0, leader_id_);
-	  return;
-	}
-      case LEADER:
-	{
-	  // Create a log entry and try to replicate it
-	  // Append to the in memory log then we have to wait for
-	  // the new log entry to be replicated to a majority (TODO: to disk?)/committed before
-	  // returning to the client
-	  // auto indices = log_.append_command(current_term_, req.get_command_data());
-	  auto indices = log_.append(log_entry_traits_type::create_command(current_term_, cluster_clock_.advance(clock_now), req));
-	  client_response_continuation cont;
-	  cont.client = &client;
-	  cont.index = indices.second-1;
-	  cont.term = current_term_;
-	  client_response_continuations_.insert(std::make_pair(cont.index, cont));
-	  // TODO: Do we want to let the log know that we'd like a flush?
-	  // TODO: What triggers the sending of append_entries to peers?  Currently it is a timer
-	  // but that limits the minimum latency of replication.  Is that a problem?  I suppose we
-	  // could just call append_entries or on_timer here.
-	  return;
-	}
-      }
-    }
-
     std::tuple<client_result_type, uint64_t, uint64_t> on_command(std::pair<raft::slice, raft::util::call_on_delete> && req)
     {
-      return on_client_request(std::move(req), std::chrono::steady_clock::now());
+      return on_command(std::move(req), std::chrono::steady_clock::now());
     }
     
     std::tuple<client_result_type, uint64_t, uint64_t> on_command(std::pair<raft::slice, raft::util::call_on_delete> && req,

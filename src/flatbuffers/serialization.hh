@@ -66,10 +66,6 @@ namespace raft {
       {
 	return deserialize(std::move(b));
       };    
-      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_client_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
-      {
-	return deserialize(std::move(b));
-      }
       static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_client_response(std::pair<raft::slice, raft::util::call_on_delete> && b)
       {
 	return deserialize(std::move(b));
@@ -101,7 +97,7 @@ namespace raft {
 
       static int32_t classify_log_entry_command(std::pair<const raft::fbs::log_entry_command * , raft::util::call_on_delete> && entry)
       {
-	return entry.first->command_type() + 10;
+	return entry.first->command_type() + any_message_MAX - 1;
       }
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(std::pair<const raft::fbs::log_entry_command * , raft::util::call_on_delete> && entry)
       {

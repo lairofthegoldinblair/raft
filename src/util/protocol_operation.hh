@@ -226,40 +226,6 @@ namespace raft {
     };    
 
     template<typename _Messages, typename _Protocol, typename _Client>
-    class client_request_operation : public protocol_operation<_Protocol>
-    {
-    public:
-      typedef protocol_operation<_Protocol> protocol_operation_type;
-      typedef _Messages messages_type;
-      typedef _Client client_type;
-      typedef typename messages_type::client_request_traits_type::arg_type client_request_arg_type;      
-    private:
-      client_type & client_;
-      client_request_arg_type message_;
-    public:
-      client_request_operation(client_type & client, client_request_arg_type && msg)
-        :
-        protocol_operation_type(&do_complete),
-        client_(client),
-        message_(std::move(msg))
-      {
-      }
-      ~client_request_operation()
-      {
-      }
-      static void do_complete(_Protocol * owner, protocol_operation_type * base)
-      {
-        client_request_operation * op(static_cast<client_request_operation *>(base));
-        client_request_arg_type msg = std::move(op->message_);
-        client_type & client(op->client_);
-        delete op;
-        if (nullptr != owner) {
-          owner->on_client_request(client, std::move(msg));
-        }
-      }
-    };
-
-    template<typename _Messages, typename _Protocol, typename _Client>
     class set_configuration_request_operation : public protocol_operation<_Protocol>
     {
     public:
