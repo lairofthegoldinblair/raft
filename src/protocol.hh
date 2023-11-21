@@ -297,7 +297,7 @@ namespace raft {
       }
     }
 
-    bool complete_checkpoint(checkpoint_data_ptr ckpt)
+    bool complete_checkpoint(checkpoint_data_ptr ckpt, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       auto last_index_in_checkpoint = checkpoint_header_traits_type::last_log_entry_index(&ckpt->header());
 
@@ -319,7 +319,7 @@ namespace raft {
       BOOST_ASSERT(last_checkpoint_term() == checkpoint_header_traits_type::last_log_entry_term(&ckpt->header()));
       BOOST_ASSERT(last_checkpoint_cluster_time() == checkpoint_header_traits_type::last_log_entry_cluster_time(&ckpt->header()));
 
-      protocol()->set_checkpoint(ckpt);
+      protocol()->set_checkpoint(ckpt, clock_now);
 
       store_.commit(ckpt);
     
@@ -894,7 +894,7 @@ namespace raft {
 	    " committed transitional configuration at index " << configuration().configuration_id() << 
 	    ".  Logging new stable configuration at index " << indices.first;
 	  // Should will move from TRANSITIONAL to STABLE
-	  configuration_.add_logged_description(indices.first, log_.entry(indices.first));
+	  configuration_.add_logged_description(indices.first, log_.entry(indices.first), clock_now);
 	  BOOST_ASSERT(configuration().is_stable());
 	}
       }
@@ -1053,7 +1053,7 @@ namespace raft {
 	    config_change_client_->on_configuration_response(messages_type::client_result_fail());
 	    config_change_client_ = nullptr;
 	  }
-	  configuration_.truncate_suffix(entry_log_index);
+	  configuration_.truncate_suffix(entry_log_index, clock_now);
 	  // TODO: Something with configurations.  Anything other than truncate the state in the manager?
 	  break;
 	} else {
@@ -1093,7 +1093,7 @@ namespace raft {
 	  if (log_entry_traits_type::is_configuration(&ae::get_entry(req, it))) {
 	    BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	      " received new configuration at index " << idx;
-	    configuration_.add_logged_description(idx, ae::get_entry(req, it));
+	    configuration_.add_logged_description(idx, ae::get_entry(req, it), clock_now);
 	  }
 	  // Append to the log
 	  std::pair<log_index_type, log_index_type> range;
@@ -1258,8 +1258,8 @@ namespace raft {
         // Now safe to truncate
 	log_.truncate_prefix(last_index);
 	log_.truncate_suffix(last_index);
-	configuration_.truncate_prefix(last_index);
-	configuration_.truncate_suffix(last_index);
+	configuration_.truncate_prefix(last_index, clock_now);
+	configuration_.truncate_suffix(last_index, clock_now);
 
         if (last_synced_index_ > last_index) {
           last_synced_index_ = last_index;
@@ -1276,7 +1276,7 @@ namespace raft {
 	// log before responding to LEADER about append_entries).
       }
 
-      configuration_.set_checkpoint(header);
+      configuration_.set_checkpoint(header, clock_now);
     }
 
   private:
@@ -1328,7 +1328,7 @@ namespace raft {
         // That makes is really dangerous that some one forgets to issue the request.
 
 	// Cancel any pending configuration change
-	configuration().reset_staging_servers();
+	configuration().reset_staging_servers(clock_now);
 
 	// Cancel any in-progress checkpoint
 	this->abandon_checkpoint();
@@ -1596,7 +1596,7 @@ namespace raft {
       for(auto idx = log_.start_index(); idx < log_.last_index(); ++idx) {
 	const log_entry_type & e(log_.entry(idx));
 	if (log_entry_traits_type::is_configuration(&e)) {
-	  configuration_.add_logged_description(idx, e);
+	  configuration_.add_logged_description(idx, e, now);
 	}
       }
 
@@ -1670,7 +1670,7 @@ namespace raft {
 	    if (0 < bad_servers.size()) {
 	      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 		" some server in new configuration not making progress so rejecting configuration.";
-	      configuration().reset_staging_servers();
+	      configuration().reset_staging_servers(clock_now);
 	      config_change_client_->on_configuration_response(messages_type::client_result_fail(), bad_servers);
 	      config_change_client_ = nullptr;
 	    } else {
@@ -1682,7 +1682,7 @@ namespace raft {
 	    // and wait for it to commit before moving to stable.
 	    auto indices = log_.append(log_entry_traits_type::create_configuration(current_term_, cluster_clock_.advance(clock_now), configuration().get_transitional_configuration()));
 	    // This will update the value of configuration() with the transitional config we just logged
-	    configuration_.add_logged_description(indices.first, log_.entry(indices.first));
+	    configuration_.add_logged_description(indices.first, log_.entry(indices.first), clock_now);
 	    BOOST_ASSERT(configuration().is_transitional());
 	    BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	      " servers in new configuration caught up. Logging transitional entry at index " << indices.first;
@@ -1732,7 +1732,8 @@ namespace raft {
       return { messages_type::client_result_not_leader(), leader_id_, current_term_ };
     }
 
-    void on_set_configuration(client_type & client, set_configuration_request_arg_type && req)
+    void on_set_configuration(client_type & client, set_configuration_request_arg_type && req,
+                              std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       typedef set_configuration_request_traits_type scr;
       if (LEADER != state_) {
@@ -1752,7 +1753,7 @@ namespace raft {
 
       BOOST_ASSERT(config_change_client_ == nullptr);
       config_change_client_ = &client;
-      configuration().set_staging_configuration(scr::new_configuration(req));
+      configuration().set_staging_configuration(scr::new_configuration(req), clock_now);
       BOOST_ASSERT(!configuration().is_stable());
     }
 
@@ -2415,19 +2416,19 @@ namespace raft {
       return true;
     }
 
-    void set_checkpoint(checkpoint_data_ptr ckpt)
+    void set_checkpoint(checkpoint_data_ptr ckpt, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       auto last_index_in_checkpoint = checkpoint_header_traits_type::last_log_entry_index(&ckpt->header());
       auto last_term_in_checkpoint = checkpoint_header_traits_type::last_log_entry_term(&ckpt->header());
       auto last_cluster_time_in_checkpoint = checkpoint_header_traits_type::last_log_entry_cluster_time(&ckpt->header());
-      configuration_.set_checkpoint(ckpt->header());
+      configuration_.set_checkpoint(ckpt->header(), clock_now);
  
       // Discard log entries
       // TODO: Understand the log sync'ing implications here
       // TODO: Also make sure that all of these entries have completed being applied
       // to state machine.
       log_.truncate_prefix(last_index_in_checkpoint);
-      configuration_.truncate_prefix(last_index_in_checkpoint);
+      configuration_.truncate_prefix(last_index_in_checkpoint, clock_now);
 
       BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	" completed checkpoint at index " << last_index_in_checkpoint << ", term " <<

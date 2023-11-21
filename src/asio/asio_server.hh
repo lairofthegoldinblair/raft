@@ -477,7 +477,7 @@ namespace raft {
     	switch(op) {
     	case serialization_type::SET_CONFIGURATION_REQUEST:
     	  {
-    	    protocol_.on_set_configuration(*client_, serialization_type::deserialize_set_configuration_request(buf, std::move(deleter)));
+    	    protocol_.on_set_configuration(*client_, serialization_type::deserialize_set_configuration_request(buf, std::move(deleter)), std::chrono::steady_clock::now());
     	    break;
     	  }
         case serialization_type::OPEN_SESSION_REQUEST:
@@ -804,9 +804,9 @@ namespace raft {
       }
     
       template<typename _Client>
-      void on_set_configuration(_Client & client, set_configuration_request_arg_type && req)
+      void on_set_configuration(_Client & client, set_configuration_request_arg_type && req, std::chrono::time_point<std::chrono::steady_clock> now)
       {
-        protocol_->on_set_configuration(client, std::move(req));
+        protocol_->on_set_configuration(client, std::move(req), now);
       }
       
       void on_log_sync(uint64_t index)
@@ -1068,10 +1068,10 @@ namespace raft {
       }
     
       template<typename _Client>
-      void on_set_configuration(_Client & client, set_configuration_request_arg_type && req)
+      void on_set_configuration(_Client & client, set_configuration_request_arg_type && req, std::chrono::time_point<std::chrono::steady_clock> clock_now)
       {
         typedef raft::util::set_configuration_request_operation<messages_type, protocol_box_type, _Client> set_configuration_request_operation_type;
-        enqueue(new set_configuration_request_operation_type(client, std::move(req)));
+        enqueue(new set_configuration_request_operation_type(client, std::move(req), clock_now));
       }
       
       void on_log_sync(uint64_t index)

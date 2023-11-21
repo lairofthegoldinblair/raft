@@ -935,7 +935,7 @@ public:
 	}
 	five_servers = accb.finish();
       }
-      cm->set_checkpoint(append_checkpoint_chunk_traits::last_checkpoint_header(five_servers));
+      cm->set_checkpoint(append_checkpoint_chunk_traits::last_checkpoint_header(five_servers), now);
       BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
       BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
       BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
@@ -1321,7 +1321,7 @@ void RaftTestFixtureBase<_TestType>::stage_new_server(uint64_t term, uint64_t co
     add_six_servers(bld.old_id(0).new_configuration());
     auto req = bld.finish();
     BOOST_CHECK_EQUAL(6U, simple_configuration_description_traits::size(&set_configuration_request_traits::new_configuration(req)));
-    protocol->on_set_configuration(c, std::move(req));
+    protocol->on_set_configuration(c, std::move(req), now);
     BOOST_CHECK_EQUAL(6U, num_known_peers());
   }
   auto new_server_id = num_known_peers()-1;

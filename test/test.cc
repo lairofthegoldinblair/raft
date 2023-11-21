@@ -529,7 +529,7 @@ BOOST_FIXTURE_TEST_CASE(MajorityVoteEven, RaftSimpleConfigurationTestFixture)
   BOOST_CHECK_EQUAL(0U, config.num_known_peers());
   BOOST_CHECK_EQUAL(0U, config.my_cluster_id());
   BOOST_CHECK(!config.includes_self());
-  config.set_configuration(1, desc);
+  config.set_configuration(1, desc, std::chrono::steady_clock::now());
   BOOST_CHECK_EQUAL(3U, config.num_known_peers());
   BOOST_CHECK_EQUAL(0U, config.my_cluster_id());
   BOOST_CHECK_EQUAL(1U, config.configuration_id());
@@ -565,7 +565,7 @@ BOOST_AUTO_TEST_CASE(BasicConfigurationManagerTests)
   desc.type = raft::native::messages::log_entry_type::CONFIGURATION;
   desc.term = 0;
   desc.configuration.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}};
-  mgr.add_logged_description(5, desc);
+  mgr.add_logged_description(5, desc, std::chrono::steady_clock::now());
   BOOST_CHECK_EQUAL(5U, mgr.configuration().configuration_id());
   BOOST_CHECK_EQUAL(3U, mgr.configuration().num_known_peers());
   for(uint64_t i=0; i<5; ++i) {
@@ -578,7 +578,7 @@ BOOST_AUTO_TEST_CASE(BasicConfigurationManagerTests)
   desc2.type = raft::native::messages::log_entry_type::CONFIGURATION;
   desc2.term = 0;
   desc2.configuration.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"}};
-  mgr.add_logged_description(10, desc2);
+  mgr.add_logged_description(10, desc2, std::chrono::steady_clock::now());
   BOOST_CHECK_EQUAL(10U, mgr.configuration().configuration_id());
   BOOST_CHECK_EQUAL(4U, mgr.configuration().num_known_peers());
   for(uint64_t i=0; i<5; ++i) {
@@ -600,7 +600,7 @@ BOOST_AUTO_TEST_CASE(ConfigurationManagerSetCheckpointTests)
   raft::configuration_manager<test_peer_metafunction, raft::native::messages>::checkpoint_type ckpt;
   ckpt.configuration.index = ckpt.last_log_entry_index =  0;
   ckpt.configuration.description.from.servers = {{0, "192.168.1.1"}, {1, "192.168.1.2"}, {2, "192.168.1.3"}, {3, "192.168.1.4"},  {4, "192.168.1.5"}};
-  cm.set_checkpoint(ckpt);
+  cm.set_checkpoint(ckpt, std::chrono::steady_clock::now());
   BOOST_CHECK_EQUAL(0U, cm.configuration().configuration_id());
   BOOST_CHECK_EQUAL(0U, cm.configuration().my_cluster_id());
   BOOST_CHECK_EQUAL(5U, cm.configuration().num_known_peers());
@@ -683,7 +683,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(BasicTemplatedStateMachineTests, _TestType, test_t
     }
   }
   auto acc_msg = accb.finish();
-  cm.set_checkpoint(append_checkpoint_chunk_traits::last_checkpoint_header(acc_msg));
+  cm.set_checkpoint(append_checkpoint_chunk_traits::last_checkpoint_header(acc_msg), time_base);
   BOOST_CHECK_EQUAL(0U, cm.configuration().configuration_id());
   BOOST_CHECK_EQUAL(5U, cm.configuration().num_known_peers());
   BOOST_CHECK(cm.configuration().includes_self());
@@ -1112,6 +1112,7 @@ public:
   std::vector<uint8_t> checkpoint_load_state;
 
   uint64_t initial_cluster_time;
+  std::chrono::time_point<std::chrono::steady_clock> now;
 
   // append_checkpoint_chunk_arg_type six_servers;
   template<typename _Builder>
@@ -1135,6 +1136,8 @@ public:
   }
 
   RaftTestBase(bool initializeWithCheckpoint=true)
+    :
+    now(std::chrono::steady_clock::now())
   {
     // Most of the checkpoint tests expect this block size
     store.block_size(2);
@@ -1163,7 +1166,7 @@ public:
 	}
 	five_servers = accb.finish();
       }
-      cm->set_checkpoint(append_checkpoint_chunk_traits::last_checkpoint_header(five_servers));
+      cm->set_checkpoint(append_checkpoint_chunk_traits::last_checkpoint_header(five_servers), now);
       BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
       BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
       BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
@@ -1210,17 +1213,14 @@ public:
   ~RaftTestBase() {}
 
   void make_leader(uint64_t term, bool respond_to_noop=true);
-  std::chrono::steady_clock::time_point make_leader(uint64_t term, std::chrono::steady_clock::time_point now, bool respond_to_noop=true);
   void make_follower_with_checkpoint(uint64_t term, uint64_t log_entry);
   void become_follower_with_vote_request(uint64_t term);
   void send_client_request_and_commit(uint64_t term, const char * cmd, uint64_t client_index);
-  std::chrono::steady_clock::time_point send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
-                                                            const boost::dynamic_bitset<> & send_responses_from,
-                                                            std::chrono::steady_clock::time_point now);
-  std::chrono::steady_clock::time_point send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
-                                                            const boost::dynamic_bitset<> & expect_append_entries_for,
-                                                            const boost::dynamic_bitset<> & send_responses_from,
-                                                            std::chrono::steady_clock::time_point now);
+  void send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
+                           const boost::dynamic_bitset<> & send_responses_from);
+  void send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
+                           const boost::dynamic_bitset<> & expect_append_entries_for,
+                           const boost::dynamic_bitset<> & send_responses_from);
   std::size_t num_known_peers() { return cm->configuration().num_known_peers(); }
   void stage_new_server(uint64_t term, uint64_t commit_index);
 
@@ -1393,9 +1393,8 @@ public:
   }
   void AppendEntriesNegativeResponse()
   {
-    auto now = std::chrono::steady_clock::now();
     // Make me leader
-    now = make_leader(1, now);
+    make_leader(1);
     // Client request to trigger append entries
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     std::string command_str("1");
@@ -1449,7 +1448,7 @@ public:
     {
       auto le = log_entry_builder().term(1).cluster_time(1000).data("1").finish();
       auto msg = append_entry_builder().recipient_id(0).term_number(1).leader_id(1).previous_log_index(0).previous_log_term(0).leader_commit_index(0).entry(le).finish();
-      s->on_append_entry(std::move(msg));
+      s->on_append_entry(std::move(msg), now);
     }
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
@@ -1460,7 +1459,7 @@ public:
       auto le = log_entry_builder().term(2).cluster_time(2000).data("2").finish();
       // Since a log header sync is outstanding we will ignore a new term
       auto msg = append_entry_builder().recipient_id(0).term_number(2).leader_id(2).previous_log_index(0).previous_log_term(0).leader_commit_index(0).entry(le).finish();
-      s->on_append_entry(std::move(msg));
+      s->on_append_entry(std::move(msg), now);
     }
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
@@ -1485,7 +1484,7 @@ public:
 	}
       }
       auto msg = bld.finish();
-      s->on_append_checkpoint_chunk(std::move(msg));
+      s->on_append_checkpoint_chunk(std::move(msg), now);
     }
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
@@ -1494,8 +1493,8 @@ public:
     BOOST_CHECK_EQUAL(0U, comm.q.size());
     // Wait enough time for a election timeout.  Current logic says that we won't start an election
     // if the log header sync is outstanding
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    s->on_timer();
+    now += std::chrono::milliseconds(500);
+    s->on_timer(now);
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
@@ -1505,20 +1504,20 @@ public:
       // This one doesn't require a new term so it gets queued awaiting the log header sync
       auto le = log_entry_builder().term(2).cluster_time(3000).data("2").finish();
       auto msg = append_entry_builder().recipient_id(0).term_number(1).leader_id(1).previous_log_index(1).previous_log_term(1).leader_commit_index(0).entry(le).finish();
-      s->on_append_entry(std::move(msg));
+      s->on_append_entry(std::move(msg), now);
     }
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK_EQUAL(0U, comm.q.size());
-    s->on_log_header_sync();
+    s->on_log_header_sync(now);
     BOOST_CHECK(!s->log_header_sync_required());
 
     // TODO: Validate that the 2 append entries have beeen processed and are
     // awaiting log sync.
   
-    s->on_log_sync(2);
+    s->on_log_sync(2, now);
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(3000U, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
@@ -1543,7 +1542,7 @@ public:
   {
     // FOLLOWER -> FOLLOWER
     auto msg = request_vote_builder().recipient_id(0).term_number(1).candidate_id(1).last_log_index(0).last_log_term(0).finish();
-    s->on_request_vote(std::move(msg));
+    s->on_request_vote(std::move(msg), now);
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
@@ -1551,7 +1550,7 @@ public:
     BOOST_CHECK_EQUAL(0U, comm.q.size());
     BOOST_CHECK_EQUAL(1U, log_header_write_.current_term_);
     BOOST_CHECK_EQUAL(1U, log_header_write_.voted_for_);
-    s->on_log_header_sync();
+    s->on_log_header_sync(now);
     BOOST_CHECK(!s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
@@ -1568,7 +1567,7 @@ public:
   {
     // FOLLOWER -> FOLLOWER
     auto msg = request_vote_builder().recipient_id(0).term_number(1).candidate_id(1).last_log_index(0).last_log_term(0).finish();
-    s->on_request_vote(std::move(msg));
+    s->on_request_vote(std::move(msg), now);
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
@@ -1580,7 +1579,7 @@ public:
     
     // We are still waiting for header to sync to disk so will ignore subsequent request.
     msg = request_vote_builder().recipient_id(0).term_number(2).candidate_id(2).last_log_index(0).last_log_term(0).finish();
-    s->on_request_vote(std::move(msg));
+    s->on_request_vote(std::move(msg), now);
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
@@ -1588,7 +1587,7 @@ public:
     BOOST_CHECK_EQUAL(0U, comm.q.size());
     BOOST_CHECK(log_header_write_.empty());
 
-    s->on_log_header_sync();
+    s->on_log_header_sync(now);
     BOOST_CHECK(!s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
@@ -1603,7 +1602,7 @@ public:
 
     // Send again now that we are sync'd
     msg = request_vote_builder().recipient_id(0).term_number(2).candidate_id(2).last_log_index(0).last_log_term(0).finish();
-    s->on_request_vote(std::move(msg));
+    s->on_request_vote(std::move(msg), now);
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(2U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
@@ -1613,7 +1612,7 @@ public:
     BOOST_CHECK_EQUAL(2U, log_header_write_.voted_for_);
     log_header_write_.reset();
 
-    s->on_log_header_sync();
+    s->on_log_header_sync(now);
     BOOST_CHECK(!s->log_header_sync_required());
     BOOST_CHECK_EQUAL(2U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
@@ -1631,9 +1630,9 @@ public:
       {
 	auto le = log_entry_builder().term(2).cluster_time(1000U + i).data((boost::format("%1%") % i).str().c_str()).finish();
 	auto msg = append_entry_builder().recipient_id(0).term_number(2).leader_id(1).previous_log_index(i-1).previous_log_term(i==1 ? 0 : 2).leader_commit_index(i-1).entry(le).finish();
-	s->on_append_entry(std::move(msg));
+	s->on_append_entry(std::move(msg), now);
       }
-      s->on_log_sync(i);
+      s->on_log_sync(i, now);
       BOOST_CHECK_EQUAL(2U, s->current_term());
       BOOST_CHECK_EQUAL(1000U+i, s->cluster_time());
       BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
@@ -1650,7 +1649,7 @@ public:
     // Now initiate a leadership change but without up to date log; this should advance term but
     // we should not get the vote.
     msg = request_vote_builder().recipient_id(0).term_number(3).candidate_id(1).last_log_index(0).last_log_term(0).finish();
-    s->on_request_vote(std::move(msg));
+    s->on_request_vote(std::move(msg), now);
     // Updated current_term requires header sync
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(3U, s->current_term());
@@ -1660,7 +1659,7 @@ public:
     BOOST_CHECK_EQUAL(3U, log_header_write_.current_term_);
     BOOST_CHECK_EQUAL(std::numeric_limits<uint64_t>::max(), log_header_write_.voted_for_);
     log_header_write_.reset();
-    s->on_log_header_sync();
+    s->on_log_header_sync(now);
     BOOST_CHECK(!s->log_header_sync_required());
     BOOST_CHECK_EQUAL(3U, s->current_term());
     BOOST_CHECK_EQUAL(1003U, s->cluster_time());
@@ -1674,7 +1673,7 @@ public:
 
     // Now initiate a leadership change but with up to date log we'll get the vote.
     msg = request_vote_builder().recipient_id(0).term_number(3).candidate_id(1).last_log_index(3).last_log_term(2).finish();
-    s->on_request_vote(std::move(msg));
+    s->on_request_vote(std::move(msg), now);
     // Updated voted_for (but not update current_term) requires header sync
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(3U, s->current_term());
@@ -1693,7 +1692,7 @@ public:
     {
       auto le = log_entry_builder().term(3).cluster_time(2000).data("4").finish();
       auto msg = append_entry_builder().recipient_id(0).term_number(3).leader_id(1).previous_log_index(3).previous_log_term(2).leader_commit_index(4).entry(le).finish();
-      s->on_append_entry(std::move(msg));
+      s->on_append_entry(std::move(msg), now);
     }
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(3U, s->current_term());
@@ -1702,7 +1701,7 @@ public:
     BOOST_CHECK_EQUAL(0U, comm.q.size());
     BOOST_CHECK(log_header_write_.empty());
   
-    s->on_log_header_sync();
+    s->on_log_header_sync(now);
     BOOST_CHECK(!s->log_header_sync_required());
     BOOST_CHECK_EQUAL(3U, s->current_term());
     BOOST_CHECK_EQUAL(2000U, s->cluster_time());
@@ -1715,7 +1714,7 @@ public:
     comm.q.pop_back();
     BOOST_CHECK(log_header_write_.empty());
 
-    s->on_log_sync(4);
+    s->on_log_sync(4, now);
     BOOST_CHECK_EQUAL(3U, s->current_term());
     BOOST_CHECK_EQUAL(2000U, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
@@ -1748,12 +1747,12 @@ public:
           // Term not valid when index=0 (empty log)
           auto le = log_entry_builder().term(term).cluster_time(7823).data("1").finish();
           auto msg = append_entry_builder().recipient_id(0).term_number(term).leader_id(1).previous_log_index(idx).previous_log_term(current_term).leader_commit_index(commit_idx).entry(le).finish();
-          this->s->on_append_entry(std::move(msg));
+          this->s->on_append_entry(std::move(msg), now);
         }
         if (term != current_term) {
           BOOST_CHECK_EQUAL(initial_cluster_time, this->s->cluster_time());
           BOOST_CHECK(this->s->log_header_sync_required());
-          this->s->on_log_header_sync();
+          this->s->on_log_header_sync(now);
         }
         BOOST_CHECK(!this->s->log_header_sync_required());
         BOOST_CHECK_EQUAL(term, this->s->current_term());
@@ -1762,7 +1761,7 @@ public:
         BOOST_CHECK_EQUAL(0U, this->comm.q.size());
         initial_cluster_time = 7823U;
 
-        this->s->on_log_sync(idx+1);
+        this->s->on_log_sync(idx+1, now);
         BOOST_CHECK_EQUAL(term, this->s->current_term());
         BOOST_CHECK_EQUAL(7823U, this->s->cluster_time());
         BOOST_CHECK_EQUAL(commit_idx, this->s->commit_index());
@@ -1789,12 +1788,12 @@ public:
         bld.entry(log_entry_builder().term(term).cluster_time(7823).data("1").finish());
       }
     }
-    this->s->on_append_entry(bld.finish());
+    this->s->on_append_entry(bld.finish(), now);
     uint64_t term=10;
     BOOST_CHECK_EQUAL(initial_cluster_time, this->s->cluster_time());
     BOOST_CHECK(this->s->log_header_sync_required());
-    this->s->on_log_header_sync();
-    this->s->on_log_sync(9U);
+    this->s->on_log_header_sync(now);
+    this->s->on_log_sync(9U, now);
     BOOST_CHECK_EQUAL(term, this->s->current_term());
     BOOST_CHECK_EQUAL(7823U, this->s->cluster_time());
     BOOST_CHECK_EQUAL(9U, this->s->commit_index());
@@ -1819,18 +1818,18 @@ public:
       // Term not valid when index=0 (empty log)
       auto le = log_entry_builder().term(term).cluster_time(cluster_time).data("1").finish();
       auto msg = append_entry_builder().recipient_id(0).term_number(term).leader_id(1).previous_log_index(0).previous_log_term(0).leader_commit_index(0).entry(le).finish();
-      this->s->on_append_entry(std::move(msg));
+      this->s->on_append_entry(std::move(msg), now);
     }
     BOOST_CHECK_EQUAL(initial_cluster_time, this->s->cluster_time());
     BOOST_CHECK(this->s->log_header_sync_required());
-    this->s->on_log_header_sync();
+    this->s->on_log_header_sync(now);
     BOOST_CHECK(!this->s->log_header_sync_required());
     BOOST_CHECK_EQUAL(term, this->s->current_term());
     BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
     BOOST_CHECK_EQUAL(0U, this->comm.q.size());
 
-    this->s->on_log_sync(1);
+    this->s->on_log_sync(1, now);
     BOOST_CHECK_EQUAL(term, this->s->current_term());
     BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
@@ -1844,7 +1843,6 @@ public:
     this->comm.q.pop_back();
 
     // Run timer then we should become CANDIDATE
-    auto now = std::chrono::steady_clock::now();
     now += std::chrono::milliseconds(500);
     s->on_timer(now);
     BOOST_CHECK_EQUAL(term+1U, s->current_term());
@@ -1873,7 +1871,7 @@ public:
       // Term not valid when index=0 (empty log)
       auto le = log_entry_builder().term(term).cluster_time(cluster_time).data("1").finish();
       auto msg = append_entry_builder().recipient_id(0).term_number(term).leader_id(2).previous_log_index(0).previous_log_term(0).leader_commit_index(0).entry(le).finish();
-      this->s->on_append_entry(std::move(msg));
+      this->s->on_append_entry(std::move(msg), now);
     }
     BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
     // No header sync necessary because term didn't change
@@ -1882,7 +1880,7 @@ public:
     BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
     BOOST_CHECK_EQUAL(0U, this->comm.q.size());
-    this->s->on_log_sync(1);
+    this->s->on_log_sync(1, now);
     BOOST_CHECK_EQUAL(term, this->s->current_term());
     BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
@@ -1906,18 +1904,18 @@ public:
       // Term not valid when index=0 (empty log)
       auto le = log_entry_builder().term(term).cluster_time(cluster_time).data("1").finish();
       auto msg = append_entry_builder().recipient_id(0).term_number(term).leader_id(1).previous_log_index(0).previous_log_term(0).leader_commit_index(0).entry(le).finish();
-      this->s->on_append_entry(std::move(msg));
+      this->s->on_append_entry(std::move(msg), now);
     }
     BOOST_CHECK_EQUAL(initial_cluster_time, this->s->cluster_time());
     BOOST_CHECK(this->s->log_header_sync_required());
-    this->s->on_log_header_sync();
+    this->s->on_log_header_sync(now);
     BOOST_CHECK(!this->s->log_header_sync_required());
     BOOST_CHECK_EQUAL(term, this->s->current_term());
     BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
     BOOST_CHECK_EQUAL(0U, this->comm.q.size());
 
-    this->s->on_log_sync(1);
+    this->s->on_log_sync(1, now);
     BOOST_CHECK_EQUAL(term, this->s->current_term());
     BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
@@ -1937,17 +1935,17 @@ public:
       // Term not valid when index=0 (empty log)
       auto le = log_entry_builder().term(term).cluster_time(cluster_time).data("1").finish();
       auto msg = append_entry_builder().recipient_id(0).term_number(term).leader_id(2).previous_log_index(0).previous_log_term(0).leader_commit_index(0).entry(le).finish();
-      this->s->on_append_entry(std::move(msg));
+      this->s->on_append_entry(std::move(msg), now);
     }
     BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
     BOOST_CHECK(this->s->log_header_sync_required());
-    this->s->on_log_header_sync();
+    this->s->on_log_header_sync(now);
     BOOST_CHECK(!this->s->log_header_sync_required());
     BOOST_CHECK_EQUAL(term, this->s->current_term());
     BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
     BOOST_CHECK_EQUAL(0U, this->comm.q.size());
-    this->s->on_log_sync(1);
+    this->s->on_log_sync(1, now);
     BOOST_CHECK_EQUAL(term, this->s->current_term());
     BOOST_CHECK_EQUAL(cluster_time, this->s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->s->get_state());
@@ -1980,7 +1978,7 @@ public:
 	}
       }
       auto msg = bld.finish();
-      s->on_append_checkpoint_chunk(std::move(msg));
+      s->on_append_checkpoint_chunk(std::move(msg), now);
     }
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
@@ -1988,14 +1986,14 @@ public:
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK_EQUAL(0U, comm.q.size());
 
-    s->on_log_header_sync();
+    s->on_log_header_sync(now);
     BOOST_CHECK(!s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_REQUIRE_EQUAL(0U, comm.q.size());
 
-    s->on_checkpoint_sync();
+    s->on_checkpoint_sync(now);
     BOOST_TEST(1 == checkpoint_load_state.size());
     BOOST_TEST_REQUIRE(0 < checkpoint_load_state.size());
     BOOST_TEST(0U == checkpoint_load_state[0]);
@@ -2018,10 +2016,10 @@ public:
     {
       auto le = log_entry_builder().term(1U).cluster_time(initial_cluster_time).data("4").finish();
       auto msg = append_entry_builder().recipient_id(0).term_number(1).leader_id(1).previous_log_index(2).previous_log_term(1).leader_commit_index(2).entry(le).finish();
-      s->on_append_entry(std::move(msg));
+      s->on_append_entry(std::move(msg), now);
     }
     BOOST_CHECK_EQUAL(0U, comm.q.size());
-    s->on_log_sync(3);
+    s->on_log_sync(3, now);
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
@@ -2054,7 +2052,7 @@ public:
 	}
       }
       auto msg = bld.finish();
-      s->on_append_checkpoint_chunk(std::move(msg));
+      s->on_append_checkpoint_chunk(std::move(msg), now);
     }
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
@@ -2065,7 +2063,7 @@ public:
       // Since a log header sync is outstanding we will ignore a new term
       auto le = log_entry_builder().term(2).cluster_time(2000).data("2").finish();
       auto msg = append_entry_builder().recipient_id(0).term_number(2).leader_id(2).previous_log_index(0).previous_log_term(0).leader_commit_index(0).entry(le).finish();
-      s->on_append_entry(std::move(msg));
+      s->on_append_entry(std::move(msg), now);
     }
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
@@ -2090,7 +2088,7 @@ public:
 	}
       }
       auto msg = bld.finish();
-      s->on_append_checkpoint_chunk(std::move(msg));
+      s->on_append_checkpoint_chunk(std::move(msg), now);
     }
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
@@ -2116,7 +2114,7 @@ public:
 	}
       }
       auto msg = bld.finish();
-      s->on_append_checkpoint_chunk(std::move(msg));
+      s->on_append_checkpoint_chunk(std::move(msg), now);
     }
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_TEST(0 == checkpoint_load_state.size());
@@ -2124,7 +2122,7 @@ public:
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK_EQUAL(0U, comm.q.size());
-    s->on_log_header_sync();
+    s->on_log_header_sync(now);
     BOOST_CHECK(!s->log_header_sync_required());
     BOOST_TEST(0 == checkpoint_load_state.size());
     BOOST_CHECK_EQUAL(1U, s->current_term());
@@ -2137,7 +2135,7 @@ public:
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_response_traits::bytes_stored(boost::get<append_checkpoint_chunk_response_arg_type>(comm.q.back())));
     comm.q.pop_back();
 
-    s->on_checkpoint_sync();
+    s->on_checkpoint_sync(now);
     BOOST_TEST(2 == checkpoint_load_state.size());
     BOOST_TEST_REQUIRE(0 < checkpoint_load_state.size());
     BOOST_TEST(0U == checkpoint_load_state[0]);
@@ -2180,7 +2178,7 @@ public:
     BOOST_CHECK(nullptr == s->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
-    s->complete_checkpoint(ckpt);
+    s->complete_checkpoint(ckpt, now);
     BOOST_CHECK_EQUAL(2U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->last_checkpoint_cluster_time());
@@ -2207,7 +2205,7 @@ public:
     BOOST_CHECK(block.is_null());
 
     BOOST_TEST(0U == checkpoint_load_state.size());
-    s->load_checkpoint(std::chrono::steady_clock::now());
+    s->load_checkpoint(now);
     BOOST_TEST_REQUIRE(5U == checkpoint_load_state.size());
     BOOST_TEST(0 == ::memcmp(&checkpoint_load_state[0], &data[0], 5));
   }
@@ -2242,7 +2240,7 @@ public:
 
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
-    s->complete_checkpoint(ckpt);
+    s->complete_checkpoint(ckpt, now);
     BOOST_CHECK_EQUAL(2U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
@@ -2285,7 +2283,7 @@ public:
 
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
-    s->complete_checkpoint(ckpt);
+    s->complete_checkpoint(ckpt, now);
     BOOST_CHECK_EQUAL(2U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
@@ -2321,7 +2319,7 @@ public:
     boost::dynamic_bitset<> responses;
     responses.resize(num_known_peers(), true);
     responses.flip(1);
-    send_client_request(term, cmd, client_index++, responses, std::chrono::steady_clock::now());
+    send_client_request(term, cmd, client_index++, responses);
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
@@ -2340,7 +2338,7 @@ public:
     BOOST_CHECK(nullptr == s->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
-    s->complete_checkpoint(ckpt);
+    s->complete_checkpoint(ckpt, now);
     BOOST_CHECK_EQUAL(2U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
@@ -2348,7 +2346,7 @@ public:
 
     // Fire timer.  Peer 1 still doesn't have first log entry but since that entry is
     // discarded, a checkpoint will need to be sent to 1.
-    s->on_timer();
+    s->on_timer(now);
     BOOST_REQUIRE_EQUAL(1U, comm.q.size());
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
@@ -2374,7 +2372,7 @@ public:
     // Ack with bytes_stored=2 twice to validate the checkpoint protocol will resend data if requested
     for(int i=0; i<2; ++i) {
       auto resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(1U).request_term_number(1U).bytes_stored(2U).finish();
-      s->on_append_checkpoint_chunk_response(std::move(resp));  
+      s->on_append_checkpoint_chunk_response(std::move(resp), now);  
       BOOST_REQUIRE_EQUAL(1U, comm.q.size());
       BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
       BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
@@ -2389,7 +2387,7 @@ public:
     }
 
     auto resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(1U).request_term_number(1U).bytes_stored(4U).finish();
-    s->on_append_checkpoint_chunk_response(std::move(resp));  
+    s->on_append_checkpoint_chunk_response(std::move(resp), now);  
     BOOST_REQUIRE_EQUAL(1U, comm.q.size());
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
@@ -2403,7 +2401,7 @@ public:
     comm.q.pop_back();
 
     resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(1U).request_term_number(1U).bytes_stored(5U).finish();
-    s->on_append_checkpoint_chunk_response(std::move(resp));  
+    s->on_append_checkpoint_chunk_response(std::move(resp), now);  
     BOOST_REQUIRE_EQUAL(0U, comm.q.size());
 
     // Now test that we can append to all peers
@@ -2424,7 +2422,7 @@ public:
     boost::dynamic_bitset<> responses;
     responses.resize(num_known_peers(), true);
     responses.flip(1);
-    send_client_request(term, cmd, client_index++, responses, std::chrono::steady_clock::now());
+    send_client_request(term, cmd, client_index++, responses);
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
@@ -2443,7 +2441,7 @@ public:
     BOOST_CHECK(nullptr == s->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
-    s->complete_checkpoint(ckpt);
+    s->complete_checkpoint(ckpt, now);
     BOOST_CHECK_EQUAL(2U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
@@ -2451,7 +2449,7 @@ public:
 
     // Fire timer.  Peer 1 still doesn't have first log entry but since that entry is
     // discarded, a checkpoint will need to be sent to 1.
-    s->on_timer();
+    s->on_timer(now);
     BOOST_REQUIRE_EQUAL(1U, comm.q.size());
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
@@ -2475,7 +2473,7 @@ public:
     comm.q.pop_back();
 
     auto resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(1U).request_term_number(1U).bytes_stored(5U).finish();
-    s->on_append_checkpoint_chunk_response(std::move(resp));  
+    s->on_append_checkpoint_chunk_response(std::move(resp), now);  
     BOOST_REQUIRE_EQUAL(0U, comm.q.size());
 
     // Now test that we can append to all peers
@@ -2497,7 +2495,7 @@ public:
     boost::dynamic_bitset<> responses;
     responses.resize(num_known_peers(), true);
     responses.flip(1);
-    send_client_request(term, cmd, client_index++, responses, std::chrono::steady_clock::now());
+    send_client_request(term, cmd, client_index++, responses);
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
@@ -2514,7 +2512,7 @@ public:
     BOOST_CHECK(nullptr == s->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
-    s->complete_checkpoint(ckpt);
+    s->complete_checkpoint(ckpt, now);
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
@@ -2522,7 +2520,7 @@ public:
 
     // Fire timer.  Peer 1 still doesn't have first log entry but since that entry is
     // discarded, a checkpoint will need to be sent to 1.
-    s->on_timer();
+    s->on_timer(now);
     BOOST_REQUIRE_EQUAL(1U, comm.q.size());
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
@@ -2536,17 +2534,17 @@ public:
     comm.q.pop_back();
 
     auto resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(2U).request_term_number(1U).bytes_stored(2U).finish();
-    s->on_append_checkpoint_chunk_response(std::move(resp));  
+    s->on_append_checkpoint_chunk_response(std::move(resp), now);  
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(2U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK_EQUAL(0U, comm.q.size());
-    s->on_log_header_sync();
+    s->on_log_header_sync(now);
 
     // Send unexpected response; this should be happily ignored
     resp = append_checkpoint_chunk_response_builder().recipient_id(2).term_number(2U).request_term_number(1U).bytes_stored(2U).finish();
-    s->on_append_checkpoint_chunk_response(std::move(resp));  
+    s->on_append_checkpoint_chunk_response(std::move(resp), now);  
   }
 
   // Test that we can continue to send log entries to other peers while
@@ -2564,7 +2562,7 @@ public:
     boost::dynamic_bitset<> responses;
     responses.resize(num_known_peers(), true);
     responses.flip(1);
-    send_client_request(term, cmd, client_index++, responses, std::chrono::steady_clock::now());
+    send_client_request(term, cmd, client_index++, responses);
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
@@ -2583,7 +2581,7 @@ public:
     BOOST_CHECK_EQUAL(client_index, l.last_index());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
-    s->complete_checkpoint(ckpt);
+    s->complete_checkpoint(ckpt, now);
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
@@ -2592,7 +2590,7 @@ public:
 
     // Fire timer.  Peer 1 still doesn't have first log entry but since that entry is
     // discarded, a checkpoint will need to be sent to 1.
-    s->on_timer();
+    s->on_timer(now);
     BOOST_REQUIRE_EQUAL(1U, comm.q.size());
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(comm.q.back())));
@@ -2616,17 +2614,15 @@ public:
     comm.q.pop_back();
 
     // Check that we can send client request to other peers.
-    send_client_request(term, cmd, client_index++, responses, responses, std::chrono::steady_clock::now());    
+    send_client_request(term, cmd, client_index++, responses, responses);    
   }
   
   // Test that append_entries will send a checkpoint that needs log entries the leader has discarded
   // post checkpoint
   void AppendEntriesCheckpointResend()
-  {
-    auto now = std::chrono::steady_clock::now();
-    
+  {    
     uint64_t term = 1;
-    now = make_leader(term, now);
+    make_leader(term);
 
     const char * cmd = "1";
     uint64_t expected_cluster_time = initial_cluster_time;
@@ -2636,7 +2632,7 @@ public:
     boost::dynamic_bitset<> responses;
     responses.resize(num_known_peers(), true);
     responses.flip(1);
-    now = send_client_request(term, cmd, client_index++, responses, now);
+    send_client_request(term, cmd, client_index++, responses);
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(0U, s->last_checkpoint_cluster_time());
@@ -2653,7 +2649,7 @@ public:
     BOOST_CHECK(nullptr == s->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
     ckpt->write(&data[0], 5U);
-    s->complete_checkpoint(ckpt);
+    s->complete_checkpoint(ckpt, now);
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_index());
     BOOST_CHECK_EQUAL(1U, s->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, s->last_checkpoint_cluster_time());
@@ -2793,7 +2789,7 @@ public:
     BOOST_CHECK(cm->configuration().staging_servers_caught_up());
     BOOST_CHECK(log_entry_traits::is_command(&l.entry(l.last_index()-1)));
     // TODO: Should I really have to do this on_timer call to trigger the transitional entry????
-    s->on_timer();
+    s->on_timer(now);
     auto & le(l.entry(l.last_index()-1));
     BOOST_CHECK(cm->configuration().is_transitional());
     BOOST_CHECK(log_entry_traits::is_configuration(&le));
@@ -2811,7 +2807,7 @@ public:
       BOOST_CHECK_EQUAL(1U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(comm.q.back())));
       BOOST_CHECK_EQUAL(1U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(comm.q.back())));
       auto resp = append_response_builder().recipient_id(expected).term_number(1).request_term_number(1).begin_index(3).last_index(4).success(true).finish();
-      s->on_append_response(std::move(resp));
+      s->on_append_response(std::move(resp), now);
       comm.q.pop_back();
 
       // We need quorum from both the old set of 5 servers and the new set of 6
@@ -2863,7 +2859,7 @@ public:
     send_client_request_and_commit(term, "2", log_index+1);
     BOOST_CHECK(cm->configuration().staging_servers_caught_up());
     // TODO: Should I really have to do this on_timer call to trigger the transitional entry????
-    s->on_timer();
+    s->on_timer(now);
     BOOST_CHECK(cm->configuration().is_transitional());
     BOOST_CHECK_EQUAL(0U, c.configuration_responses.size());
 
@@ -2872,10 +2868,10 @@ public:
     // to prior configuration
     auto le = log_entry_builder().term(term+1).data("1").finish();
     auto msg = append_entry_builder().recipient_id(0).term_number(term+1).leader_id(1).previous_log_index(log_index+2).previous_log_term(term).leader_commit_index(s->commit_index()).entry(le).finish();
-    s->on_append_entry(std::move(msg));
+    s->on_append_entry(std::move(msg), now);
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK(s->log_header_sync_required());
-    s->on_log_header_sync();
+    s->on_log_header_sync(now);
     BOOST_CHECK(!s->log_header_sync_required());
     BOOST_REQUIRE(0U < c.configuration_responses.size());
     BOOST_CHECK_EQUAL(raft::native::FAIL, c.configuration_responses.front().result);
@@ -2899,7 +2895,7 @@ public:
     send_client_request_and_commit(term, "2", log_index+1);
     BOOST_CHECK(cm->configuration().staging_servers_caught_up());
     // TODO: Should I really have to do this on_timer call to trigger the transitional entry????
-    s->on_timer();
+    s->on_timer(now);
     BOOST_CHECK(cm->configuration().is_transitional());
     BOOST_CHECK_EQUAL(0U, c.configuration_responses.size());
 
@@ -2909,10 +2905,10 @@ public:
     // I don't log the new stable config (the new leader does that).
     auto le = log_entry_builder().term(term+1).data("1").finish();
     auto msg = append_entry_builder().recipient_id(0).term_number(term+1).leader_id(1).previous_log_index(log_index+3).previous_log_term(term).leader_commit_index(commit_index+3).entry(le).finish();
-    s->on_append_entry(std::move(msg));
+    s->on_append_entry(std::move(msg), now);
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK(s->log_header_sync_required());
-    s->on_log_header_sync();
+    s->on_log_header_sync(now);
     BOOST_CHECK(!s->log_header_sync_required());
     BOOST_REQUIRE(0U < c.configuration_responses.size());
     BOOST_CHECK_EQUAL(raft::native::SUCCESS, c.configuration_responses.front().result);
@@ -2921,8 +2917,8 @@ public:
   void CandidateVoteRequestAtSameTerm()
   {
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    s->on_timer();
+    now += std::chrono::milliseconds(500);
+    s->on_timer(now);
     BOOST_CHECK_EQUAL(raft_type::CANDIDATE, s->get_state());
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
@@ -2931,7 +2927,7 @@ public:
     // Vote request from old term gets immediate negative response
     {
       auto msg = request_vote_builder().recipient_id(0).term_number(0).candidate_id(1).last_log_index(0).last_log_term(0).finish();
-      s->on_request_vote(std::move(msg));
+      s->on_request_vote(std::move(msg), now);
       BOOST_CHECK_EQUAL(1U, comm.q.size());
       BOOST_CHECK_EQUAL(0U, vote_response_traits::peer_id(boost::get<vote_response_arg_type>(comm.q.back())));
       BOOST_CHECK_EQUAL(1U, vote_response_traits::term_number(boost::get<vote_response_arg_type>(comm.q.back())));
@@ -2945,13 +2941,13 @@ public:
     // will also send out vote requests to all other peers upon the header sync.
     {
       auto msg = request_vote_builder().recipient_id(0).term_number(1).candidate_id(1).last_log_index(0).last_log_term(0).finish();
-      s->on_request_vote(std::move(msg));
+      s->on_request_vote(std::move(msg), now);
       BOOST_CHECK_EQUAL(0U, comm.q.size());
     }
 
     // We use a brittle implementation detail here; vote response generated before vote requests.
     // Don't be surprised if this breaks some day.
-    s->on_log_header_sync();
+    s->on_log_header_sync(now);
     BOOST_CHECK(!s->log_header_sync_required());
     BOOST_CHECK_EQUAL(num_known_peers(), comm.q.size());
     BOOST_CHECK_EQUAL(0U, vote_response_traits::peer_id(boost::get<vote_response_arg_type>(comm.q.back())));
@@ -2972,8 +2968,8 @@ public:
   void CandidateAppendEntriesAtSameTerm()
   {
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    s->on_timer();
+    now += std::chrono::milliseconds(500);
+    s->on_timer(now);
     BOOST_CHECK_EQUAL(raft_type::CANDIDATE, s->get_state());
     BOOST_CHECK(s->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, s->current_term());
@@ -2982,7 +2978,7 @@ public:
     // Append entry from old term gets immediate negative response
     {
       auto msg = append_entry_builder().recipient_id(0).request_id(2).term_number(0).leader_id(1).previous_log_index(1).previous_log_term(0).leader_commit_index(0).entry(log_entry_traits::create_noop(0, initial_cluster_time)).finish();
-      s->on_append_entry(std::move(msg));
+      s->on_append_entry(std::move(msg), now);
       BOOST_CHECK_EQUAL(raft_type::CANDIDATE, s->get_state());
       BOOST_CHECK(s->log_header_sync_required());
       BOOST_CHECK_EQUAL(0U, append_response_traits::recipient_id(boost::get<append_response_arg_type>(comm.q.back())));
@@ -2994,7 +2990,7 @@ public:
     }
 
     // Header sync will send vote requests
-    s->on_log_header_sync();
+    s->on_log_header_sync(now);
     BOOST_CHECK(!s->log_header_sync_required());
     BOOST_CHECK_EQUAL(4U, comm.q.size());
     uint32_t expected = 1;
@@ -3009,7 +3005,7 @@ public:
     // Now another server independently gets leadership at term 1 and sends append entry.
     // We become follower without log header sync.
     auto msg = append_entry_builder().recipient_id(0).request_id(2).term_number(1).leader_id(1).previous_log_index(0).previous_log_term(0).leader_commit_index(0).entry(log_entry_traits::create_noop(0, initial_cluster_time)).finish();
-    s->on_append_entry(std::move(msg));
+    s->on_append_entry(std::move(msg), now);
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
     BOOST_CHECK_EQUAL(1U, s->current_term());
     BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
@@ -3017,7 +3013,7 @@ public:
     BOOST_CHECK_EQUAL(0U, comm.q.size());
 
     // Once log is sync'd we'll send the response.
-    s->on_log_sync(1);
+    s->on_log_sync(1, now);
     BOOST_REQUIRE_EQUAL(1U, comm.q.size());
     BOOST_CHECK_EQUAL(0U, append_response_traits::recipient_id(boost::get<append_response_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_response_traits::term_number(boost::get<append_response_arg_type>(comm.q.back())));
@@ -3029,7 +3025,6 @@ public:
 
   void JointConsensusAddServerNewLeaderFinishesCommit()
   {
-    auto now = std::chrono::steady_clock::now();
     // As FOLLOWER, get a transitional config from the leader
     BOOST_CHECK(cm->configuration().is_stable());
     uint64_t term=0;
@@ -3054,7 +3049,7 @@ public:
     BOOST_CHECK_EQUAL(5U, simple_configuration_description_traits::size(&configuration_description_traits::from(&log_entry_traits::configuration(&le))));
     BOOST_CHECK_EQUAL(6U, simple_configuration_description_traits::size(&configuration_description_traits::to(&log_entry_traits::configuration(&le))));
 
-    now = make_leader(term+1, now, false);
+    make_leader(term+1, false);
 
     // Now leader and have the config entry so should try to replicate it but a new leader
     // is optimistic and assumes that all peers have its log entries.  It will append a NOOP
@@ -3108,44 +3103,8 @@ public:
     }  
   }
 };
-
 template<typename _TestType>
 void RaftTestBase<_TestType>::make_leader(uint64_t term, bool respond_to_noop)
-{
-  std::this_thread::sleep_for (std::chrono::milliseconds(500));
-  s->on_timer();
-  // TODO: Check this once we start using a synthetic clock in tests
-  auto cluster_time = s->cluster_time();
-  BOOST_CHECK_EQUAL(term, s->current_term());
-  BOOST_CHECK_EQUAL(raft_type::CANDIDATE, s->get_state());
-  BOOST_CHECK(s->log_header_sync_required());
-  s->on_log_header_sync();
-  BOOST_CHECK(!s->log_header_sync_required());
-  BOOST_CHECK_EQUAL(num_known_peers()-1, comm.q.size());
-  while(comm.q.size() > 0) {
-    comm.q.pop_back();
-  }
-  for(uint64_t p=1; p!=num_known_peers(); ++p) {
-    auto vote_response_msg = vote_response_builder().peer_id(p).term_number(term).request_term_number(term).granted(true).finish();
-    s->on_vote_response(std::move(vote_response_msg));
-  }
-  BOOST_CHECK_EQUAL(raft_type::LEADER, s->get_state());
-  BOOST_TEST(cluster_time < s->cluster_time());
-  BOOST_CHECK_EQUAL(num_known_peers()-1, comm.q.size());
-  for(uint64_t p=1; p!=num_known_peers(); ++p) {
-    BOOST_CHECK(log_entry_traits::is_noop(&append_entry_traits::get_entry(boost::get<append_entry_arg_type>(comm.q.back()), 0)));
-    if (respond_to_noop) {
-      auto resp = append_response_builder().recipient_id(p).term_number(term).request_term_number(term).begin_index(0).last_index(append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(comm.q.back()))+1).success(true).finish();
-      s->on_append_response(std::move(resp));
-    }
-    comm.q.pop_back();
-  }
-  // Update intial_cluster_time to current
-  initial_cluster_time = s->cluster_time();
-}
-
-template<typename _TestType>
-std::chrono::steady_clock::time_point RaftTestBase<_TestType>::make_leader(uint64_t term, std::chrono::steady_clock::time_point now, bool respond_to_noop)
 {
   now += std::chrono::milliseconds(500);
   s->on_timer(now);
@@ -3177,7 +3136,6 @@ std::chrono::steady_clock::time_point RaftTestBase<_TestType>::make_leader(uint6
   }
   // Update intial_cluster_time to current
   initial_cluster_time = s->cluster_time();
-  return now;
 }
 
 template<typename _TestType>
@@ -3185,25 +3143,23 @@ void RaftTestBase<_TestType>::send_client_request_and_commit(uint64_t term, cons
 {
   boost::dynamic_bitset<> responses;
   responses.resize(num_known_peers(), 1);
-  send_client_request(term, cmd, client_index, responses, std::chrono::steady_clock::now());
+  send_client_request(term, cmd, client_index, responses);
   BOOST_CHECK_EQUAL(client_index+1, s->commit_index());
 }
 
 template<typename _TestType>
-std::chrono::steady_clock::time_point RaftTestBase<_TestType>::send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
-                                                                                   const boost::dynamic_bitset<> & send_responses_from,
-                                                                                   std::chrono::steady_clock::time_point now)
+void RaftTestBase<_TestType>::send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
+                                                  const boost::dynamic_bitset<> & send_responses_from)
 {
   boost::dynamic_bitset<> expected_append_entries;
   expected_append_entries.resize(num_known_peers(), 1);
-  return send_client_request(term, cmd, client_index, expected_append_entries, send_responses_from, now);
+  send_client_request(term, cmd, client_index, expected_append_entries, send_responses_from);
 }
 
 template<typename _TestType>
-std::chrono::steady_clock::time_point RaftTestBase<_TestType>::send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
-                                                                                   const boost::dynamic_bitset<> & expect_append_entries_for,
-                                                                                   const boost::dynamic_bitset<> & send_responses_from,
-                                                                                   std::chrono::steady_clock::time_point now)
+void RaftTestBase<_TestType>::send_client_request(uint64_t term, const char * cmd, uint64_t client_index,
+                                                  const boost::dynamic_bitset<> & expect_append_entries_for,
+                                                  const boost::dynamic_bitset<> & send_responses_from)
 {
   auto initial_commit_index = s->commit_index();
   // Fire off a client_request
@@ -3255,7 +3211,6 @@ std::chrono::steady_clock::time_point RaftTestBase<_TestType>::send_client_reque
     }
     comm.q.pop_back();
   }
-  return now;
 }
 
 template<typename _TestType>
@@ -3278,21 +3233,21 @@ void RaftTestBase<_TestType>::make_follower_with_checkpoint(uint64_t term, uint6
       }
     }
     auto msg = bld.finish();
-    s->on_append_checkpoint_chunk(std::move(msg));
+    s->on_append_checkpoint_chunk(std::move(msg), now);
   }
  BOOST_CHECK(s->log_header_sync_required());
  BOOST_CHECK_EQUAL(term, s->current_term());
  BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
  BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
  BOOST_CHECK_EQUAL(0U, comm.q.size());
- s->on_log_header_sync();
+ s->on_log_header_sync(now);
  BOOST_CHECK(!s->log_header_sync_required());
  BOOST_CHECK_EQUAL(term, s->current_term());
  BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
  BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
  BOOST_REQUIRE_EQUAL(0U, comm.q.size());
 
- s->on_checkpoint_sync();
+ s->on_checkpoint_sync(now);
  BOOST_CHECK(!s->log_header_sync_required());
  BOOST_CHECK_EQUAL(term, s->current_term());
  BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
@@ -3309,13 +3264,13 @@ template<typename _TestType>
 void RaftTestBase<_TestType>::become_follower_with_vote_request(uint64_t term)
 {
   auto msg = request_vote_builder().recipient_id(0).term_number(term).candidate_id(1).last_log_index(0).last_log_term(0).finish();
-  s->on_request_vote(std::move(msg));
+  s->on_request_vote(std::move(msg), now);
   BOOST_CHECK(s->log_header_sync_required());
   BOOST_CHECK_EQUAL(term, s->current_term());
   BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
   BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s->get_state());
   BOOST_CHECK_EQUAL(0U, comm.q.size());
-  s->on_log_header_sync();
+  s->on_log_header_sync(now);
   BOOST_CHECK(!s->log_header_sync_required());
   BOOST_CHECK_EQUAL(term, s->current_term());
   BOOST_CHECK_EQUAL(initial_cluster_time, s->cluster_time());
@@ -3340,13 +3295,13 @@ void RaftTestBase<_TestType>::stage_new_server(uint64_t term, uint64_t commit_in
     add_six_servers(bld.old_id(0).new_configuration());
     auto req = bld.finish();
     BOOST_CHECK_EQUAL(6U, simple_configuration_description_traits::size(&set_configuration_request_traits::new_configuration(req)));
-    s->on_set_configuration(c, std::move(req));
+    s->on_set_configuration(c, std::move(req), now);
     BOOST_CHECK_EQUAL(6U, num_known_peers());
   }
   auto new_server_id = num_known_peers()-1;
   
   // Run timer then we should get append_entries for the newly added server
-  s->on_timer();
+  s->on_timer(now);
   BOOST_CHECK_EQUAL(1U, comm.q.size());
   while(comm.q.size() > 0) {
     BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(comm.q.back())));
@@ -3356,7 +3311,7 @@ void RaftTestBase<_TestType>::stage_new_server(uint64_t term, uint64_t commit_in
     BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(comm.q.back())));
     BOOST_CHECK_EQUAL(commit_index, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(comm.q.back())));
     auto resp = append_response_builder().recipient_id(new_server_id).term_number(term).request_term_number(term).begin_index(0).last_index(commit_index).success(true).finish();
-    s->on_append_response(std::move(resp));
+    s->on_append_response(std::move(resp), now);
     comm.q.pop_back();
   }
   BOOST_CHECK(!cm->configuration().staging_servers_caught_up());

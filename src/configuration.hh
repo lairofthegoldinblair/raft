@@ -342,7 +342,8 @@ namespace raft {
     bool initiated_new_configuration_;
 
     // Sync up the server description address with the peer type.
-    std::shared_ptr<_Peer> get_or_create_peer(const server_description_type & s, bool is_staging)
+    std::shared_ptr<_Peer> get_or_create_peer(const server_description_type & s, bool is_staging,
+                                              std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       auto server_id = server_description_traits_type::id(&s);
       auto server_address = server_description_traits_type::address(&s);
@@ -355,7 +356,7 @@ namespace raft {
 	cluster_[server_id]->peer_id = server_id;
 	// Only staging servers need to be monitored for catchup.
 	if (is_staging) {
-	  cluster_[server_id]->configuration_change_.reset(new peer_configuration_change(my_cluster_id(), server_id, std::chrono::steady_clock::now()));
+	  cluster_[server_id]->configuration_change_.reset(new peer_configuration_change(my_cluster_id(), server_id, clock_now));
 	}
 	++num_known_peers_;
 	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") creating new peer with id " << server_id;
@@ -462,7 +463,8 @@ namespace raft {
       return configuration_id_ != std::numeric_limits<uint64_t>::max();
     }
 
-    void set_configuration(uint64_t configuration_id, const configuration_description_type & desc)
+    void set_configuration(uint64_t configuration_id, const configuration_description_type & desc,
+                           std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       typedef configuration_description_traits_type cdtt;
       typedef simple_configuration_description_traits_type scdtt;
@@ -481,11 +483,11 @@ namespace raft {
 
       std::set<uint64_t> new_known_peers;
       for(std::size_t i=0; i < scdtt::size(&cdtt::from(&desc)); ++i) {
-	old_peers_.peers_.push_back(get_or_create_peer(scdtt::get(&cdtt::from(&desc), i), false));
+	old_peers_.peers_.push_back(get_or_create_peer(scdtt::get(&cdtt::from(&desc), i), false, clock_now));
 	new_known_peers.insert(old_peers_.peers_.back()->peer_id);
       }
       for(std::size_t i=0; i<scdtt::size(&cdtt::to(&desc)); ++i) {
-	new_peers_.peers_.push_back(get_or_create_peer(scdtt::get(&cdtt::to(&desc), i), false));
+	new_peers_.peers_.push_back(get_or_create_peer(scdtt::get(&cdtt::to(&desc), i), false, clock_now));
 	new_known_peers.insert(new_peers_.peers_.back()->peer_id);
       }
 
@@ -500,7 +502,8 @@ namespace raft {
       }
     }
 
-    void set_staging_configuration(const simple_configuration_description_type & desc)
+    void set_staging_configuration(const simple_configuration_description_type & desc,
+                                   std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       typedef simple_configuration_description_traits_type scdtt;
       BOOST_ASSERT(state_ == STABLE);
@@ -509,16 +512,16 @@ namespace raft {
       // for(auto & s : desc.servers) {
       for(std::size_t i = 0; i < scdtt::size(&desc); ++i) {
 	// This may update address of any existing peer
-	new_peers_.peers_.push_back(get_or_create_peer(scdtt::get(&desc, i), true));
+	new_peers_.peers_.push_back(get_or_create_peer(scdtt::get(&desc, i), true, clock_now));
       }
     }
 
-    void reset_staging_servers()
+    void reset_staging_servers(std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       if (state_ == STAGING) {
 	// Cancel the STAGING and also restore any addresses that may have been
 	// updated by the staging...
-	set_configuration(configuration_id_, *description_);
+	set_configuration(configuration_id_, *description_, clock_now);
 	BOOST_ASSERT(initiated_new_configuration_ == false);
       }
     }
@@ -640,7 +643,7 @@ namespace raft {
     // description in server_checkpoint::last_checkpoint_configuration_ (or I can get rid of that and use this).
     const checkpoint_type * checkpoint_header_;
 
-    void on_update()
+    void on_update(std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       if (nullptr != checkpoint_header_) {
 	logged_descriptions_.insert(std::make_pair(checkpoint_traits_type::index(checkpoint_header_),
@@ -653,7 +656,7 @@ namespace raft {
       } else {
 	auto it = logged_descriptions_.rbegin();
 	if (configuration_.configuration_id() != it->first) {
-	  configuration_.set_configuration(it->first, *it->second);
+	  configuration_.set_configuration(it->first, *it->second, clock_now);
 	}
       }
     }
@@ -666,17 +669,17 @@ namespace raft {
     {
     }
 
-    void add_logged_description(uint64_t log_index, const log_entry_type & le)
+    void add_logged_description(uint64_t log_index, const log_entry_type & le, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       BOOST_ASSERT(log_entry_traits_type::is_configuration(&le));
       logged_descriptions_[log_index] = &log_entry_traits_type::configuration(&le);
-      on_update();
+      on_update(clock_now);
     }
 
-    void set_checkpoint(const checkpoint_type & ckpt)
+    void set_checkpoint(const checkpoint_type & ckpt, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       checkpoint_header_ = &ckpt;
-      on_update();
+      on_update(clock_now);
     }
 
     const checkpoint_type & get_checkpoint() const
@@ -685,17 +688,17 @@ namespace raft {
     }
 
     // Remove entries with index < idx
-    void truncate_prefix(uint64_t idx)
+    void truncate_prefix(uint64_t idx, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       logged_descriptions_.erase(logged_descriptions_.begin(), logged_descriptions_.lower_bound(idx));
-      on_update();
+      on_update(clock_now);
     }
   
     // Remove entries with index >= idx
-    void truncate_suffix(uint64_t idx)
+    void truncate_suffix(uint64_t idx, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       logged_descriptions_.erase(logged_descriptions_.lower_bound(idx), logged_descriptions_.end());
-      on_update();
+      on_update(clock_now);
     }
 
     // Get configuration in effect at log_index.  

@@ -520,7 +520,7 @@ namespace raft {
         ckpt->write(&tmp[0], sz);
         // Synchronous call to state machine to checkpoint.
         state_machine_.checkpoint(ckpt);
-        protocol_.complete_checkpoint(ckpt);
+        protocol_.complete_checkpoint(ckpt, clock_now);
         checkpoint_in_progress_ = false;
       }
 

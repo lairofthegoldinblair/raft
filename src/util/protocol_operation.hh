@@ -236,12 +236,14 @@ namespace raft {
     private:
       client_type & client_;
       set_configuration_request_arg_type message_;
+      std::chrono::time_point<std::chrono::steady_clock> now_;
     public:
-      set_configuration_request_operation(client_type & client, set_configuration_request_arg_type && msg)
+      set_configuration_request_operation(client_type & client, set_configuration_request_arg_type && msg, std::chrono::time_point<std::chrono::steady_clock> now)
         :
         protocol_operation_type(&do_complete),
         client_(client),
-        message_(std::move(msg))
+        message_(std::move(msg)),
+        now_(now)
       {
       }
       ~set_configuration_request_operation()
@@ -251,10 +253,12 @@ namespace raft {
       {
         set_configuration_request_operation * op(static_cast<set_configuration_request_operation *>(base));
         set_configuration_request_arg_type msg = std::move(op->message_);
+        
         client_type & client(op->client_);
+        auto now = op->now_;
         delete op;
         if (nullptr != owner) {
-          owner->on_set_configuration(client, std::move(msg));
+          owner->on_set_configuration(client, std::move(msg), now);
         }
       }
     };
