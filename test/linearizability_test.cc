@@ -93,22 +93,22 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TestCloseSessionResponseSerialization, _TestType, 
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TestLinearizableCommandSerialization, _TestType, test_types)
 {
-  typedef typename _TestType::messages_type::linearizable_command_traits_type::arg_type linearizable_command_arg_type;
-  typedef typename _TestType::messages_type::linearizable_command_traits_type linearizable_command_traits;
-  typedef typename _TestType::builders_type::linearizable_command_builder_type linearizable_command_builder;
+  typedef typename _TestType::messages_type::linearizable_command_request_traits_type::arg_type linearizable_command_request_arg_type;
+  typedef typename _TestType::messages_type::linearizable_command_request_traits_type linearizable_command_request_traits;
+  typedef typename _TestType::builders_type::linearizable_command_request_builder_type linearizable_command_request_builder;
   typedef typename _TestType::serialization_type serialization_type;
   uint64_t session_id = 92344543U;
   uint64_t unack = 82348235U;
   uint64_t seq = 92377713U;
-  auto msg = linearizable_command_builder().session_id(session_id).first_unacknowledged_sequence_number(unack).sequence_number(seq).finish();
-  BOOST_CHECK_EQUAL(session_id, linearizable_command_traits::session_id(msg));
-  BOOST_CHECK_EQUAL(unack, linearizable_command_traits::first_unacknowledged_sequence_number(msg));
-  BOOST_CHECK_EQUAL(seq, linearizable_command_traits::sequence_number(msg));
+  auto msg = linearizable_command_request_builder().session_id(session_id).first_unacknowledged_sequence_number(unack).sequence_number(seq).finish();
+  BOOST_CHECK_EQUAL(session_id, linearizable_command_request_traits::session_id(msg));
+  BOOST_CHECK_EQUAL(unack, linearizable_command_request_traits::first_unacknowledged_sequence_number(msg));
+  BOOST_CHECK_EQUAL(seq, linearizable_command_request_traits::sequence_number(msg));
   auto result = serialization_type::serialize(std::move(msg));
-  auto msg2 = serialization_type::deserialize_linearizable_command(std::move(result));  
-  BOOST_CHECK_EQUAL(session_id, linearizable_command_traits::session_id(msg2));
-  BOOST_CHECK_EQUAL(unack, linearizable_command_traits::first_unacknowledged_sequence_number(msg2));
-  BOOST_CHECK_EQUAL(seq, linearizable_command_traits::sequence_number(msg2));
+  auto msg2 = serialization_type::deserialize_linearizable_command_request(std::move(result));  
+  BOOST_CHECK_EQUAL(session_id, linearizable_command_request_traits::session_id(msg2));
+  BOOST_CHECK_EQUAL(unack, linearizable_command_request_traits::first_unacknowledged_sequence_number(msg2));
+  BOOST_CHECK_EQUAL(seq, linearizable_command_request_traits::sequence_number(msg2));
 }
 
 // This protocol mock is a non-replicated log with the property that every command added is automatically and immediately "committed"
@@ -209,7 +209,7 @@ struct logger
 {
   typedef _Messages messages_type;
   typedef _Serialization serialization_type;
-  typedef typename messages_type::linearizable_command_traits_type linearizable_command_traits_type;
+  typedef typename messages_type::linearizable_command_request_traits_type linearizable_command_request_traits_type;
   typedef typename messages_type::log_entry_command_traits_type log_entry_command_traits_type;
   typedef typename serialization_type::log_entry_command_view_deserialization_type log_entry_command_view_deserialization_type;
   typedef raft::checkpoint_data_store<messages_type> checkpoint_data_store_type;
@@ -244,7 +244,7 @@ struct logger
       return;
     }
     ;
-    auto c = linearizable_command_traits_type::command(log_entry_command_traits_type::linearizable_command(cont->cmd.view()));
+    auto c = linearizable_command_request_traits_type::command(log_entry_command_traits_type::linearizable_command(cont->cmd.view()));
     commands.emplace_back(reinterpret_cast<const char *>(c.data()), c.size());
     // Must reset cont before the callback because the callback may add a new async command
     // from the log.   If we reset it after that then we'll lose a async call.
@@ -371,7 +371,7 @@ struct SessionManagerMockTestFixture
   typedef typename _TestType::builders_type builders_type;
   typedef typename _TestType::builders_type::open_session_request_builder_type open_session_request_builder;
   typedef typename _TestType::builders_type::close_session_request_builder_type close_session_request_builder;
-  typedef typename _TestType::builders_type::linearizable_command_builder_type linearizable_command_builder;
+  typedef typename _TestType::builders_type::linearizable_command_request_builder_type linearizable_command_request_builder;
   typedef typename _TestType::serialization_type serialization_type;
   typedef protocol_mock<messages_type> protocol_type;
   typedef communicator_mock<messages_type> communicator_type;
@@ -451,7 +451,7 @@ struct SessionManagerMockTestFixture
     auto log_base = protocol.log.last_index();
     // The following assumes that endpoint is not in client_responses
     BOOST_REQUIRE(communicator.client_responses.end() == communicator.client_responses.find(endpoint));
-    auto msg = linearizable_command_builder().session_id(session_id).first_unacknowledged_sequence_number(unack).sequence_number(seq).command(raft::slice::create(cmd)).finish();
+    auto msg = linearizable_command_request_builder().session_id(session_id).first_unacknowledged_sequence_number(unack).sequence_number(seq).command(raft::slice::create(cmd)).finish();
     session_manager.on_linearizable_command(endpoint, std::move(msg), now);
     BOOST_CHECK_EQUAL(open_session_base, communicator.open_session_responses.size());
     BOOST_CHECK_EQUAL(close_session_base, communicator.close_session_responses.size());
@@ -840,21 +840,21 @@ template<typename _TestType>
 class RaftTestFixtureBase
 {
 public:
-  typedef typename _TestType::messages_type::request_vote_traits_type::arg_type request_vote_arg_type;
-  typedef typename _TestType::messages_type::request_vote_traits_type request_vote_traits;
-  typedef typename _TestType::builders_type::request_vote_builder_type request_vote_builder;
+  typedef typename _TestType::messages_type::vote_request_traits_type::arg_type vote_request_arg_type;
+  typedef typename _TestType::messages_type::vote_request_traits_type vote_request_traits;
+  typedef typename _TestType::builders_type::vote_request_builder_type vote_request_builder;
   typedef typename _TestType::messages_type::vote_response_traits_type vote_response_traits;
   typedef typename _TestType::messages_type::vote_response_traits_type::arg_type vote_response_arg_type;
   typedef typename _TestType::builders_type::vote_response_builder_type vote_response_builder;
-  typedef typename _TestType::messages_type::append_entry_traits_type append_entry_traits;
-  typedef typename _TestType::messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
-  typedef typename _TestType::builders_type::append_entry_builder_type append_entry_builder;
-  typedef typename _TestType::messages_type::append_entry_response_traits_type append_response_traits;
-  typedef typename _TestType::messages_type::append_entry_response_traits_type::arg_type append_response_arg_type;
-  typedef typename _TestType::builders_type::append_response_builder_type append_response_builder;
-  typedef typename _TestType::messages_type::append_checkpoint_chunk_traits_type append_checkpoint_chunk_traits;
-  typedef typename _TestType::messages_type::append_checkpoint_chunk_traits_type::arg_type append_checkpoint_chunk_arg_type;
-  typedef typename _TestType::builders_type::append_checkpoint_chunk_builder_type append_checkpoint_chunk_builder;
+  typedef typename _TestType::messages_type::append_entry_request_traits_type append_entry_request_traits;
+  typedef typename _TestType::messages_type::append_entry_request_traits_type::arg_type append_entry_request_arg_type;
+  typedef typename _TestType::builders_type::append_entry_request_builder_type append_entry_request_builder;
+  typedef typename _TestType::messages_type::append_entry_response_traits_type append_entry_response_traits;
+  typedef typename _TestType::messages_type::append_entry_response_traits_type::arg_type append_entry_response_arg_type;
+  typedef typename _TestType::builders_type::append_entry_response_builder_type append_entry_response_builder;
+  typedef typename _TestType::messages_type::append_checkpoint_chunk_request_traits_type append_checkpoint_chunk_request_traits;
+  typedef typename _TestType::messages_type::append_checkpoint_chunk_request_traits_type::arg_type append_checkpoint_chunk_request_arg_type;
+  typedef typename _TestType::builders_type::append_checkpoint_chunk_request_builder_type append_checkpoint_chunk_request_builder;
   typedef typename _TestType::messages_type::append_checkpoint_chunk_response_traits_type append_checkpoint_chunk_response_traits;
   typedef typename _TestType::messages_type::append_checkpoint_chunk_response_traits_type::arg_type append_checkpoint_chunk_response_arg_type;
   typedef typename _TestType::builders_type::append_checkpoint_chunk_response_builder_type append_checkpoint_chunk_response_builder;
@@ -867,7 +867,7 @@ public:
   typedef typename _TestType::messages_type::set_configuration_request_traits_type set_configuration_request_traits;
   typedef typename _TestType::builders_type::set_configuration_request_builder_type set_configuration_request_builder;
   typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
-  typedef typename _TestType::builders_type::linearizable_command_builder_type linearizable_command_builder;
+  typedef typename _TestType::builders_type::linearizable_command_request_builder_type linearizable_command_request_builder;
   typedef typename _TestType::builders_type::open_session_request_builder_type open_session_request_builder;
   typedef typename _TestType::serialization_type serialization_type;
   typedef raft::protocol<::raft::test::generic_communicator_metafunction, ::raft::test::native_client_metafunction, typename _TestType::messages_type> raft_type;
@@ -878,14 +878,14 @@ public:
   typename raft_type::checkpoint_data_store_type store;
   std::shared_ptr<typename raft_type::configuration_manager_type> cm;
   std::shared_ptr<raft_type> protocol;
-  append_checkpoint_chunk_arg_type five_servers;
+  append_checkpoint_chunk_request_arg_type five_servers;
   log_header_write_test log_header_write_;
   std::vector<uint8_t> checkpoint_load_state;
 
   uint64_t initial_cluster_time;
   std::chrono::time_point<std::chrono::steady_clock> now;
 
-  // append_checkpoint_chunk_arg_type six_servers;
+  // append_checkpoint_chunk_request_arg_type six_servers;
   template<typename _Builder>
   void add_five_servers(_Builder b)
   {
@@ -919,7 +919,7 @@ public:
     if (initializeWithCheckpoint) {
       // Builder interface only supports creating a checkpoint header in the context of an append_checkpoint_chunk message
       {
-	append_checkpoint_chunk_builder accb;
+	append_checkpoint_chunk_request_builder accb;
 	{
 	  auto chb = accb.last_checkpoint_header();
 	  {
@@ -935,7 +935,7 @@ public:
 	}
 	five_servers = accb.finish();
       }
-      cm->set_checkpoint(append_checkpoint_chunk_traits::last_checkpoint_header(five_servers), now);
+      cm->set_checkpoint(append_checkpoint_chunk_request_traits::last_checkpoint_header(five_servers), now);
       BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
       BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
       BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
@@ -1026,10 +1026,10 @@ void RaftTestFixtureBase<_TestType>::make_leader(uint64_t term, bool respond_to_
   BOOST_TEST(cluster_time < protocol->cluster_time());
   BOOST_CHECK_EQUAL(num_known_peers()-1, comm.q.size());
   for(uint64_t p=1; p!=num_known_peers(); ++p) {
-    BOOST_CHECK(log_entry_traits::is_noop(&append_entry_traits::get_entry(boost::get<append_entry_arg_type>(comm.q.back()), 0)));
+    BOOST_CHECK(log_entry_traits::is_noop(&append_entry_request_traits::get_entry(boost::get<append_entry_request_arg_type>(comm.q.back()), 0)));
     if (respond_to_noop) {
-      auto resp = append_response_builder().recipient_id(p).term_number(term).request_term_number(term).begin_index(0).last_index(append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(comm.q.back()))+1).success(true).finish();
-      protocol->on_append_response(std::move(resp), now);
+      auto resp = append_entry_response_builder().recipient_id(p).term_number(term).request_term_number(term).begin_index(0).last_index(append_entry_request_traits::previous_log_index(boost::get<append_entry_request_arg_type>(comm.q.back()))+1).success(true).finish();
+      protocol->on_append_entry_response(std::move(resp), now);
     }
     comm.q.pop_back();
   }
@@ -1052,17 +1052,17 @@ void RaftTestFixtureBase<_TestType>::commit_one_log_entry(uint64_t term,
   BOOST_CHECK_EQUAL(num_known_peers()-1, comm.q.size());
   std::size_t expected = 1;
   while(comm.q.size() > 0) {
-    BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(client_index, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(expected, append_entry_request_traits::recipient_id(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_entry_request_traits::term_number(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_entry_request_traits::leader_id(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(client_index, append_entry_request_traits::previous_log_index(boost::get<append_entry_request_arg_type>(comm.q.back())));
     // Can't really check this in general
-    // BOOST_CHECK_EQUAL(client_index > 0 ? term : 0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(client_index, append_entry_traits::leader_commit_index(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(1U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(term, log_entry_traits::term(&append_entry_traits::get_entry(boost::get<append_entry_arg_type>(comm.q.back()), 0)));
-    auto resp = append_response_builder().recipient_id(expected).term_number(term).request_term_number(term).begin_index(client_index).last_index(client_index+1).success(true).finish();
-    protocol->on_append_response(std::move(resp), now);
+    // BOOST_CHECK_EQUAL(client_index > 0 ? term : 0U, append_entry_request_traits::previous_log_term(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(client_index, append_entry_request_traits::leader_commit_index(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_entry_request_traits::num_entries(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(term, log_entry_traits::term(&append_entry_request_traits::get_entry(boost::get<append_entry_request_arg_type>(comm.q.back()), 0)));
+    auto resp = append_entry_response_builder().recipient_id(expected).term_number(term).request_term_number(term).begin_index(client_index).last_index(client_index+1).success(true).finish();
+    protocol->on_append_entry_response(std::move(resp), now);
     expected += 1;
     comm.q.pop_back();
   }
@@ -1083,14 +1083,14 @@ void RaftTestFixtureBase<_TestType>::send_heartbeats()
   BOOST_CHECK_EQUAL(num_known_peers()-1, comm.q.size());
   std::size_t expected = 1;
   while(comm.q.size() > 0) {
-    BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(0U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(comm.q.back())));
-    auto resp = append_response_builder().recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(client_index).success(true).finish();
-    protocol->on_append_response(std::move(resp), now);
+    BOOST_CHECK_EQUAL(expected, append_entry_request_traits::recipient_id(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_entry_request_traits::term_number(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_entry_request_traits::leader_id(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_index(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_term(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_entry_request_traits::num_entries(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    auto resp = append_entry_response_builder().recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(client_index).success(true).finish();
+    protocol->on_append_entry_response(std::move(resp), now);
     expected += 1;
     comm.q.pop_back();
   }
@@ -1129,22 +1129,22 @@ void RaftTestFixtureBase<_TestType>::send_client_request(uint64_t term, const ch
   std::size_t expected = 1;
   std::size_t num_responses = 0;
   while(comm.q.size() > 0) {
-    BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(client_index, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(expected, append_entry_request_traits::recipient_id(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_entry_request_traits::term_number(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_entry_request_traits::leader_id(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(client_index, append_entry_request_traits::previous_log_index(boost::get<append_entry_request_arg_type>(comm.q.back())));
     // Can't really check this in general
-    // BOOST_CHECK_EQUAL(client_index > 0 ? term : 0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(client_index, append_entry_traits::leader_commit_index(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(1U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK(log_entry_traits::is_command(&append_entry_traits::get_entry(boost::get<append_entry_arg_type>(comm.q.back()), 0)));
-    BOOST_CHECK_EQUAL(term, log_entry_traits::term(&append_entry_traits::get_entry(boost::get<append_entry_arg_type>(comm.q.back()), 0)));
-    BOOST_CHECK_EQUAL(0, string_slice_compare(cmd, log_entry_traits::data(&append_entry_traits::get_entry(boost::get<append_entry_arg_type>(comm.q.back()), 0))));
+    // BOOST_CHECK_EQUAL(client_index > 0 ? term : 0U, append_entry_request_traits::previous_log_term(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(client_index, append_entry_request_traits::leader_commit_index(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_entry_request_traits::num_entries(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK(log_entry_traits::is_command(&append_entry_request_traits::get_entry(boost::get<append_entry_request_arg_type>(comm.q.back()), 0)));
+    BOOST_CHECK_EQUAL(term, log_entry_traits::term(&append_entry_request_traits::get_entry(boost::get<append_entry_request_arg_type>(comm.q.back()), 0)));
+    BOOST_CHECK_EQUAL(0, string_slice_compare(cmd, log_entry_traits::data(&append_entry_request_traits::get_entry(boost::get<append_entry_request_arg_type>(comm.q.back()), 0))));
     if (send_responses_from.test(expected)) {
       num_responses += 1;
     }
-    auto resp = append_response_builder().recipient_id(expected).term_number(term).request_term_number(term).begin_index(client_index).last_index(client_index+1).success(send_responses_from.test(expected)).finish();
-    protocol->on_append_response(std::move(resp), now);
+    auto resp = append_entry_response_builder().recipient_id(expected).term_number(term).request_term_number(term).begin_index(client_index).last_index(client_index+1).success(send_responses_from.test(expected)).finish();
+    protocol->on_append_entry_response(std::move(resp), now);
     if (num_responses<3) {
       BOOST_CHECK_EQUAL(initial_commit_index, protocol->commit_index());
     } else {
@@ -1161,7 +1161,7 @@ void RaftTestFixtureBase<_TestType>::make_follower_with_checkpoint(uint64_t term
 {
   {
     uint8_t data=0;
-    append_checkpoint_chunk_builder bld;
+    append_checkpoint_chunk_request_builder bld;
     bld.recipient_id(0).term_number(term).leader_id(1).checkpoint_begin(0).checkpoint_end(1).checkpoint_done(true).data(raft::slice(&data, 1));
     {
       auto chb = bld.last_checkpoint_header();
@@ -1176,7 +1176,7 @@ void RaftTestFixtureBase<_TestType>::make_follower_with_checkpoint(uint64_t term
       }
     }
     auto msg = bld.finish();
-    protocol->on_append_checkpoint_chunk(std::move(msg), now);
+    protocol->on_append_checkpoint_chunk_request(std::move(msg), now);
   }
  BOOST_CHECK(protocol->log_header_sync_required());
  BOOST_CHECK_EQUAL(term, protocol->current_term());
@@ -1217,8 +1217,8 @@ void RaftTestFixtureBase<_TestType>::become_follower_with_vote_request(uint64_t 
 template<typename _TestType>
 void RaftTestFixtureBase<_TestType>::become_follower_with_vote_request(uint64_t term, uint64_t last_log_index, uint64_t last_log_term)
 {
-  auto msg = request_vote_builder().recipient_id(0).term_number(term).candidate_id(1).last_log_index(last_log_index).last_log_term(last_log_term).finish();
-  protocol->on_request_vote(std::move(msg), now);
+  auto msg = vote_request_builder().recipient_id(0).term_number(term).candidate_id(1).last_log_index(last_log_index).last_log_term(last_log_term).finish();
+  protocol->on_vote_request(std::move(msg), now);
   BOOST_CHECK(protocol->log_header_sync_required());
   BOOST_CHECK_EQUAL(term, protocol->current_term());
   BOOST_CHECK_EQUAL(initial_cluster_time, protocol->cluster_time());
@@ -1260,7 +1260,7 @@ void RaftTestFixtureBase<_TestType>::send_open_session(uint64_t leader_id, uint6
 template<typename _TestType>
 void RaftTestFixtureBase<_TestType>::send_linearizable_command(uint64_t session_id, uint64_t leader_id, uint64_t term, uint64_t previous_log_index, uint64_t previous_log_term, uint64_t leader_commit_index, raft::slice && cmd)
 {
-  auto lcmd = serialization_type::serialize_log_entry_command(linearizable_command_builder().session_id(session_id).first_unacknowledged_sequence_number(0).sequence_number(0).command(std::move(cmd)).finish());
+  auto lcmd = serialization_type::serialize_log_entry_command(linearizable_command_request_builder().session_id(session_id).first_unacknowledged_sequence_number(0).sequence_number(0).command(std::move(cmd)).finish());
   auto le = log_entry_traits::create_command(term, 23432343, std::move(lcmd));
   send_append_entry(leader_id, term, previous_log_index, previous_log_term, leader_commit_index, le);
 }
@@ -1271,10 +1271,10 @@ void RaftTestFixtureBase<_TestType>::send_append_entry(uint64_t leader_id, uint6
 {
   auto entry_cluster_time = log_entry_traits::cluster_time(le.first);
   auto original_state = protocol->get_state();
-  append_entry_builder bld;
+  append_entry_request_builder bld;
   bld.request_id(992345).recipient_id(0).term_number(term).leader_id(leader_id).previous_log_index(previous_log_index).previous_log_term(previous_log_term).leader_commit_index(leader_commit_index).entry(le);
   auto msg = bld.finish();
-  protocol->on_append_entry(std::move(msg), now);
+  protocol->on_append_entry_request(std::move(msg), now);
   BOOST_CHECK((raft_type::FOLLOWER == original_state && !protocol->log_header_sync_required()) ||
               (raft_type::FOLLOWER != original_state && protocol->log_header_sync_required()));
   BOOST_CHECK_EQUAL(term, protocol->current_term());
@@ -1299,13 +1299,13 @@ void RaftTestFixtureBase<_TestType>::send_append_entry(uint64_t leader_id, uint6
   protocol->on_log_sync(previous_log_index+1, now);
   BOOST_CHECK_EQUAL(1U, comm.q.size());
   BOOST_REQUIRE(0U < comm.q.size());
-  BOOST_CHECK_EQUAL(0U, append_response_traits::recipient_id(boost::get<append_response_arg_type>(comm.q.back())));
-  BOOST_CHECK_EQUAL(term, append_response_traits::term_number(boost::get<append_response_arg_type>(comm.q.back())));
-  BOOST_CHECK_EQUAL(term, append_response_traits::request_term_number(boost::get<append_response_arg_type>(comm.q.back())));
-  BOOST_CHECK_EQUAL(992345U, append_response_traits::request_id(boost::get<append_response_arg_type>(comm.q.back())));
-  BOOST_CHECK_EQUAL(previous_log_index, append_response_traits::begin_index(boost::get<append_response_arg_type>(comm.q.back())));
-  BOOST_CHECK_EQUAL(previous_log_index+1, append_response_traits::last_index(boost::get<append_response_arg_type>(comm.q.back())));
-  BOOST_CHECK(append_response_traits::success(boost::get<append_response_arg_type>(comm.q.back())));
+  BOOST_CHECK_EQUAL(0U, append_entry_response_traits::recipient_id(boost::get<append_entry_response_arg_type>(comm.q.back())));
+  BOOST_CHECK_EQUAL(term, append_entry_response_traits::term_number(boost::get<append_entry_response_arg_type>(comm.q.back())));
+  BOOST_CHECK_EQUAL(term, append_entry_response_traits::request_term_number(boost::get<append_entry_response_arg_type>(comm.q.back())));
+  BOOST_CHECK_EQUAL(992345U, append_entry_response_traits::request_id(boost::get<append_entry_response_arg_type>(comm.q.back())));
+  BOOST_CHECK_EQUAL(previous_log_index, append_entry_response_traits::begin_index(boost::get<append_entry_response_arg_type>(comm.q.back())));
+  BOOST_CHECK_EQUAL(previous_log_index+1, append_entry_response_traits::last_index(boost::get<append_entry_response_arg_type>(comm.q.back())));
+  BOOST_CHECK(append_entry_response_traits::success(boost::get<append_entry_response_arg_type>(comm.q.back())));
   comm.q.pop_back();
   BOOST_CHECK(log_header_write_.empty());
 }
@@ -1330,14 +1330,14 @@ void RaftTestFixtureBase<_TestType>::stage_new_server(uint64_t term, uint64_t co
   protocol->on_timer(now);
   BOOST_CHECK_EQUAL(1U, comm.q.size());
   while(comm.q.size() > 0) {
-    BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(leader_id, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(commit_index, append_entry_traits::leader_commit_index(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(comm.q.back())));
-    BOOST_CHECK_EQUAL(commit_index, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(comm.q.back())));
-    auto resp = append_response_builder().recipient_id(new_server_id).term_number(term).request_term_number(term).begin_index(0).last_index(commit_index).success(true).finish();
-    protocol->on_append_response(std::move(resp), now);
+    BOOST_CHECK_EQUAL(term, append_entry_request_traits::term_number(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(leader_id, append_entry_request_traits::leader_id(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(commit_index, append_entry_request_traits::leader_commit_index(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_index(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_term(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    BOOST_CHECK_EQUAL(commit_index, append_entry_request_traits::num_entries(boost::get<append_entry_request_arg_type>(comm.q.back())));
+    auto resp = append_entry_response_builder().recipient_id(new_server_id).term_number(term).request_term_number(term).begin_index(0).last_index(commit_index).success(true).finish();
+    protocol->on_append_entry_response(std::move(resp), now);
     comm.q.pop_back();
   }
   BOOST_CHECK(!cm->configuration().staging_servers_caught_up());
@@ -1355,7 +1355,7 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
   typedef typename _TestType::builders_type builders_type;
   typedef typename _TestType::builders_type::open_session_request_builder_type open_session_request_builder;
   typedef typename _TestType::builders_type::close_session_request_builder_type close_session_request_builder;
-  typedef typename _TestType::builders_type::linearizable_command_builder_type linearizable_command_builder;
+  typedef typename _TestType::builders_type::linearizable_command_request_builder_type linearizable_command_request_builder;
   typedef typename _TestType::serialization_type serialization_type;
   typedef typename _TestType::messages_type::client_result_type client_result_type;
   typedef communicator_mock<messages_type> client_communicator_type;
@@ -1439,7 +1439,7 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
     auto log_base = this->protocol->last_log_entry_index();
     // The following assumes that endpoint is not in client_responses
     BOOST_REQUIRE(communicator.client_responses.end() == communicator.client_responses.find(endpoint));
-    auto msg = linearizable_command_builder().session_id(session_id).first_unacknowledged_sequence_number(unack).sequence_number(seq).command(raft::slice::create(cmd)).finish();
+    auto msg = linearizable_command_request_builder().session_id(session_id).first_unacknowledged_sequence_number(unack).sequence_number(seq).command(raft::slice::create(cmd)).finish();
     session_manager.on_linearizable_command(endpoint, std::move(msg), this->now);
     BOOST_CHECK_EQUAL(open_session_base, communicator.open_session_responses.size());
     BOOST_CHECK_EQUAL(close_session_base, communicator.close_session_responses.size());
@@ -1673,9 +1673,9 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
 
   void TestReadOnlyQuery()
   {
-    typedef typename messages_type::append_entry_traits_type append_entry_traits;
-    typedef typename _TestType::messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
-    typedef typename _TestType::builders_type::append_response_builder_type append_response_builder;
+    typedef typename messages_type::append_entry_request_traits_type append_entry_request_traits;
+    typedef typename _TestType::messages_type::append_entry_request_traits_type::arg_type append_entry_request_arg_type;
+    typedef typename _TestType::builders_type::append_entry_response_builder_type append_entry_response_builder;
     // Now make leader and open a session
     uint64_t term = 1;
     this->make_leader(term);
@@ -1698,16 +1698,16 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
     BOOST_CHECK_EQUAL(this->num_known_peers()-1, this->comm.q.size());
     std::size_t expected = 1;
     while(this->comm.q.size() > 0) {
-      auto req_request_id = append_entry_traits::request_id(boost::get<append_entry_arg_type>(this->comm.q.back()));
+      auto req_request_id = append_entry_request_traits::request_id(boost::get<append_entry_request_arg_type>(this->comm.q.back()));
       BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
-      BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(client_index).success(true).finish();
-      this->protocol->on_append_response(std::move(resp), this->now);
+      BOOST_CHECK_EQUAL(expected, append_entry_request_traits::recipient_id(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(term, append_entry_request_traits::term_number(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::leader_id(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_index(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_term(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::num_entries(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      auto resp = append_entry_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(client_index).success(true).finish();
+      this->protocol->on_append_entry_response(std::move(resp), this->now);
       if (expected > 1) {
         BOOST_TEST(called);
         BOOST_TEST(messages_type::client_result_success() == cr);
@@ -1721,9 +1721,9 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
 
   void TestAsyncReadOnlyQuery()
   {
-    typedef typename messages_type::append_entry_traits_type append_entry_traits;
-    typedef typename _TestType::messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
-    typedef typename _TestType::builders_type::append_response_builder_type append_response_builder;
+    typedef typename messages_type::append_entry_request_traits_type append_entry_request_traits;
+    typedef typename _TestType::messages_type::append_entry_request_traits_type::arg_type append_entry_request_arg_type;
+    typedef typename _TestType::builders_type::append_entry_response_builder_type append_entry_response_builder;
     // Now make leader and open a session
     uint64_t term = 1;
     this->make_leader(term);
@@ -1750,16 +1750,16 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
     BOOST_CHECK_EQUAL(this->num_known_peers()-1, this->comm.q.size());
     std::size_t expected = 1;
     while(this->comm.q.size() > 0) {
-      auto req_request_id = append_entry_traits::request_id(boost::get<append_entry_arg_type>(this->comm.q.back()));
+      auto req_request_id = append_entry_request_traits::request_id(boost::get<append_entry_request_arg_type>(this->comm.q.back()));
       BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
-      BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(client_index).success(true).finish();
-      this->protocol->on_append_response(std::move(resp), this->now);
+      BOOST_CHECK_EQUAL(expected, append_entry_request_traits::recipient_id(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(term, append_entry_request_traits::term_number(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::leader_id(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_index(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_term(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::num_entries(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      auto resp = append_entry_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(client_index).success(true).finish();
+      this->protocol->on_append_entry_response(std::move(resp), this->now);
       BOOST_TEST(!called);
       expected += 1;
       this->comm.q.pop_back();
@@ -1774,9 +1774,9 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
 
   void TestReadOnlyQueryNoLongerLeader()
   {
-    typedef typename messages_type::append_entry_traits_type append_entry_traits;
-    typedef typename _TestType::messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
-    typedef typename _TestType::builders_type::append_response_builder_type append_response_builder;
+    typedef typename messages_type::append_entry_request_traits_type append_entry_request_traits;
+    typedef typename _TestType::messages_type::append_entry_request_traits_type::arg_type append_entry_request_arg_type;
+    typedef typename _TestType::builders_type::append_entry_response_builder_type append_entry_response_builder;
     // Now make leader and open a session
     uint64_t term = 1;
     this->make_leader(term);
@@ -1799,18 +1799,18 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
     BOOST_CHECK_EQUAL(this->num_known_peers()-1, this->comm.q.size());
     std::size_t expected = 1;
     while(this->comm.q.size() > 0) {
-      auto req_request_id = append_entry_traits::request_id(boost::get<append_entry_arg_type>(this->comm.q.back()));
+      auto req_request_id = append_entry_request_traits::request_id(boost::get<append_entry_request_arg_type>(this->comm.q.back()));
       BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
-      BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(expected, append_entry_request_traits::recipient_id(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(term, append_entry_request_traits::term_number(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::leader_id(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_index(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_term(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::num_entries(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
       if (expected > 1) {
         // Peers 2,3 and 4 formed a new quorum and elected a new leader and committed new entry
-        auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term+1).request_term_number(term).begin_index(client_index+1).last_index(client_index+1).success(true).finish();
-        this->protocol->on_append_response(std::move(resp), this->now);
+        auto resp = append_entry_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term+1).request_term_number(term).begin_index(client_index+1).last_index(client_index+1).success(true).finish();
+        this->protocol->on_append_entry_response(std::move(resp), this->now);
         BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
         BOOST_TEST(called);
         BOOST_TEST(messages_type::client_result_not_leader() == cr);
@@ -1819,8 +1819,8 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
           this->protocol->on_log_header_sync(this->now);
         }
       } else {
-        auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(client_index).success(true).finish();
-        this->protocol->on_append_response(std::move(resp), this->now);
+        auto resp = append_entry_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(client_index).success(true).finish();
+        this->protocol->on_append_entry_response(std::move(resp), this->now);
         BOOST_TEST(!called);
       }
       expected += 1;
@@ -1830,9 +1830,9 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
 
   void TestReadOnlyQueryUnknownCommitIndex()
   {
-    typedef typename messages_type::append_entry_traits_type append_entry_traits;
-    typedef typename _TestType::messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
-    typedef typename _TestType::builders_type::append_response_builder_type append_response_builder;
+    typedef typename messages_type::append_entry_request_traits_type append_entry_request_traits;
+    typedef typename _TestType::messages_type::append_entry_request_traits_type::arg_type append_entry_request_arg_type;
+    typedef typename _TestType::builders_type::append_entry_response_builder_type append_entry_response_builder;
     // Start out as follower and have the leader append some entries that are not known to be committed
     uint64_t term = 1;
     this->become_follower_with_vote_request(term);
@@ -1856,8 +1856,8 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
     // For this test, we assume that the all of the entries from the previous leader were committed
     this->protocol->on_log_sync(5, this->now);
     for(uint64_t p=1; p!=this->num_known_peers(); ++p) {
-      auto resp = append_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(4).last_index(5).success(true).finish();
-      this->protocol->on_append_response(std::move(resp), this->now);
+      auto resp = append_entry_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(4).last_index(5).success(true).finish();
+      this->protocol->on_append_entry_response(std::move(resp), this->now);
       if (p == 1) {
         BOOST_TEST(0U == this->protocol->commit_index());
       } else {
@@ -1866,16 +1866,16 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
     }    
     std::size_t expected = 1;
     while(this->comm.q.size() > 0) {
-      auto req_request_id = append_entry_traits::request_id(boost::get<append_entry_arg_type>(this->comm.q.back()));
+      auto req_request_id = append_entry_request_traits::request_id(boost::get<append_entry_request_arg_type>(this->comm.q.back()));
       BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
-      BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::num_entries(boost::get<append_entry_arg_type>(this->comm.q.back())));
-      auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(5).success(true).finish();
-      this->protocol->on_append_response(std::move(resp), this->now);
+      BOOST_CHECK_EQUAL(expected, append_entry_request_traits::recipient_id(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(term, append_entry_request_traits::term_number(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::leader_id(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_index(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_term(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::num_entries(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      auto resp = append_entry_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(5).success(true).finish();
+      this->protocol->on_append_entry_response(std::move(resp), this->now);
       if (expected > 1) {
         BOOST_TEST(called);
         BOOST_TEST(messages_type::client_result_success() == cr);
@@ -1889,9 +1889,9 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
 
   void TestReadOnlyQueryUnknownCommitIndexOutOfDatePeers()
   {
-    typedef typename messages_type::append_entry_traits_type append_entry_traits;
-    typedef typename _TestType::messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
-    typedef typename _TestType::builders_type::append_response_builder_type append_response_builder;
+    typedef typename messages_type::append_entry_request_traits_type append_entry_request_traits;
+    typedef typename _TestType::messages_type::append_entry_request_traits_type::arg_type append_entry_request_arg_type;
+    typedef typename _TestType::builders_type::append_entry_response_builder_type append_entry_response_builder;
     // Start out as follower and have the leader append some entries that are not known to be committed
     uint64_t term = 1;
     this->become_follower_with_vote_request(term);
@@ -1910,11 +1910,11 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
     this->protocol->on_log_sync(5, this->now);
     for(uint64_t p=1; p!=this->num_known_peers(); ++p) {
       if (p == 1) {
-        auto resp = append_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(4).last_index(5).success(true).finish();
-        this->protocol->on_append_response(std::move(resp), this->now);
+        auto resp = append_entry_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(4).last_index(5).success(true).finish();
+        this->protocol->on_append_entry_response(std::move(resp), this->now);
       } else {
-        auto resp = append_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(1).last_index(1).success(false).finish();
-        this->protocol->on_append_response(std::move(resp), this->now);
+        auto resp = append_entry_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(1).last_index(1).success(false).finish();
+        this->protocol->on_append_entry_response(std::move(resp), this->now);
       }
       BOOST_TEST(0U == this->protocol->commit_index());
     }
@@ -1930,21 +1930,21 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
     BOOST_TEST(this->num_known_peers() == this->comm.q.size()+1);
     std::size_t expected = 1;
     while(this->comm.q.size() > 0) {
-      auto & msg (boost::get<append_entry_arg_type>(this->comm.q.back()));
-      auto req_request_id = append_entry_traits::request_id(msg);
+      auto & msg (boost::get<append_entry_request_arg_type>(this->comm.q.back()));
+      auto req_request_id = append_entry_request_traits::request_id(msg);
       BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
-      BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(msg));
-      BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(msg));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(msg));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(msg));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(msg));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::num_entries(msg));
+      BOOST_CHECK_EQUAL(expected, append_entry_request_traits::recipient_id(msg));
+      BOOST_CHECK_EQUAL(term, append_entry_request_traits::term_number(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::leader_id(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_index(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_term(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::num_entries(msg));
       if (expected == 1) {
-        auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(5).success(true).finish();
-        this->protocol->on_append_response(std::move(resp), this->now);
+        auto resp = append_entry_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(5).success(true).finish();
+        this->protocol->on_append_entry_response(std::move(resp), this->now);
       } else {
-        auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(1).success(true).finish();
-        this->protocol->on_append_response(std::move(resp), this->now);
+        auto resp = append_entry_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(1).success(true).finish();
+        this->protocol->on_append_entry_response(std::move(resp), this->now);
       }
       BOOST_TEST(!called);
       BOOST_TEST(0U == this->protocol->commit_index());
@@ -1960,17 +1960,17 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
     BOOST_TEST(3U == this->comm.q.size());
     expected = 2;
     while(this->comm.q.size() > 0) {
-      auto & msg (boost::get<append_entry_arg_type>(this->comm.q.back()));
-      auto req_request_id = append_entry_traits::request_id(msg);
+      auto & msg (boost::get<append_entry_request_arg_type>(this->comm.q.back()));
+      auto req_request_id = append_entry_request_traits::request_id(msg);
       BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
-      BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(msg));
-      BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(msg));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(msg));
-      BOOST_CHECK_EQUAL(1U, append_entry_traits::previous_log_index(msg));
-      BOOST_CHECK_EQUAL(1U, append_entry_traits::previous_log_term(msg));
-      BOOST_CHECK_EQUAL(4U, append_entry_traits::num_entries(msg));
-      auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(2).last_index(5).success(true).finish();
-      this->protocol->on_append_response(std::move(resp), this->now);
+      BOOST_CHECK_EQUAL(expected, append_entry_request_traits::recipient_id(msg));
+      BOOST_CHECK_EQUAL(term, append_entry_request_traits::term_number(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::leader_id(msg));
+      BOOST_CHECK_EQUAL(1U, append_entry_request_traits::previous_log_index(msg));
+      BOOST_CHECK_EQUAL(1U, append_entry_request_traits::previous_log_term(msg));
+      BOOST_CHECK_EQUAL(4U, append_entry_request_traits::num_entries(msg));
+      auto resp = append_entry_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(2).last_index(5).success(true).finish();
+      this->protocol->on_append_entry_response(std::move(resp), this->now);
       BOOST_TEST(called);
       BOOST_TEST(5U == this->protocol->commit_index());
       expected += 1;
@@ -1980,9 +1980,9 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
 
   void TestReadOnlyQueryUnknownCommitIndexOutOfDatePeersThenLoseLeadership()
   {
-    typedef typename messages_type::append_entry_traits_type append_entry_traits;
-    typedef typename _TestType::messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
-    typedef typename _TestType::builders_type::append_response_builder_type append_response_builder;
+    typedef typename messages_type::append_entry_request_traits_type append_entry_request_traits;
+    typedef typename _TestType::messages_type::append_entry_request_traits_type::arg_type append_entry_request_arg_type;
+    typedef typename _TestType::builders_type::append_entry_response_builder_type append_entry_response_builder;
     // Start out as follower and have the leader append some entries that are not known to be committed
     uint64_t term = 1;
     this->become_follower_with_vote_request(term);
@@ -2001,11 +2001,11 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
     this->protocol->on_log_sync(5, this->now);
     for(uint64_t p=1; p!=this->num_known_peers(); ++p) {
       if (p == 1) {
-        auto resp = append_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(4).last_index(5).success(true).finish();
-        this->protocol->on_append_response(std::move(resp), this->now);
+        auto resp = append_entry_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(4).last_index(5).success(true).finish();
+        this->protocol->on_append_entry_response(std::move(resp), this->now);
       } else {
-        auto resp = append_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(1).last_index(1).success(false).finish();
-        this->protocol->on_append_response(std::move(resp), this->now);
+        auto resp = append_entry_response_builder().recipient_id(p).request_id(0).term_number(term).request_term_number(term).begin_index(1).last_index(1).success(false).finish();
+        this->protocol->on_append_entry_response(std::move(resp), this->now);
       }
       BOOST_TEST(0U == this->protocol->commit_index());
     }
@@ -2021,21 +2021,21 @@ struct SessionManagerTestFixture : public RaftTestFixtureBase<_TestType>
     BOOST_TEST(this->num_known_peers() == this->comm.q.size()+1);
     std::size_t expected = 1;
     while(this->comm.q.size() > 0) {
-      auto & msg (boost::get<append_entry_arg_type>(this->comm.q.back()));
-      auto req_request_id = append_entry_traits::request_id(msg);
+      auto & msg (boost::get<append_entry_request_arg_type>(this->comm.q.back()));
+      auto req_request_id = append_entry_request_traits::request_id(msg);
       BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
-      BOOST_CHECK_EQUAL(expected, append_entry_traits::recipient_id(msg));
-      BOOST_CHECK_EQUAL(term, append_entry_traits::term_number(msg));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::leader_id(msg));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_index(msg));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::previous_log_term(msg));
-      BOOST_CHECK_EQUAL(0U, append_entry_traits::num_entries(msg));
+      BOOST_CHECK_EQUAL(expected, append_entry_request_traits::recipient_id(msg));
+      BOOST_CHECK_EQUAL(term, append_entry_request_traits::term_number(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::leader_id(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_index(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_term(msg));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::num_entries(msg));
       if (expected == 1) {
-        auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(5).success(true).finish();
-        this->protocol->on_append_response(std::move(resp), this->now);
+        auto resp = append_entry_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(5).success(true).finish();
+        this->protocol->on_append_entry_response(std::move(resp), this->now);
       } else {
-        auto resp = append_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(1).success(true).finish();
-        this->protocol->on_append_response(std::move(resp), this->now);
+        auto resp = append_entry_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).begin_index(0).last_index(1).success(true).finish();
+        this->protocol->on_append_entry_response(std::move(resp), this->now);
       }
       BOOST_TEST(!called);
       BOOST_TEST(0U == this->protocol->commit_index());

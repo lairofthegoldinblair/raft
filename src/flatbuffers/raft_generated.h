@@ -28,8 +28,8 @@ struct configuration_descriptionBuilder;
 struct log_entry;
 struct log_entryBuilder;
 
-struct request_vote;
-struct request_voteBuilder;
+struct vote_request;
+struct vote_requestBuilder;
 
 struct vote_response;
 struct vote_responseBuilder;
@@ -37,11 +37,11 @@ struct vote_responseBuilder;
 struct log_entries;
 struct log_entriesBuilder;
 
-struct append_entry;
-struct append_entryBuilder;
+struct append_entry_request;
+struct append_entry_requestBuilder;
 
-struct append_response;
-struct append_responseBuilder;
+struct append_entry_response;
+struct append_entry_responseBuilder;
 
 struct configuration_checkpoint;
 struct configuration_checkpointBuilder;
@@ -49,8 +49,8 @@ struct configuration_checkpointBuilder;
 struct checkpoint_header;
 struct checkpoint_headerBuilder;
 
-struct append_checkpoint_chunk;
-struct append_checkpoint_chunkBuilder;
+struct append_checkpoint_chunk_request;
+struct append_checkpoint_chunk_requestBuilder;
 
 struct append_checkpoint_chunk_response;
 struct append_checkpoint_chunk_responseBuilder;
@@ -76,8 +76,8 @@ struct close_session_requestBuilder;
 struct close_session_response;
 struct close_session_responseBuilder;
 
-struct linearizable_command;
-struct linearizable_commandBuilder;
+struct linearizable_command_request;
+struct linearizable_command_requestBuilder;
 
 struct log_entry_command;
 struct log_entry_commandBuilder;
@@ -163,9 +163,9 @@ enum any_log_entry_command : uint8_t {
   any_log_entry_command_open_session_response = 2,
   any_log_entry_command_close_session_request = 3,
   any_log_entry_command_close_session_response = 4,
-  any_log_entry_command_linearizable_command = 5,
+  any_log_entry_command_linearizable_command_request = 5,
   any_log_entry_command_MIN = any_log_entry_command_NONE,
-  any_log_entry_command_MAX = any_log_entry_command_linearizable_command
+  any_log_entry_command_MAX = any_log_entry_command_linearizable_command_request
 };
 
 inline const any_log_entry_command (&EnumValuesany_log_entry_command())[6] {
@@ -175,7 +175,7 @@ inline const any_log_entry_command (&EnumValuesany_log_entry_command())[6] {
     any_log_entry_command_open_session_response,
     any_log_entry_command_close_session_request,
     any_log_entry_command_close_session_response,
-    any_log_entry_command_linearizable_command
+    any_log_entry_command_linearizable_command_request
   };
   return values;
 }
@@ -187,14 +187,14 @@ inline const char * const *EnumNamesany_log_entry_command() {
     "open_session_response",
     "close_session_request",
     "close_session_response",
-    "linearizable_command",
+    "linearizable_command_request",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameany_log_entry_command(any_log_entry_command e) {
-  if (::flatbuffers::IsOutRange(e, any_log_entry_command_NONE, any_log_entry_command_linearizable_command)) return "";
+  if (::flatbuffers::IsOutRange(e, any_log_entry_command_NONE, any_log_entry_command_linearizable_command_request)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesany_log_entry_command()[index];
 }
@@ -219,8 +219,8 @@ template<> struct any_log_entry_commandTraits<raft::fbs::close_session_response>
   static const any_log_entry_command enum_value = any_log_entry_command_close_session_response;
 };
 
-template<> struct any_log_entry_commandTraits<raft::fbs::linearizable_command> {
-  static const any_log_entry_command enum_value = any_log_entry_command_linearizable_command;
+template<> struct any_log_entry_commandTraits<raft::fbs::linearizable_command_request> {
+  static const any_log_entry_command enum_value = any_log_entry_command_linearizable_command_request;
 };
 
 bool Verifyany_log_entry_command(::flatbuffers::Verifier &verifier, const void *obj, any_log_entry_command type);
@@ -228,15 +228,15 @@ bool Verifyany_log_entry_commandVector(::flatbuffers::Verifier &verifier, const 
 
 enum any_message : uint8_t {
   any_message_NONE = 0,
-  any_message_request_vote = 1,
+  any_message_vote_request = 1,
   any_message_vote_response = 2,
-  any_message_append_entry = 3,
-  any_message_append_response = 4,
+  any_message_append_entry_request = 3,
+  any_message_append_entry_response = 4,
   any_message_client_response = 5,
   any_message_set_configuration_request = 6,
   any_message_set_configuration_response = 7,
   any_message_configuration_checkpoint = 8,
-  any_message_append_checkpoint_chunk = 9,
+  any_message_append_checkpoint_chunk_request = 9,
   any_message_append_checkpoint_chunk_response = 10,
   any_message_MIN = any_message_NONE,
   any_message_MAX = any_message_append_checkpoint_chunk_response
@@ -245,15 +245,15 @@ enum any_message : uint8_t {
 inline const any_message (&EnumValuesany_message())[11] {
   static const any_message values[] = {
     any_message_NONE,
-    any_message_request_vote,
+    any_message_vote_request,
     any_message_vote_response,
-    any_message_append_entry,
-    any_message_append_response,
+    any_message_append_entry_request,
+    any_message_append_entry_response,
     any_message_client_response,
     any_message_set_configuration_request,
     any_message_set_configuration_response,
     any_message_configuration_checkpoint,
-    any_message_append_checkpoint_chunk,
+    any_message_append_checkpoint_chunk_request,
     any_message_append_checkpoint_chunk_response
   };
   return values;
@@ -262,15 +262,15 @@ inline const any_message (&EnumValuesany_message())[11] {
 inline const char * const *EnumNamesany_message() {
   static const char * const names[12] = {
     "NONE",
-    "request_vote",
+    "vote_request",
     "vote_response",
-    "append_entry",
-    "append_response",
+    "append_entry_request",
+    "append_entry_response",
     "client_response",
     "set_configuration_request",
     "set_configuration_response",
     "configuration_checkpoint",
-    "append_checkpoint_chunk",
+    "append_checkpoint_chunk_request",
     "append_checkpoint_chunk_response",
     nullptr
   };
@@ -287,20 +287,20 @@ template<typename T> struct any_messageTraits {
   static const any_message enum_value = any_message_NONE;
 };
 
-template<> struct any_messageTraits<raft::fbs::request_vote> {
-  static const any_message enum_value = any_message_request_vote;
+template<> struct any_messageTraits<raft::fbs::vote_request> {
+  static const any_message enum_value = any_message_vote_request;
 };
 
 template<> struct any_messageTraits<raft::fbs::vote_response> {
   static const any_message enum_value = any_message_vote_response;
 };
 
-template<> struct any_messageTraits<raft::fbs::append_entry> {
-  static const any_message enum_value = any_message_append_entry;
+template<> struct any_messageTraits<raft::fbs::append_entry_request> {
+  static const any_message enum_value = any_message_append_entry_request;
 };
 
-template<> struct any_messageTraits<raft::fbs::append_response> {
-  static const any_message enum_value = any_message_append_response;
+template<> struct any_messageTraits<raft::fbs::append_entry_response> {
+  static const any_message enum_value = any_message_append_entry_response;
 };
 
 template<> struct any_messageTraits<raft::fbs::client_response> {
@@ -319,8 +319,8 @@ template<> struct any_messageTraits<raft::fbs::configuration_checkpoint> {
   static const any_message enum_value = any_message_configuration_checkpoint;
 };
 
-template<> struct any_messageTraits<raft::fbs::append_checkpoint_chunk> {
-  static const any_message enum_value = any_message_append_checkpoint_chunk;
+template<> struct any_messageTraits<raft::fbs::append_checkpoint_chunk_request> {
+  static const any_message enum_value = any_message_append_checkpoint_chunk_request;
 };
 
 template<> struct any_messageTraits<raft::fbs::append_checkpoint_chunk_response> {
@@ -603,8 +603,8 @@ inline ::flatbuffers::Offset<log_entry> Createlog_entryDirect(
       configuration__);
 }
 
-struct request_vote FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef request_voteBuilder Builder;
+struct vote_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef vote_requestBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_REQUEST_ID = 4,
     VT_RECIPIENT_ID = 6,
@@ -643,40 +643,40 @@ struct request_vote FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
 };
 
-struct request_voteBuilder {
-  typedef request_vote Table;
+struct vote_requestBuilder {
+  typedef vote_request Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
   void add_request_id(uint64_t request_id) {
-    fbb_.AddElement<uint64_t>(request_vote::VT_REQUEST_ID, request_id, 0);
+    fbb_.AddElement<uint64_t>(vote_request::VT_REQUEST_ID, request_id, 0);
   }
   void add_recipient_id(uint64_t recipient_id) {
-    fbb_.AddElement<uint64_t>(request_vote::VT_RECIPIENT_ID, recipient_id, 0);
+    fbb_.AddElement<uint64_t>(vote_request::VT_RECIPIENT_ID, recipient_id, 0);
   }
   void add_term_number(uint64_t term_number) {
-    fbb_.AddElement<uint64_t>(request_vote::VT_TERM_NUMBER, term_number, 0);
+    fbb_.AddElement<uint64_t>(vote_request::VT_TERM_NUMBER, term_number, 0);
   }
   void add_candidate_id(uint64_t candidate_id) {
-    fbb_.AddElement<uint64_t>(request_vote::VT_CANDIDATE_ID, candidate_id, 0);
+    fbb_.AddElement<uint64_t>(vote_request::VT_CANDIDATE_ID, candidate_id, 0);
   }
   void add_last_log_index(uint64_t last_log_index) {
-    fbb_.AddElement<uint64_t>(request_vote::VT_LAST_LOG_INDEX, last_log_index, 0);
+    fbb_.AddElement<uint64_t>(vote_request::VT_LAST_LOG_INDEX, last_log_index, 0);
   }
   void add_last_log_term(uint64_t last_log_term) {
-    fbb_.AddElement<uint64_t>(request_vote::VT_LAST_LOG_TERM, last_log_term, 0);
+    fbb_.AddElement<uint64_t>(vote_request::VT_LAST_LOG_TERM, last_log_term, 0);
   }
-  explicit request_voteBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+  explicit vote_requestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  ::flatbuffers::Offset<request_vote> Finish() {
+  ::flatbuffers::Offset<vote_request> Finish() {
     const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<request_vote>(end);
+    auto o = ::flatbuffers::Offset<vote_request>(end);
     return o;
   }
 };
 
-inline ::flatbuffers::Offset<request_vote> Createrequest_vote(
+inline ::flatbuffers::Offset<vote_request> Createvote_request(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t request_id = 0,
     uint64_t recipient_id = 0,
@@ -684,7 +684,7 @@ inline ::flatbuffers::Offset<request_vote> Createrequest_vote(
     uint64_t candidate_id = 0,
     uint64_t last_log_index = 0,
     uint64_t last_log_term = 0) {
-  request_voteBuilder builder_(_fbb);
+  vote_requestBuilder builder_(_fbb);
   builder_.add_last_log_term(last_log_term);
   builder_.add_last_log_index(last_log_index);
   builder_.add_candidate_id(candidate_id);
@@ -830,8 +830,8 @@ inline ::flatbuffers::Offset<log_entries> Createlog_entriesDirect(
       entry__);
 }
 
-struct append_entry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef append_entryBuilder Builder;
+struct append_entry_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef append_entry_requestBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_REQUEST_ID = 4,
     VT_RECIPIENT_ID = 6,
@@ -882,46 +882,46 @@ struct append_entry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
 };
 
-struct append_entryBuilder {
-  typedef append_entry Table;
+struct append_entry_requestBuilder {
+  typedef append_entry_request Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
   void add_request_id(uint64_t request_id) {
-    fbb_.AddElement<uint64_t>(append_entry::VT_REQUEST_ID, request_id, 0);
+    fbb_.AddElement<uint64_t>(append_entry_request::VT_REQUEST_ID, request_id, 0);
   }
   void add_recipient_id(uint64_t recipient_id) {
-    fbb_.AddElement<uint64_t>(append_entry::VT_RECIPIENT_ID, recipient_id, 0);
+    fbb_.AddElement<uint64_t>(append_entry_request::VT_RECIPIENT_ID, recipient_id, 0);
   }
   void add_term_number(uint64_t term_number) {
-    fbb_.AddElement<uint64_t>(append_entry::VT_TERM_NUMBER, term_number, 0);
+    fbb_.AddElement<uint64_t>(append_entry_request::VT_TERM_NUMBER, term_number, 0);
   }
   void add_leader_id(uint64_t leader_id) {
-    fbb_.AddElement<uint64_t>(append_entry::VT_LEADER_ID, leader_id, 0);
+    fbb_.AddElement<uint64_t>(append_entry_request::VT_LEADER_ID, leader_id, 0);
   }
   void add_previous_log_index(uint64_t previous_log_index) {
-    fbb_.AddElement<uint64_t>(append_entry::VT_PREVIOUS_LOG_INDEX, previous_log_index, 0);
+    fbb_.AddElement<uint64_t>(append_entry_request::VT_PREVIOUS_LOG_INDEX, previous_log_index, 0);
   }
   void add_previous_log_term(uint64_t previous_log_term) {
-    fbb_.AddElement<uint64_t>(append_entry::VT_PREVIOUS_LOG_TERM, previous_log_term, 0);
+    fbb_.AddElement<uint64_t>(append_entry_request::VT_PREVIOUS_LOG_TERM, previous_log_term, 0);
   }
   void add_leader_commit_index(uint64_t leader_commit_index) {
-    fbb_.AddElement<uint64_t>(append_entry::VT_LEADER_COMMIT_INDEX, leader_commit_index, 0);
+    fbb_.AddElement<uint64_t>(append_entry_request::VT_LEADER_COMMIT_INDEX, leader_commit_index, 0);
   }
   void add_entries(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>>> entries) {
-    fbb_.AddOffset(append_entry::VT_ENTRIES, entries);
+    fbb_.AddOffset(append_entry_request::VT_ENTRIES, entries);
   }
-  explicit append_entryBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+  explicit append_entry_requestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  ::flatbuffers::Offset<append_entry> Finish() {
+  ::flatbuffers::Offset<append_entry_request> Finish() {
     const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<append_entry>(end);
+    auto o = ::flatbuffers::Offset<append_entry_request>(end);
     return o;
   }
 };
 
-inline ::flatbuffers::Offset<append_entry> Createappend_entry(
+inline ::flatbuffers::Offset<append_entry_request> Createappend_entry_request(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t request_id = 0,
     uint64_t recipient_id = 0,
@@ -931,7 +931,7 @@ inline ::flatbuffers::Offset<append_entry> Createappend_entry(
     uint64_t previous_log_term = 0,
     uint64_t leader_commit_index = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>>> entries = 0) {
-  append_entryBuilder builder_(_fbb);
+  append_entry_requestBuilder builder_(_fbb);
   builder_.add_leader_commit_index(leader_commit_index);
   builder_.add_previous_log_term(previous_log_term);
   builder_.add_previous_log_index(previous_log_index);
@@ -943,7 +943,7 @@ inline ::flatbuffers::Offset<append_entry> Createappend_entry(
   return builder_.Finish();
 }
 
-inline ::flatbuffers::Offset<append_entry> Createappend_entryDirect(
+inline ::flatbuffers::Offset<append_entry_request> Createappend_entry_requestDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t request_id = 0,
     uint64_t recipient_id = 0,
@@ -954,7 +954,7 @@ inline ::flatbuffers::Offset<append_entry> Createappend_entryDirect(
     uint64_t leader_commit_index = 0,
     const std::vector<::flatbuffers::Offset<raft::fbs::log_entries>> *entries = nullptr) {
   auto entries__ = entries ? _fbb.CreateVector<::flatbuffers::Offset<raft::fbs::log_entries>>(*entries) : 0;
-  return raft::fbs::Createappend_entry(
+  return raft::fbs::Createappend_entry_request(
       _fbb,
       request_id,
       recipient_id,
@@ -966,8 +966,8 @@ inline ::flatbuffers::Offset<append_entry> Createappend_entryDirect(
       entries__);
 }
 
-struct append_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef append_responseBuilder Builder;
+struct append_entry_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef append_entry_responseBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_RECIPIENT_ID = 4,
     VT_TERM_NUMBER = 6,
@@ -1011,43 +1011,43 @@ struct append_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
 };
 
-struct append_responseBuilder {
-  typedef append_response Table;
+struct append_entry_responseBuilder {
+  typedef append_entry_response Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
   void add_recipient_id(uint64_t recipient_id) {
-    fbb_.AddElement<uint64_t>(append_response::VT_RECIPIENT_ID, recipient_id, 0);
+    fbb_.AddElement<uint64_t>(append_entry_response::VT_RECIPIENT_ID, recipient_id, 0);
   }
   void add_term_number(uint64_t term_number) {
-    fbb_.AddElement<uint64_t>(append_response::VT_TERM_NUMBER, term_number, 0);
+    fbb_.AddElement<uint64_t>(append_entry_response::VT_TERM_NUMBER, term_number, 0);
   }
   void add_request_term_number(uint64_t request_term_number) {
-    fbb_.AddElement<uint64_t>(append_response::VT_REQUEST_TERM_NUMBER, request_term_number, 0);
+    fbb_.AddElement<uint64_t>(append_entry_response::VT_REQUEST_TERM_NUMBER, request_term_number, 0);
   }
   void add_request_id(uint64_t request_id) {
-    fbb_.AddElement<uint64_t>(append_response::VT_REQUEST_ID, request_id, 0);
+    fbb_.AddElement<uint64_t>(append_entry_response::VT_REQUEST_ID, request_id, 0);
   }
   void add_begin_index(uint64_t begin_index) {
-    fbb_.AddElement<uint64_t>(append_response::VT_BEGIN_INDEX, begin_index, 0);
+    fbb_.AddElement<uint64_t>(append_entry_response::VT_BEGIN_INDEX, begin_index, 0);
   }
   void add_last_index(uint64_t last_index) {
-    fbb_.AddElement<uint64_t>(append_response::VT_LAST_INDEX, last_index, 0);
+    fbb_.AddElement<uint64_t>(append_entry_response::VT_LAST_INDEX, last_index, 0);
   }
   void add_success(bool success) {
-    fbb_.AddElement<uint8_t>(append_response::VT_SUCCESS, static_cast<uint8_t>(success), 0);
+    fbb_.AddElement<uint8_t>(append_entry_response::VT_SUCCESS, static_cast<uint8_t>(success), 0);
   }
-  explicit append_responseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+  explicit append_entry_responseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  ::flatbuffers::Offset<append_response> Finish() {
+  ::flatbuffers::Offset<append_entry_response> Finish() {
     const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<append_response>(end);
+    auto o = ::flatbuffers::Offset<append_entry_response>(end);
     return o;
   }
 };
 
-inline ::flatbuffers::Offset<append_response> Createappend_response(
+inline ::flatbuffers::Offset<append_entry_response> Createappend_entry_response(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
@@ -1056,7 +1056,7 @@ inline ::flatbuffers::Offset<append_response> Createappend_response(
     uint64_t begin_index = 0,
     uint64_t last_index = 0,
     bool success = false) {
-  append_responseBuilder builder_(_fbb);
+  append_entry_responseBuilder builder_(_fbb);
   builder_.add_last_index(last_index);
   builder_.add_begin_index(begin_index);
   builder_.add_request_id(request_id);
@@ -1206,8 +1206,8 @@ inline ::flatbuffers::Offset<checkpoint_header> Createcheckpoint_header(
   return builder_.Finish();
 }
 
-struct append_checkpoint_chunk FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef append_checkpoint_chunkBuilder Builder;
+struct append_checkpoint_chunk_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef append_checkpoint_chunk_requestBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_REQUEST_ID = 4,
     VT_RECIPIENT_ID = 6,
@@ -1263,49 +1263,49 @@ struct append_checkpoint_chunk FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::
   }
 };
 
-struct append_checkpoint_chunkBuilder {
-  typedef append_checkpoint_chunk Table;
+struct append_checkpoint_chunk_requestBuilder {
+  typedef append_checkpoint_chunk_request Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
   void add_request_id(uint64_t request_id) {
-    fbb_.AddElement<uint64_t>(append_checkpoint_chunk::VT_REQUEST_ID, request_id, 0);
+    fbb_.AddElement<uint64_t>(append_checkpoint_chunk_request::VT_REQUEST_ID, request_id, 0);
   }
   void add_recipient_id(uint64_t recipient_id) {
-    fbb_.AddElement<uint64_t>(append_checkpoint_chunk::VT_RECIPIENT_ID, recipient_id, 0);
+    fbb_.AddElement<uint64_t>(append_checkpoint_chunk_request::VT_RECIPIENT_ID, recipient_id, 0);
   }
   void add_term_number(uint64_t term_number) {
-    fbb_.AddElement<uint64_t>(append_checkpoint_chunk::VT_TERM_NUMBER, term_number, 0);
+    fbb_.AddElement<uint64_t>(append_checkpoint_chunk_request::VT_TERM_NUMBER, term_number, 0);
   }
   void add_leader_id(uint64_t leader_id) {
-    fbb_.AddElement<uint64_t>(append_checkpoint_chunk::VT_LEADER_ID, leader_id, 0);
+    fbb_.AddElement<uint64_t>(append_checkpoint_chunk_request::VT_LEADER_ID, leader_id, 0);
   }
   void add_last_checkpoint_header(::flatbuffers::Offset<raft::fbs::checkpoint_header> last_checkpoint_header) {
-    fbb_.AddOffset(append_checkpoint_chunk::VT_LAST_CHECKPOINT_HEADER, last_checkpoint_header);
+    fbb_.AddOffset(append_checkpoint_chunk_request::VT_LAST_CHECKPOINT_HEADER, last_checkpoint_header);
   }
   void add_checkpoint_begin(uint64_t checkpoint_begin) {
-    fbb_.AddElement<uint64_t>(append_checkpoint_chunk::VT_CHECKPOINT_BEGIN, checkpoint_begin, 0);
+    fbb_.AddElement<uint64_t>(append_checkpoint_chunk_request::VT_CHECKPOINT_BEGIN, checkpoint_begin, 0);
   }
   void add_checkpoint_end(uint64_t checkpoint_end) {
-    fbb_.AddElement<uint64_t>(append_checkpoint_chunk::VT_CHECKPOINT_END, checkpoint_end, 0);
+    fbb_.AddElement<uint64_t>(append_checkpoint_chunk_request::VT_CHECKPOINT_END, checkpoint_end, 0);
   }
   void add_checkpoint_done(bool checkpoint_done) {
-    fbb_.AddElement<uint8_t>(append_checkpoint_chunk::VT_CHECKPOINT_DONE, static_cast<uint8_t>(checkpoint_done), 0);
+    fbb_.AddElement<uint8_t>(append_checkpoint_chunk_request::VT_CHECKPOINT_DONE, static_cast<uint8_t>(checkpoint_done), 0);
   }
   void add_data(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> data) {
-    fbb_.AddOffset(append_checkpoint_chunk::VT_DATA, data);
+    fbb_.AddOffset(append_checkpoint_chunk_request::VT_DATA, data);
   }
-  explicit append_checkpoint_chunkBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+  explicit append_checkpoint_chunk_requestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  ::flatbuffers::Offset<append_checkpoint_chunk> Finish() {
+  ::flatbuffers::Offset<append_checkpoint_chunk_request> Finish() {
     const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<append_checkpoint_chunk>(end);
+    auto o = ::flatbuffers::Offset<append_checkpoint_chunk_request>(end);
     return o;
   }
 };
 
-inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_chunk(
+inline ::flatbuffers::Offset<append_checkpoint_chunk_request> Createappend_checkpoint_chunk_request(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t request_id = 0,
     uint64_t recipient_id = 0,
@@ -1316,7 +1316,7 @@ inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_ch
     uint64_t checkpoint_end = 0,
     bool checkpoint_done = false,
     ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> data = 0) {
-  append_checkpoint_chunkBuilder builder_(_fbb);
+  append_checkpoint_chunk_requestBuilder builder_(_fbb);
   builder_.add_checkpoint_end(checkpoint_end);
   builder_.add_checkpoint_begin(checkpoint_begin);
   builder_.add_leader_id(leader_id);
@@ -1329,7 +1329,7 @@ inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_ch
   return builder_.Finish();
 }
 
-inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_chunkDirect(
+inline ::flatbuffers::Offset<append_checkpoint_chunk_request> Createappend_checkpoint_chunk_requestDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t request_id = 0,
     uint64_t recipient_id = 0,
@@ -1341,7 +1341,7 @@ inline ::flatbuffers::Offset<append_checkpoint_chunk> Createappend_checkpoint_ch
     bool checkpoint_done = false,
     const std::vector<uint8_t> *data = nullptr) {
   auto data__ = data ? _fbb.CreateVector<uint8_t>(*data) : 0;
-  return raft::fbs::Createappend_checkpoint_chunk(
+  return raft::fbs::Createappend_checkpoint_chunk_request(
       _fbb,
       request_id,
       recipient_id,
@@ -1778,8 +1778,8 @@ inline ::flatbuffers::Offset<close_session_response> Createclose_session_respons
   return builder_.Finish();
 }
 
-struct linearizable_command FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
-  typedef linearizable_commandBuilder Builder;
+struct linearizable_command_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef linearizable_command_requestBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_SESSION_ID = 4,
     VT_FIRST_UNACKNOWLEDGED_SEQUENCE_NUMBER = 6,
@@ -1809,40 +1809,40 @@ struct linearizable_command FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
   }
 };
 
-struct linearizable_commandBuilder {
-  typedef linearizable_command Table;
+struct linearizable_command_requestBuilder {
+  typedef linearizable_command_request Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
   void add_session_id(uint64_t session_id) {
-    fbb_.AddElement<uint64_t>(linearizable_command::VT_SESSION_ID, session_id, 0);
+    fbb_.AddElement<uint64_t>(linearizable_command_request::VT_SESSION_ID, session_id, 0);
   }
   void add_first_unacknowledged_sequence_number(uint64_t first_unacknowledged_sequence_number) {
-    fbb_.AddElement<uint64_t>(linearizable_command::VT_FIRST_UNACKNOWLEDGED_SEQUENCE_NUMBER, first_unacknowledged_sequence_number, 0);
+    fbb_.AddElement<uint64_t>(linearizable_command_request::VT_FIRST_UNACKNOWLEDGED_SEQUENCE_NUMBER, first_unacknowledged_sequence_number, 0);
   }
   void add_sequence_number(uint64_t sequence_number) {
-    fbb_.AddElement<uint64_t>(linearizable_command::VT_SEQUENCE_NUMBER, sequence_number, 0);
+    fbb_.AddElement<uint64_t>(linearizable_command_request::VT_SEQUENCE_NUMBER, sequence_number, 0);
   }
   void add_command(::flatbuffers::Offset<::flatbuffers::String> command) {
-    fbb_.AddOffset(linearizable_command::VT_COMMAND, command);
+    fbb_.AddOffset(linearizable_command_request::VT_COMMAND, command);
   }
-  explicit linearizable_commandBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+  explicit linearizable_command_requestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
-  ::flatbuffers::Offset<linearizable_command> Finish() {
+  ::flatbuffers::Offset<linearizable_command_request> Finish() {
     const auto end = fbb_.EndTable(start_);
-    auto o = ::flatbuffers::Offset<linearizable_command>(end);
+    auto o = ::flatbuffers::Offset<linearizable_command_request>(end);
     return o;
   }
 };
 
-inline ::flatbuffers::Offset<linearizable_command> Createlinearizable_command(
+inline ::flatbuffers::Offset<linearizable_command_request> Createlinearizable_command_request(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t session_id = 0,
     uint64_t first_unacknowledged_sequence_number = 0,
     uint64_t sequence_number = 0,
     ::flatbuffers::Offset<::flatbuffers::String> command = 0) {
-  linearizable_commandBuilder builder_(_fbb);
+  linearizable_command_requestBuilder builder_(_fbb);
   builder_.add_sequence_number(sequence_number);
   builder_.add_first_unacknowledged_sequence_number(first_unacknowledged_sequence_number);
   builder_.add_session_id(session_id);
@@ -1850,14 +1850,14 @@ inline ::flatbuffers::Offset<linearizable_command> Createlinearizable_command(
   return builder_.Finish();
 }
 
-inline ::flatbuffers::Offset<linearizable_command> Createlinearizable_commandDirect(
+inline ::flatbuffers::Offset<linearizable_command_request> Createlinearizable_command_requestDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t session_id = 0,
     uint64_t first_unacknowledged_sequence_number = 0,
     uint64_t sequence_number = 0,
     const char *command = nullptr) {
   auto command__ = command ? _fbb.CreateString(command) : 0;
-  return raft::fbs::Createlinearizable_command(
+  return raft::fbs::Createlinearizable_command_request(
       _fbb,
       session_id,
       first_unacknowledged_sequence_number,
@@ -1890,8 +1890,8 @@ struct log_entry_command FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table 
   const raft::fbs::close_session_response *command_as_close_session_response() const {
     return command_type() == raft::fbs::any_log_entry_command_close_session_response ? static_cast<const raft::fbs::close_session_response *>(command()) : nullptr;
   }
-  const raft::fbs::linearizable_command *command_as_linearizable_command() const {
-    return command_type() == raft::fbs::any_log_entry_command_linearizable_command ? static_cast<const raft::fbs::linearizable_command *>(command()) : nullptr;
+  const raft::fbs::linearizable_command_request *command_as_linearizable_command_request() const {
+    return command_type() == raft::fbs::any_log_entry_command_linearizable_command_request ? static_cast<const raft::fbs::linearizable_command_request *>(command()) : nullptr;
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1918,8 +1918,8 @@ template<> inline const raft::fbs::close_session_response *log_entry_command::co
   return command_as_close_session_response();
 }
 
-template<> inline const raft::fbs::linearizable_command *log_entry_command::command_as<raft::fbs::linearizable_command>() const {
-  return command_as_linearizable_command();
+template<> inline const raft::fbs::linearizable_command_request *log_entry_command::command_as<raft::fbs::linearizable_command_request>() const {
+  return command_as_linearizable_command_request();
 }
 
 struct log_entry_commandBuilder {
@@ -1966,17 +1966,17 @@ struct raft_message FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     return GetPointer<const void *>(VT_MESSAGE);
   }
   template<typename T> const T *message_as() const;
-  const raft::fbs::request_vote *message_as_request_vote() const {
-    return message_type() == raft::fbs::any_message_request_vote ? static_cast<const raft::fbs::request_vote *>(message()) : nullptr;
+  const raft::fbs::vote_request *message_as_vote_request() const {
+    return message_type() == raft::fbs::any_message_vote_request ? static_cast<const raft::fbs::vote_request *>(message()) : nullptr;
   }
   const raft::fbs::vote_response *message_as_vote_response() const {
     return message_type() == raft::fbs::any_message_vote_response ? static_cast<const raft::fbs::vote_response *>(message()) : nullptr;
   }
-  const raft::fbs::append_entry *message_as_append_entry() const {
-    return message_type() == raft::fbs::any_message_append_entry ? static_cast<const raft::fbs::append_entry *>(message()) : nullptr;
+  const raft::fbs::append_entry_request *message_as_append_entry_request() const {
+    return message_type() == raft::fbs::any_message_append_entry_request ? static_cast<const raft::fbs::append_entry_request *>(message()) : nullptr;
   }
-  const raft::fbs::append_response *message_as_append_response() const {
-    return message_type() == raft::fbs::any_message_append_response ? static_cast<const raft::fbs::append_response *>(message()) : nullptr;
+  const raft::fbs::append_entry_response *message_as_append_entry_response() const {
+    return message_type() == raft::fbs::any_message_append_entry_response ? static_cast<const raft::fbs::append_entry_response *>(message()) : nullptr;
   }
   const raft::fbs::client_response *message_as_client_response() const {
     return message_type() == raft::fbs::any_message_client_response ? static_cast<const raft::fbs::client_response *>(message()) : nullptr;
@@ -1990,8 +1990,8 @@ struct raft_message FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const raft::fbs::configuration_checkpoint *message_as_configuration_checkpoint() const {
     return message_type() == raft::fbs::any_message_configuration_checkpoint ? static_cast<const raft::fbs::configuration_checkpoint *>(message()) : nullptr;
   }
-  const raft::fbs::append_checkpoint_chunk *message_as_append_checkpoint_chunk() const {
-    return message_type() == raft::fbs::any_message_append_checkpoint_chunk ? static_cast<const raft::fbs::append_checkpoint_chunk *>(message()) : nullptr;
+  const raft::fbs::append_checkpoint_chunk_request *message_as_append_checkpoint_chunk_request() const {
+    return message_type() == raft::fbs::any_message_append_checkpoint_chunk_request ? static_cast<const raft::fbs::append_checkpoint_chunk_request *>(message()) : nullptr;
   }
   const raft::fbs::append_checkpoint_chunk_response *message_as_append_checkpoint_chunk_response() const {
     return message_type() == raft::fbs::any_message_append_checkpoint_chunk_response ? static_cast<const raft::fbs::append_checkpoint_chunk_response *>(message()) : nullptr;
@@ -2005,20 +2005,20 @@ struct raft_message FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
 };
 
-template<> inline const raft::fbs::request_vote *raft_message::message_as<raft::fbs::request_vote>() const {
-  return message_as_request_vote();
+template<> inline const raft::fbs::vote_request *raft_message::message_as<raft::fbs::vote_request>() const {
+  return message_as_vote_request();
 }
 
 template<> inline const raft::fbs::vote_response *raft_message::message_as<raft::fbs::vote_response>() const {
   return message_as_vote_response();
 }
 
-template<> inline const raft::fbs::append_entry *raft_message::message_as<raft::fbs::append_entry>() const {
-  return message_as_append_entry();
+template<> inline const raft::fbs::append_entry_request *raft_message::message_as<raft::fbs::append_entry_request>() const {
+  return message_as_append_entry_request();
 }
 
-template<> inline const raft::fbs::append_response *raft_message::message_as<raft::fbs::append_response>() const {
-  return message_as_append_response();
+template<> inline const raft::fbs::append_entry_response *raft_message::message_as<raft::fbs::append_entry_response>() const {
+  return message_as_append_entry_response();
 }
 
 template<> inline const raft::fbs::client_response *raft_message::message_as<raft::fbs::client_response>() const {
@@ -2037,8 +2037,8 @@ template<> inline const raft::fbs::configuration_checkpoint *raft_message::messa
   return message_as_configuration_checkpoint();
 }
 
-template<> inline const raft::fbs::append_checkpoint_chunk *raft_message::message_as<raft::fbs::append_checkpoint_chunk>() const {
-  return message_as_append_checkpoint_chunk();
+template<> inline const raft::fbs::append_checkpoint_chunk_request *raft_message::message_as<raft::fbs::append_checkpoint_chunk_request>() const {
+  return message_as_append_checkpoint_chunk_request();
 }
 
 template<> inline const raft::fbs::append_checkpoint_chunk_response *raft_message::message_as<raft::fbs::append_checkpoint_chunk_response>() const {
@@ -2097,8 +2097,8 @@ inline bool Verifyany_log_entry_command(::flatbuffers::Verifier &verifier, const
       auto ptr = reinterpret_cast<const raft::fbs::close_session_response *>(obj);
       return verifier.VerifyTable(ptr);
     }
-    case any_log_entry_command_linearizable_command: {
-      auto ptr = reinterpret_cast<const raft::fbs::linearizable_command *>(obj);
+    case any_log_entry_command_linearizable_command_request: {
+      auto ptr = reinterpret_cast<const raft::fbs::linearizable_command_request *>(obj);
       return verifier.VerifyTable(ptr);
     }
     default: return true;
@@ -2122,20 +2122,20 @@ inline bool Verifyany_message(::flatbuffers::Verifier &verifier, const void *obj
     case any_message_NONE: {
       return true;
     }
-    case any_message_request_vote: {
-      auto ptr = reinterpret_cast<const raft::fbs::request_vote *>(obj);
+    case any_message_vote_request: {
+      auto ptr = reinterpret_cast<const raft::fbs::vote_request *>(obj);
       return verifier.VerifyTable(ptr);
     }
     case any_message_vote_response: {
       auto ptr = reinterpret_cast<const raft::fbs::vote_response *>(obj);
       return verifier.VerifyTable(ptr);
     }
-    case any_message_append_entry: {
-      auto ptr = reinterpret_cast<const raft::fbs::append_entry *>(obj);
+    case any_message_append_entry_request: {
+      auto ptr = reinterpret_cast<const raft::fbs::append_entry_request *>(obj);
       return verifier.VerifyTable(ptr);
     }
-    case any_message_append_response: {
-      auto ptr = reinterpret_cast<const raft::fbs::append_response *>(obj);
+    case any_message_append_entry_response: {
+      auto ptr = reinterpret_cast<const raft::fbs::append_entry_response *>(obj);
       return verifier.VerifyTable(ptr);
     }
     case any_message_client_response: {
@@ -2154,8 +2154,8 @@ inline bool Verifyany_message(::flatbuffers::Verifier &verifier, const void *obj
       auto ptr = reinterpret_cast<const raft::fbs::configuration_checkpoint *>(obj);
       return verifier.VerifyTable(ptr);
     }
-    case any_message_append_checkpoint_chunk: {
-      auto ptr = reinterpret_cast<const raft::fbs::append_checkpoint_chunk *>(obj);
+    case any_message_append_checkpoint_chunk_request: {
+      auto ptr = reinterpret_cast<const raft::fbs::append_checkpoint_chunk_request *>(obj);
       return verifier.VerifyTable(ptr);
     }
     case any_message_append_checkpoint_chunk_response: {

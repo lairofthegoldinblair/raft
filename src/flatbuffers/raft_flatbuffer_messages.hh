@@ -96,30 +96,30 @@ namespace raft {
     //   }
     // };
 
-    struct append_entry_traits
+    struct append_entry_request_traits
     {
       typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
       typedef const arg_type & const_arg_type;
-      static const append_entry *  get_append_entry(const_arg_type ae)
+      static const append_entry_request *  get_append_entry_request(const_arg_type ae)
       {
-	// return ae->message_as_append_entry();
-	return ae.first->message_as_append_entry();
+	// return ae->message_as_append_entry_request();
+	return ae.first->message_as_append_entry_request();
       }      
       static uint64_t request_id(const_arg_type ae)
       {
-	return get_append_entry(ae)->request_id();
+	return get_append_entry_request(ae)->request_id();
       }
       static uint64_t recipient_id(const_arg_type ae)
       {
-	return get_append_entry(ae)->recipient_id();
+	return get_append_entry_request(ae)->recipient_id();
       }
       static uint64_t term_number(const_arg_type ae)
       {
-	return get_append_entry(ae)->term_number();
+	return get_append_entry_request(ae)->term_number();
       }
       static uint64_t leader_id(const_arg_type ae)
       {
-	return get_append_entry(ae)->leader_id();
+	return get_append_entry_request(ae)->leader_id();
       }
       // Basic point of Raft is the Log Matching Property which comprises:
       // 1) Index and Term of a log entry uniquely define the content
@@ -128,25 +128,25 @@ namespace raft {
       //
       static uint64_t previous_log_index(const_arg_type ae)
       {
-	return get_append_entry(ae)->previous_log_index();
+	return get_append_entry_request(ae)->previous_log_index();
       }
       // The last term sent (only valid if previous_log_index > 0).
       static uint64_t previous_log_term(const_arg_type ae)
       {
-	return get_append_entry(ae)->previous_log_term();
+	return get_append_entry_request(ae)->previous_log_term();
       }
       // Last log entry in message that is committed on leader
       static uint64_t leader_commit_index(const_arg_type ae)
       {
-	return get_append_entry(ae)->leader_commit_index();
+	return get_append_entry_request(ae)->leader_commit_index();
       }
       static std::size_t num_entries(const_arg_type ae)
       {
-	return nullptr != get_append_entry(ae)->entries() ? get_append_entry(ae)->entries()->size() : 0;
+	return nullptr != get_append_entry_request(ae)->entries() ? get_append_entry_request(ae)->entries()->size() : 0;
       }
       static const uint8_t & get_entry(const_arg_type ae, std::size_t i)
       {
-	return *get_append_entry(ae)->entries()->Get(i)->entry()->Data();
+	return *get_append_entry_request(ae)->entries()->Get(i)->entry()->Data();
       }
     };
 
@@ -413,14 +413,14 @@ namespace raft {
   };
     
 
-    struct request_vote_traits
+    struct vote_request_traits
     {
       typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
       typedef const arg_type & const_arg_type;
 
-      static const raft::fbs::request_vote * rv(const_arg_type msg)
+      static const raft::fbs::vote_request * rv(const_arg_type msg)
       {
-	return msg.first->message_as_request_vote();
+	return msg.first->message_as_vote_request();
       }
 
       static uint64_t request_id(const_arg_type msg)
@@ -487,9 +487,9 @@ namespace raft {
       typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
       typedef const arg_type & const_arg_type;
 
-      static const raft::fbs::append_response * aer(const_arg_type msg)
+      static const raft::fbs::append_entry_response * aer(const_arg_type msg)
       {
-	return msg.first->message_as_append_response();
+	return msg.first->message_as_append_entry_response();
       }
 
       static uint64_t recipient_id(const_arg_type msg)
@@ -524,16 +524,16 @@ namespace raft {
       }
     };
 
-    class append_checkpoint_chunk_traits
+    class append_checkpoint_chunk_request_traits
     {
     public:
       typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
       typedef const arg_type & const_arg_type;
       // typedef const raft_message * const_arg_type;    
     
-      static const raft::fbs::append_checkpoint_chunk * acc(const_arg_type msg)
+      static const raft::fbs::append_checkpoint_chunk_request * acc(const_arg_type msg)
       {
-	return msg.first->message_as_append_checkpoint_chunk();
+	return msg.first->message_as_append_checkpoint_chunk_request();
       }
     
       static uint64_t request_id(const_arg_type msg)
@@ -753,16 +753,16 @@ namespace raft {
       }
     };
     
-    class linearizable_command_traits
+    class linearizable_command_request_traits
     {
     public:
       typedef std::pair<const log_entry_command *, raft::util::call_on_delete> arg_type;
       typedef const arg_type & const_arg_type;
       typedef const log_entry_command * const_view_type;
     
-      static const raft::fbs::linearizable_command * acc(const_arg_type msg)
+      static const raft::fbs::linearizable_command_request * acc(const_arg_type msg)
       {
-	return msg.first->command_as_linearizable_command();
+	return msg.first->command_as_linearizable_command_request();
       }
     
       static uint64_t session_id(const_arg_type msg)
@@ -786,9 +786,9 @@ namespace raft {
 		     acc(msg)->command()->size());
       }
 
-      static const raft::fbs::linearizable_command * acc(const_view_type msg)
+      static const raft::fbs::linearizable_command_request * acc(const_view_type msg)
       {
-	return msg->command_as_linearizable_command();
+	return msg->command_as_linearizable_command_request();
       }
     
       static uint64_t session_id(const_view_type msg)
@@ -832,7 +832,7 @@ namespace raft {
       }
       static bool is_linearizable_command(const_arg_type msg)
       {
-        return any_log_entry_command_linearizable_command == get_log_entry_command(msg)->command_type();
+        return any_log_entry_command_linearizable_command_request == get_log_entry_command(msg)->command_type();
       }
 
       static open_session_request_traits::const_view_type open_session(const_arg_type msg)
@@ -843,7 +843,7 @@ namespace raft {
       {
         return get_log_entry_command(msg);
       }
-      static linearizable_command_traits::const_view_type linearizable_command(const_arg_type msg)
+      static linearizable_command_request_traits::const_view_type linearizable_command(const_arg_type msg)
       {
         return get_log_entry_command(msg);
       }
@@ -857,17 +857,17 @@ namespace raft {
       typedef log_entry_command_traits log_entry_command_traits_type;
       typedef client_response client_response_type;
       typedef client_response_traits client_response_traits_type;
-      typedef request_vote request_vote_type;
-      typedef request_vote_traits request_vote_traits_type;
+      typedef vote_request vote_request_type;
+      typedef vote_request_traits vote_request_traits_type;
       typedef vote_response vote_response_type;
       typedef vote_response_traits vote_response_traits_type;
-      typedef append_checkpoint_chunk append_checkpoint_chunk_type;
-      typedef append_checkpoint_chunk_traits append_checkpoint_chunk_traits_type;
+      typedef append_checkpoint_chunk_request append_checkpoint_chunk_request_type;
+      typedef append_checkpoint_chunk_request_traits append_checkpoint_chunk_request_traits_type;
       typedef append_checkpoint_chunk_response append_checkpoint_chunk_response_type;
       typedef append_checkpoint_chunk_response_traits append_checkpoint_chunk_response_traits_type;
-      typedef append_entry append_entry_type;
-      typedef append_entry_traits append_entry_traits_type;
-      typedef append_response append_entry_response_type;
+      typedef append_entry_request append_entry_request_type;
+      typedef append_entry_request_traits append_entry_request_traits_type;
+      typedef append_entry_response append_entry_response_type;
       typedef append_entry_response_traits append_entry_response_traits_type;      
 
       typedef set_configuration_request_traits set_configuration_request_traits_type;
@@ -892,8 +892,8 @@ namespace raft {
       typedef close_session_request_traits close_session_request_traits_type;
       typedef close_session_response close_session_response_type;
       typedef close_session_response_traits close_session_response_traits_type;
-      typedef linearizable_command linearizable_command_type;
-      typedef linearizable_command_traits linearizable_command_traits_type;
+      typedef linearizable_command_request linearizable_command_request_type;
+      typedef linearizable_command_request_traits linearizable_command_request_traits_type;
 
       typedef raft::fbs::client_result client_result_type;
       static raft::fbs::client_result client_result_success() { return raft::fbs::client_result_SUCCESS; }
@@ -1227,7 +1227,7 @@ simple_configuration_description_builder to()
       return std::pair<checkpoint_header_traits::const_arg_type, raft::util::call_on_delete>(ptr, [f = std::move(fbb)](){});
     }
     
-    class request_vote_builder : public raft_message_builder_base<request_vote_builder, raft::fbs::request_vote>
+    class vote_request_builder : public raft_message_builder_base<vote_request_builder, raft::fbs::vote_request>
     {
     private:
       uint64_t request_id_ = 0;
@@ -1250,32 +1250,32 @@ simple_configuration_description_builder to()
 	bld->add_last_log_index(last_log_index_);
 	bld->add_last_log_term(last_log_term_);
       }
-      request_vote_builder & request_id(uint64_t val)
+      vote_request_builder & request_id(uint64_t val)
       {
 	request_id_ = val;
 	return *this;
       }
-      request_vote_builder & recipient_id(uint64_t val)
+      vote_request_builder & recipient_id(uint64_t val)
       {
 	recipient_id_ = val;
 	return *this;
       }
-      request_vote_builder & term_number(uint64_t val)
+      vote_request_builder & term_number(uint64_t val)
       {
 	term_number_ = val;
 	return *this;
       }
-      request_vote_builder & candidate_id(uint64_t val)
+      vote_request_builder & candidate_id(uint64_t val)
       {
 	candidate_id_ = val;
 	return *this;
       }
-      request_vote_builder & last_log_index(uint64_t val)
+      vote_request_builder & last_log_index(uint64_t val)
       {
 	last_log_index_ = val;
 	return *this;
       }
-      request_vote_builder & last_log_term(uint64_t val)
+      vote_request_builder & last_log_term(uint64_t val)
       {
 	last_log_term_ = val;
 	return *this;
@@ -1372,7 +1372,7 @@ simple_configuration_description_builder to()
       }
     };
 
-    class append_entry_builder : public raft_message_builder_base<append_entry_builder, raft::fbs::append_entry>
+    class append_entry_request_builder : public raft_message_builder_base<append_entry_request_builder, raft::fbs::append_entry_request>
     {
     private:
       uint64_t request_id_ = 0;
@@ -1402,42 +1402,42 @@ simple_configuration_description_builder to()
 	bld->add_entries(entries_);
       }
 
-      append_entry_builder & request_id(uint64_t val)
+      append_entry_request_builder & request_id(uint64_t val)
       {
 	request_id_ = val;
 	return *this;
       }
-      append_entry_builder & recipient_id(uint64_t val)
+      append_entry_request_builder & recipient_id(uint64_t val)
       {
 	recipient_id_ = val;
 	return *this;
       }
-      append_entry_builder & term_number(uint64_t val)
+      append_entry_request_builder & term_number(uint64_t val)
       {
 	term_number_ = val;
 	return *this;
       }
-      append_entry_builder & leader_id(uint64_t val)
+      append_entry_request_builder & leader_id(uint64_t val)
       {
 	leader_id_ = val;
 	return *this;
       }
-      append_entry_builder & previous_log_index(uint64_t val)
+      append_entry_request_builder & previous_log_index(uint64_t val)
       {
 	previous_log_index_ = val;
 	return *this;
       }
-      append_entry_builder & previous_log_term(uint64_t val)
+      append_entry_request_builder & previous_log_term(uint64_t val)
       {
 	previous_log_term_ = val;
 	return *this;
       }
-      append_entry_builder & leader_commit_index(uint64_t val)
+      append_entry_request_builder & leader_commit_index(uint64_t val)
       {
 	leader_commit_index_ = val;
 	return *this;
       }
-      append_entry_builder & entry(const uint8_t & e)
+      append_entry_request_builder & entry(const uint8_t & e)
       {
 	// Log entries are nested flatbuffers so we can just memcpy them into message
 	  // We use size prefixed buffers so the first uoffset_t is the size of the flatbuffer
@@ -1448,13 +1448,13 @@ simple_configuration_description_builder to()
 	entries_vec_.push_back(leb.Finish());
 	return *this;
       }
-      append_entry_builder & entry(const std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete > & val)
+      append_entry_request_builder & entry(const std::pair<log_entry_traits::const_arg_type, raft::util::call_on_delete > & val)
       {
 	return entry(*val.first);
       }
     };
 
-    class append_response_builder : public raft_message_builder_base<append_response_builder, raft::fbs::append_response>
+    class append_entry_response_builder : public raft_message_builder_base<append_entry_response_builder, raft::fbs::append_entry_response>
     {
     private:
       uint64_t recipient_id_ = 0;
@@ -1479,44 +1479,44 @@ simple_configuration_description_builder to()
 	  bld->add_last_index(last_index_);
 	  bld->add_success(success_);
       }	
-      append_response_builder & recipient_id(uint64_t val)
+      append_entry_response_builder & recipient_id(uint64_t val)
       {
 	recipient_id_ = val;
 	return *this;
       }
-      append_response_builder & term_number(uint64_t val)
+      append_entry_response_builder & term_number(uint64_t val)
       {
 	term_number_ = val;
 	return *this;
       }
-      append_response_builder & request_term_number(uint64_t val)
+      append_entry_response_builder & request_term_number(uint64_t val)
       {
 	request_term_number_ = val;
 	return *this;
       }
-      append_response_builder & request_id(uint64_t val)
+      append_entry_response_builder & request_id(uint64_t val)
       {
 	request_id_ = val;
 	return *this;
       }
-      append_response_builder & begin_index(uint64_t val)
+      append_entry_response_builder & begin_index(uint64_t val)
       {
 	begin_index_ = val;
 	return *this;
       }
-      append_response_builder & last_index(uint64_t val)
+      append_entry_response_builder & last_index(uint64_t val)
       {
 	last_index_ = val;
 	return *this;
       }
-      append_response_builder & success(bool val)
+      append_entry_response_builder & success(bool val)
       {
 	success_ = val;
 	return *this;
       }
     };
 
-    class append_checkpoint_chunk_builder : public raft_message_builder_base<append_checkpoint_chunk_builder, raft::fbs::append_checkpoint_chunk>
+    class append_checkpoint_chunk_request_builder : public raft_message_builder_base<append_checkpoint_chunk_request_builder, raft::fbs::append_checkpoint_chunk_request>
     {
     private:
       uint64_t request_id_ = 0;
@@ -1545,48 +1545,48 @@ simple_configuration_description_builder to()
 	bld->add_last_checkpoint_header(last_checkpoint_header_);
 	bld->add_checkpoint_done(checkpoint_done_);
       }
-      append_checkpoint_chunk_builder & request_id(uint64_t val)
+      append_checkpoint_chunk_request_builder & request_id(uint64_t val)
       {
 	request_id_ = val;
 	return *this;
       }
-      append_checkpoint_chunk_builder & recipient_id(uint64_t val)
+      append_checkpoint_chunk_request_builder & recipient_id(uint64_t val)
       {
 	recipient_id_ = val;
 	return *this;
       }
-      append_checkpoint_chunk_builder & term_number(uint64_t val)
+      append_checkpoint_chunk_request_builder & term_number(uint64_t val)
       {
 	term_number_ = val;
 	return *this;
       }
-      append_checkpoint_chunk_builder & leader_id(uint64_t val)
+      append_checkpoint_chunk_request_builder & leader_id(uint64_t val)
       {
 	leader_id_ = val;
 	return *this;
       }
-      append_checkpoint_chunk_builder & checkpoint_begin(uint64_t val)
+      append_checkpoint_chunk_request_builder & checkpoint_begin(uint64_t val)
       {
 	checkpoint_begin_ = val;
 	return *this;
       }
-      append_checkpoint_chunk_builder & checkpoint_end(uint64_t val)
+      append_checkpoint_chunk_request_builder & checkpoint_end(uint64_t val)
       {
 	checkpoint_end_ = val;
 	return *this;
       }
-      append_checkpoint_chunk_builder & checkpoint_done(bool val)
+      append_checkpoint_chunk_request_builder & checkpoint_done(bool val)
       {
 	checkpoint_done_ = val;
 	return *this;
       }
-      append_checkpoint_chunk_builder & data(raft::slice && val)
+      append_checkpoint_chunk_request_builder & data(raft::slice && val)
       {
 	data_ = fbb().CreateVector(raft::slice::buffer_cast<const uint8_t *>(val),
 				   raft::slice::buffer_size(val));
 	return *this;
       }
-      append_checkpoint_chunk_builder & last_checkpoint_header(::flatbuffers::Offset<raft::fbs::checkpoint_header> val)
+      append_checkpoint_chunk_request_builder & last_checkpoint_header(::flatbuffers::Offset<raft::fbs::checkpoint_header> val)
       {
 	last_checkpoint_header_ = val;
 	return *this;
@@ -1887,7 +1887,7 @@ simple_configuration_description_builder to()
       }	
     };
 
-    class linearizable_command_builder : public log_entry_command_builder_base<linearizable_command_builder, raft::fbs::linearizable_command>
+    class linearizable_command_request_builder : public log_entry_command_builder_base<linearizable_command_request_builder, raft::fbs::linearizable_command_request>
     {
     private:
       uint64_t session_id_ = 0;
@@ -1907,25 +1907,25 @@ simple_configuration_description_builder to()
 	bld->add_command(command_);
       }	
 
-      linearizable_command_builder & session_id(uint64_t val)
+      linearizable_command_request_builder & session_id(uint64_t val)
       {
 	session_id_ = val;
 	return *this;
       }
 
-      linearizable_command_builder & first_unacknowledged_sequence_number(uint64_t val)
+      linearizable_command_request_builder & first_unacknowledged_sequence_number(uint64_t val)
       {
 	first_unacknowledged_sequence_number_ = val;
 	return *this;
       }
 
-      linearizable_command_builder & sequence_number(uint64_t val)
+      linearizable_command_request_builder & sequence_number(uint64_t val)
       {
 	sequence_number_ = val;
 	return *this;
       }
 
-      linearizable_command_builder & command(raft::slice && val)
+      linearizable_command_request_builder & command(raft::slice && val)
       {
 	command_ = fbb().CreateString(raft::slice::buffer_cast<const char *>(val),
 				      raft::slice::buffer_size(val));
@@ -1936,12 +1936,12 @@ simple_configuration_description_builder to()
     class builders
     {
     public:
-      typedef request_vote_builder request_vote_builder_type; 
+      typedef vote_request_builder vote_request_builder_type; 
       typedef vote_response_builder vote_response_builder_type;
       typedef client_response_builder client_response_builder_type;
-      typedef append_entry_builder append_entry_builder_type;
-      typedef append_response_builder append_response_builder_type;
-      typedef append_checkpoint_chunk_builder append_checkpoint_chunk_builder_type;
+      typedef append_entry_request_builder append_entry_request_builder_type;
+      typedef append_entry_response_builder append_entry_response_builder_type;
+      typedef append_checkpoint_chunk_request_builder append_checkpoint_chunk_request_builder_type;
       typedef append_checkpoint_chunk_response_builder append_checkpoint_chunk_response_builder_type;
       typedef set_configuration_request_builder set_configuration_request_builder_type;
       typedef set_configuration_response_builder set_configuration_response_builder_type;
@@ -1950,7 +1950,7 @@ simple_configuration_description_builder to()
       typedef open_session_response_builder open_session_response_builder_type;
       typedef close_session_request_builder close_session_request_builder_type;
       typedef close_session_response_builder close_session_response_builder_type;
-      typedef linearizable_command_builder linearizable_command_builder_type;
+      typedef linearizable_command_request_builder linearizable_command_request_builder_type;
     };
   }
 }

@@ -18,8 +18,8 @@ namespace raft {
     public:
       typedef _Messages messages_type;
       typedef typename messages_type::client_response_traits_type::arg_type client_response_arg_type;
-      typedef typename messages_type::linearizable_command_traits_type linearizable_command_traits_type;
-      typedef typename messages_type::linearizable_command_traits_type::const_view_type linearizable_command_const_view_type;
+      typedef typename messages_type::linearizable_command_request_traits_type linearizable_command_request_traits_type;
+      typedef typename messages_type::linearizable_command_request_traits_type::const_view_type linearizable_command_request_const_view_type;
 
     private:
 
@@ -60,10 +60,10 @@ namespace raft {
       {
         return last_command_received_cluster_time_;
       }
-      bool apply(linearizable_command_const_view_type cmd, uint64_t cluster_time)
+      bool apply(linearizable_command_request_const_view_type cmd, uint64_t cluster_time)
       {
-        first_unacknowledged_sequence_number(linearizable_command_traits_type::first_unacknowledged_sequence_number(cmd));
-        auto sequence_number = linearizable_command_traits_type::sequence_number(cmd);
+        first_unacknowledged_sequence_number(linearizable_command_request_traits_type::first_unacknowledged_sequence_number(cmd));
+        auto sequence_number = linearizable_command_request_traits_type::sequence_number(cmd);
         if (sequence_number < first_unacknowledged_sequence_number_) {
           // This command has been acknowledged a fortiori has already been applied
           return false;
@@ -174,8 +174,8 @@ namespace raft {
       typedef typename messages_type::log_entry_traits_type::const_arg_type log_entry_const_arg_type;
       typedef typename messages_type::log_entry_traits_type log_entry_traits_type;
       typedef typename messages_type::log_entry_command_traits_type log_entry_command_traits_type;
-      typedef typename messages_type::linearizable_command_traits_type linearizable_command_traits_type;
-      typedef typename messages_type::linearizable_command_traits_type::arg_type linearizable_command_arg_type;
+      typedef typename messages_type::linearizable_command_request_traits_type linearizable_command_request_traits_type;
+      typedef typename messages_type::linearizable_command_request_traits_type::arg_type linearizable_command_request_arg_type;
       typedef typename messages_type::client_response_traits_type client_response_traits_type;
       typedef typename builders_type::client_response_builder_type client_response_builder;
       typedef typename messages_type::open_session_request_traits_type open_session_request_traits_type;
@@ -340,8 +340,8 @@ namespace raft {
           typename serialization_type::log_entry_command_view_deserialization_type cmd_view(le);
           if (log_entry_command_traits_type::is_linearizable_command(cmd_view.view())) {
               auto lcmd = log_entry_command_traits_type::linearizable_command(cmd_view.view());
-              auto session_id = linearizable_command_traits_type::session_id(lcmd);
-              auto sequence_number = linearizable_command_traits_type::sequence_number(lcmd);
+              auto session_id = linearizable_command_request_traits_type::session_id(lcmd);
+              auto sequence_number = linearizable_command_request_traits_type::sequence_number(lcmd);
               auto sess_it = sessions_.find(session_id);
               if (sessions_.end() != sess_it) {
                 // Check if already applied?
@@ -460,11 +460,11 @@ namespace raft {
       }
 
       void on_linearizable_command(const endpoint_type & ep,
-                                   linearizable_command_arg_type && req,
+                                   linearizable_command_request_arg_type && req,
                                    std::chrono::time_point<std::chrono::steady_clock> clock_now)
       {
-        BOOST_LOG_TRIVIAL(debug) << "[session_manager::on_linearizable_command] Request to invoke linearizable command on session with id " << linearizable_command_traits_type::session_id(req)
-                                 << " sequence number " << linearizable_command_traits_type::session_id(req);
+        BOOST_LOG_TRIVIAL(debug) << "[session_manager::on_linearizable_command] Request to invoke linearizable command on session with id " << linearizable_command_request_traits_type::session_id(req)
+                                 << " sequence number " << linearizable_command_request_traits_type::session_id(req);
         auto buf = serialization_type::serialize_log_entry_command(std::move(req));
         auto ret = protocol_.on_command(std::move(buf), clock_now);
         if (messages_type::client_result_success() == std::get<0>(ret)) {

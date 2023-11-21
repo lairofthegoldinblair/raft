@@ -104,7 +104,7 @@ namespace raft {
       typedef typename messages_type::open_session_response_traits_type open_session_response_traits;
       typedef typename builders_type::close_session_request_builder_type close_session_request_builder;
       typedef typename messages_type::close_session_response_traits_type close_session_response_traits;
-      typedef typename builders_type::linearizable_command_builder_type linearizable_command_builder;
+      typedef typename builders_type::linearizable_command_request_builder_type linearizable_command_request_builder;
       typedef typename messages_type::client_response_traits_type client_response_traits;
       typedef typename messages_type::client_result_type client_result_type;
       typedef raft::asio::serialization<messages_type, _Serialization> serialization_type;
@@ -260,7 +260,7 @@ namespace raft {
             {
               boost::timer::cpu_timer timer;
               timer.start();
-              linearizable_command_builder bld;
+              linearizable_command_request_builder bld;
               auto msg = bld.session_id(session_id).first_unacknowledged_sequence_number(first_unacked_seq_no).sequence_number(seq_no).command(std::move(cmd)).finish();
               auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
               boost::system::error_code ec;

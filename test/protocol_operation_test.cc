@@ -48,21 +48,21 @@ template<typename _TestType>
 struct RaftProtocolOperationTestFixture
 {
   typedef RaftProtocolOperationTestFixture<_TestType> this_type;
-  typedef typename _TestType::messages_type::request_vote_traits_type request_vote_traits;
-  typedef typename _TestType::builders_type::request_vote_builder_type request_vote_builder;
-  typedef typename _TestType::messages_type::request_vote_traits_type::arg_type request_vote_arg_type;
+  typedef typename _TestType::messages_type::vote_request_traits_type vote_request_traits;
+  typedef typename _TestType::builders_type::vote_request_builder_type vote_request_builder;
+  typedef typename _TestType::messages_type::vote_request_traits_type::arg_type vote_request_arg_type;
   typedef typename _TestType::messages_type::vote_response_traits_type vote_response_traits;
   typedef typename _TestType::builders_type::vote_response_builder_type vote_response_builder;
   typedef typename _TestType::messages_type::vote_response_traits_type::arg_type vote_response_arg_type;
-  typedef typename _TestType::messages_type::append_entry_traits_type append_entry_traits;
-  typedef typename _TestType::builders_type::append_entry_builder_type append_entry_builder;
-  typedef typename _TestType::messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
+  typedef typename _TestType::messages_type::append_entry_request_traits_type append_entry_request_traits;
+  typedef typename _TestType::builders_type::append_entry_request_builder_type append_entry_request_builder;
+  typedef typename _TestType::messages_type::append_entry_request_traits_type::arg_type append_entry_request_arg_type;
   typedef typename _TestType::messages_type::append_entry_response_traits_type append_entry_response_traits;
-  typedef typename _TestType::builders_type::append_response_builder_type append_entry_response_builder;
+  typedef typename _TestType::builders_type::append_entry_response_builder_type append_entry_response_builder;
   typedef typename _TestType::messages_type::append_entry_response_traits_type::arg_type append_entry_response_arg_type;
-  typedef typename _TestType::messages_type::append_checkpoint_chunk_traits_type append_checkpoint_chunk_traits;
-  typedef typename _TestType::builders_type::append_checkpoint_chunk_builder_type append_checkpoint_chunk_builder;
-  typedef typename _TestType::messages_type::append_checkpoint_chunk_traits_type::arg_type append_checkpoint_chunk_arg_type;
+  typedef typename _TestType::messages_type::append_checkpoint_chunk_request_traits_type append_checkpoint_chunk_request_traits;
+  typedef typename _TestType::builders_type::append_checkpoint_chunk_request_builder_type append_checkpoint_chunk_request_builder;
+  typedef typename _TestType::messages_type::append_checkpoint_chunk_request_traits_type::arg_type append_checkpoint_chunk_request_arg_type;
   typedef typename _TestType::messages_type::append_checkpoint_chunk_response_traits_type append_checkpoint_chunk_response_traits;
   typedef typename _TestType::builders_type::append_checkpoint_chunk_response_builder_type append_checkpoint_chunk_response_builder;
   typedef typename _TestType::messages_type::append_checkpoint_chunk_response_traits_type::arg_type append_checkpoint_chunk_response_arg_type;
@@ -73,46 +73,46 @@ struct RaftProtocolOperationTestFixture
   typedef typename _TestType::messages_type::close_session_request_traits_type close_session_request_traits;
   typedef typename _TestType::builders_type::close_session_request_builder_type close_session_request_builder;
   typedef typename _TestType::messages_type::close_session_request_traits_type::arg_type close_session_request_arg_type;
-  typedef typename _TestType::messages_type::linearizable_command_traits_type linearizable_command_traits;
-  typedef typename _TestType::builders_type::linearizable_command_builder_type linearizable_command_builder;
-  typedef typename _TestType::messages_type::linearizable_command_traits_type::arg_type linearizable_command_arg_type;
+  typedef typename _TestType::messages_type::linearizable_command_request_traits_type linearizable_command_request_traits;
+  typedef typename _TestType::builders_type::linearizable_command_request_builder_type linearizable_command_request_builder;
+  typedef typename _TestType::messages_type::linearizable_command_request_traits_type::arg_type linearizable_command_request_arg_type;
 
   typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
 
   struct test_protocol
   {
     typedef std::size_t client_endpoint_type;
-    request_vote_arg_type request_vote_message;
+    vote_request_arg_type vote_request_message;
     vote_response_arg_type vote_response_message;
-    append_entry_arg_type append_entry_message;
+    append_entry_request_arg_type append_entry_request_message;
     append_entry_response_arg_type append_entry_response_message;
-    append_checkpoint_chunk_arg_type append_checkpoint_chunk_message;
+    append_checkpoint_chunk_request_arg_type append_checkpoint_chunk_request_message;
     append_checkpoint_chunk_response_arg_type append_checkpoint_chunk_response_message;
     std::map<client_endpoint_type, std::chrono::time_point<std::chrono::steady_clock>> open_session_request_messages;
     std::map<client_endpoint_type, std::pair<close_session_request_arg_type, std::chrono::time_point<std::chrono::steady_clock>>> close_session_request_messages;
-    std::map<client_endpoint_type, std::pair<linearizable_command_arg_type, std::chrono::time_point<std::chrono::steady_clock>>> linearizable_command_messages;
+    std::map<client_endpoint_type, std::pair<linearizable_command_request_arg_type, std::chrono::time_point<std::chrono::steady_clock>>> linearizable_command_request_messages;
     std::map<uint64_t, std::chrono::time_point<std::chrono::steady_clock>> log_sync_messages;
     std::set<std::chrono::time_point<std::chrono::steady_clock>> log_header_sync_messages;
 
-    void on_request_vote(request_vote_arg_type && msg)
+    void on_vote_request(vote_request_arg_type && msg)
     {
-      request_vote_message = std::move(msg);
+      vote_request_message = std::move(msg);
     }
     void on_vote_response(vote_response_arg_type && msg)
     {
       vote_response_message = std::move(msg);
     }
-    void on_append_entry(append_entry_arg_type && msg)
+    void on_append_entry_request(append_entry_request_arg_type && msg)
     {
-      append_entry_message = std::move(msg);
+      append_entry_request_message = std::move(msg);
     }
-    void on_append_response(append_entry_response_arg_type && msg)
+    void on_append_entry_response(append_entry_response_arg_type && msg)
     {
       append_entry_response_message = std::move(msg);
     }
-    void on_append_checkpoint_chunk(append_checkpoint_chunk_arg_type && msg)
+    void on_append_checkpoint_chunk_request(append_checkpoint_chunk_request_arg_type && msg)
     {
-      append_checkpoint_chunk_message = std::move(msg);
+      append_checkpoint_chunk_request_message = std::move(msg);
     }
     void on_append_checkpoint_chunk_response(append_checkpoint_chunk_response_arg_type && msg)
     {
@@ -131,10 +131,10 @@ struct RaftProtocolOperationTestFixture
       close_session_request_messages[ep] = std::make_pair(std::move(req), clock_now);
     }
     void on_linearizable_command(const client_endpoint_type & ep,
-                                 linearizable_command_arg_type && req,
+                                 linearizable_command_request_arg_type && req,
                                  std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
-      linearizable_command_messages[ep] = std::make_pair(std::move(req), clock_now);
+      linearizable_command_request_messages[ep] = std::make_pair(std::move(req), clock_now);
     }
     void on_log_sync(uint64_t index, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
@@ -148,29 +148,29 @@ struct RaftProtocolOperationTestFixture
   
   typedef raft::util::protocol_operation<test_protocol> protocol_operation_type;
   typedef typename raft::util::protocol_operation<test_protocol>::queue_type protocol_operation_queue_type;
-  typedef raft::util::request_vote_operation<typename _TestType::messages_type, test_protocol> request_vote_operation_type;
+  typedef raft::util::vote_request_operation<typename _TestType::messages_type, test_protocol> vote_request_operation_type;
   typedef raft::util::vote_response_operation<typename _TestType::messages_type, test_protocol> vote_response_operation_type;
-  typedef raft::util::append_entry_operation<typename _TestType::messages_type, test_protocol> append_entry_operation_type;
+  typedef raft::util::append_entry_request_operation<typename _TestType::messages_type, test_protocol> append_entry_request_operation_type;
   typedef raft::util::append_entry_response_operation<typename _TestType::messages_type, test_protocol> append_entry_response_operation_type;
-  typedef raft::util::append_checkpoint_chunk_operation<typename _TestType::messages_type, test_protocol> append_checkpoint_chunk_operation_type;
+  typedef raft::util::append_checkpoint_chunk_request_operation<typename _TestType::messages_type, test_protocol> append_checkpoint_chunk_request_operation_type;
   typedef raft::util::append_checkpoint_chunk_response_operation<typename _TestType::messages_type, test_protocol> append_checkpoint_chunk_response_operation_type;
 
   typedef raft::util::open_session_request_operation<typename _TestType::messages_type, test_protocol, typename test_protocol::client_endpoint_type> open_session_request_operation_type;
   typedef raft::util::close_session_request_operation<typename _TestType::messages_type, test_protocol, typename test_protocol::client_endpoint_type> close_session_request_operation_type;
-  typedef raft::util::linearizable_command_operation<typename _TestType::messages_type, test_protocol, typename test_protocol::client_endpoint_type> linearizable_command_operation_type;
+  typedef raft::util::linearizable_command_request_operation<typename _TestType::messages_type, test_protocol, typename test_protocol::client_endpoint_type> linearizable_command_request_operation_type;
 
   typedef raft::util::log_sync_operation<test_protocol> log_sync_operation_type;
   typedef raft::util::log_header_sync_operation<test_protocol> log_header_sync_operation_type;
 
-  request_vote_operation_type * create_request_vote_operation(uint64_t request_id)
+  vote_request_operation_type * create_vote_request_operation(uint64_t request_id)
   {
-    return new request_vote_operation_type(request_vote_builder().recipient_id(99).term_number(1).candidate_id(887).request_id(request_id).last_log_index(888542).last_log_term(16).finish());
+    return new vote_request_operation_type(vote_request_builder().recipient_id(99).term_number(1).candidate_id(887).request_id(request_id).last_log_index(888542).last_log_term(16).finish());
   }
   vote_response_operation_type * create_vote_response_operation(uint64_t request_id)
   {
     return new vote_response_operation_type(vote_response_builder().peer_id(1).term_number(1).request_term_number(1).request_id(request_id).granted(false).finish());
   }
-  append_entry_operation_type * create_append_entry_operation(uint64_t request_id)
+  append_entry_request_operation_type * create_append_entry_request_operation(uint64_t request_id)
   {
     log_entry_builder leb1;
     {	
@@ -182,18 +182,18 @@ struct RaftProtocolOperationTestFixture
     auto le2 = log_entry_builder().term(93443434542).data("fjasdjfa;sldfjalsdjfldskfjsdlkfjasldfjl").finish();
 
     uint64_t recipient_id = 9032345;
-    auto msg = append_entry_builder().request_id(request_id).recipient_id(recipient_id).term_number(99234).leader_id(23445234).previous_log_index(734725345).previous_log_term(3492385345).leader_commit_index(3483458).entry(le1).entry(le2).finish();
-    return new append_entry_operation_type(std::move(msg));
+    auto msg = append_entry_request_builder().request_id(request_id).recipient_id(recipient_id).term_number(99234).leader_id(23445234).previous_log_index(734725345).previous_log_term(3492385345).leader_commit_index(3483458).entry(le1).entry(le2).finish();
+    return new append_entry_request_operation_type(std::move(msg));
   }
   append_entry_response_operation_type * create_append_entry_response_operation(uint64_t request_id)
   {
     auto msg = append_entry_response_builder().recipient_id(222).term_number(10).request_term_number(1).request_id(request_id).begin_index(236).last_index(851).success(false).finish();
     return new append_entry_response_operation_type(std::move(msg));    
   }
-  append_checkpoint_chunk_operation_type * create_append_checkpoint_chunk_operation(uint64_t request_id, const std::string & data_str)
+  append_checkpoint_chunk_request_operation_type * create_append_checkpoint_chunk_request_operation(uint64_t request_id, const std::string & data_str)
   {
-    auto msg = append_checkpoint_chunk_builder().recipient_id(222).term_number(10).leader_id(1).request_id(request_id).checkpoint_begin(236).checkpoint_end(8643).data(raft::slice::create(data_str)).checkpoint_done(false).finish();
-    return new append_checkpoint_chunk_operation_type(std::move(msg));    
+    auto msg = append_checkpoint_chunk_request_builder().recipient_id(222).term_number(10).leader_id(1).request_id(request_id).checkpoint_begin(236).checkpoint_end(8643).data(raft::slice::create(data_str)).checkpoint_done(false).finish();
+    return new append_checkpoint_chunk_request_operation_type(std::move(msg));    
   }  
   append_checkpoint_chunk_response_operation_type * create_append_checkpoint_chunk_response_operation(uint64_t request_id)
   {
@@ -211,10 +211,10 @@ struct RaftProtocolOperationTestFixture
     auto msg = close_session_request_builder().session_id(session_id).finish();
     return new close_session_request_operation_type(ep, std::move(msg), clock_now);
   }
-  linearizable_command_operation_type * create_linearizable_command_operation(const std::size_t & ep, uint64_t session_id, const std::string & command_str, std::chrono::time_point<std::chrono::steady_clock> clock_now)
+  linearizable_command_request_operation_type * create_linearizable_command_request_operation(const std::size_t & ep, uint64_t session_id, const std::string & command_str, std::chrono::time_point<std::chrono::steady_clock> clock_now)
   {
-    auto msg = linearizable_command_builder().session_id(session_id).first_unacknowledged_sequence_number(62355342).sequence_number(823545).command(raft::slice::create(command_str)).finish();
-    return new linearizable_command_operation_type(ep, std::move(msg), clock_now);
+    auto msg = linearizable_command_request_builder().session_id(session_id).first_unacknowledged_sequence_number(62355342).sequence_number(823545).command(raft::slice::create(command_str)).finish();
+    return new linearizable_command_request_operation_type(ep, std::move(msg), clock_now);
   }
   
   log_sync_operation_type * create_log_sync_operation(uint64_t index, std::chrono::time_point<std::chrono::steady_clock> clock_now)
@@ -230,24 +230,24 @@ struct RaftProtocolOperationTestFixture
   {
     uint64_t request_id = 192345;
     {  
-      protocol_operation_type * op = create_request_vote_operation(request_id);
+      protocol_operation_type * op = create_vote_request_operation(request_id);
       op->destroy();
     }
     {  
       test_protocol proto;
-      protocol_operation_type * op = create_request_vote_operation(request_id);
+      protocol_operation_type * op = create_vote_request_operation(request_id);
       op->complete(&proto);
-      BOOST_CHECK_EQUAL(99U, request_vote_traits::recipient_id(proto.request_vote_message));
-      BOOST_CHECK_EQUAL(1U, request_vote_traits::term_number(proto.request_vote_message));
-      BOOST_CHECK_EQUAL(887U, request_vote_traits::candidate_id(proto.request_vote_message));
-      BOOST_CHECK_EQUAL(request_id, request_vote_traits::request_id(proto.request_vote_message));
-      BOOST_CHECK_EQUAL(888542U, request_vote_traits::last_log_index(proto.request_vote_message));
-      BOOST_CHECK_EQUAL(16U, request_vote_traits::last_log_term(proto.request_vote_message));
+      BOOST_CHECK_EQUAL(99U, vote_request_traits::recipient_id(proto.vote_request_message));
+      BOOST_CHECK_EQUAL(1U, vote_request_traits::term_number(proto.vote_request_message));
+      BOOST_CHECK_EQUAL(887U, vote_request_traits::candidate_id(proto.vote_request_message));
+      BOOST_CHECK_EQUAL(request_id, vote_request_traits::request_id(proto.vote_request_message));
+      BOOST_CHECK_EQUAL(888542U, vote_request_traits::last_log_index(proto.vote_request_message));
+      BOOST_CHECK_EQUAL(16U, vote_request_traits::last_log_term(proto.vote_request_message));
     }
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_request_vote_operation(request_id + i);
+        protocol_operation_type * op = create_vote_request_operation(request_id + i);
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
@@ -256,12 +256,12 @@ struct RaftProtocolOperationTestFixture
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
-        BOOST_CHECK_EQUAL(99U, request_vote_traits::recipient_id(proto.request_vote_message));
-        BOOST_CHECK_EQUAL(1U, request_vote_traits::term_number(proto.request_vote_message));
-        BOOST_CHECK_EQUAL(887U, request_vote_traits::candidate_id(proto.request_vote_message));
-        BOOST_CHECK_EQUAL(request_id + i, request_vote_traits::request_id(proto.request_vote_message));
-        BOOST_CHECK_EQUAL(888542U, request_vote_traits::last_log_index(proto.request_vote_message));
-        BOOST_CHECK_EQUAL(16U, request_vote_traits::last_log_term(proto.request_vote_message));
+        BOOST_CHECK_EQUAL(99U, vote_request_traits::recipient_id(proto.vote_request_message));
+        BOOST_CHECK_EQUAL(1U, vote_request_traits::term_number(proto.vote_request_message));
+        BOOST_CHECK_EQUAL(887U, vote_request_traits::candidate_id(proto.vote_request_message));
+        BOOST_CHECK_EQUAL(request_id + i, vote_request_traits::request_id(proto.vote_request_message));
+        BOOST_CHECK_EQUAL(888542U, vote_request_traits::last_log_index(proto.vote_request_message));
+        BOOST_CHECK_EQUAL(16U, vote_request_traits::last_log_term(proto.vote_request_message));
       }
       BOOST_CHECK(op_queue.empty());
     }
@@ -308,21 +308,21 @@ struct RaftProtocolOperationTestFixture
   {
     uint64_t request_id = 192345;
     {  
-      protocol_operation_type * op = create_append_entry_operation(request_id);
+      protocol_operation_type * op = create_append_entry_request_operation(request_id);
       op->destroy();
     }
     {  
       test_protocol proto;
-      protocol_operation_type * op = create_append_entry_operation(request_id);
+      protocol_operation_type * op = create_append_entry_request_operation(request_id);
       op->complete(&proto);
-      BOOST_CHECK_EQUAL(request_id, append_entry_traits::request_id(proto.append_entry_message));
-      BOOST_CHECK_EQUAL(9032345U, append_entry_traits::recipient_id(proto.append_entry_message));
-      BOOST_CHECK_EQUAL(2U, append_entry_traits::num_entries(proto.append_entry_message));
+      BOOST_CHECK_EQUAL(request_id, append_entry_request_traits::request_id(proto.append_entry_request_message));
+      BOOST_CHECK_EQUAL(9032345U, append_entry_request_traits::recipient_id(proto.append_entry_request_message));
+      BOOST_CHECK_EQUAL(2U, append_entry_request_traits::num_entries(proto.append_entry_request_message));
     }
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_append_entry_operation(request_id + i);
+        protocol_operation_type * op = create_append_entry_request_operation(request_id + i);
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
@@ -331,9 +331,9 @@ struct RaftProtocolOperationTestFixture
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
-        BOOST_CHECK_EQUAL(request_id+i, append_entry_traits::request_id(proto.append_entry_message));
-        BOOST_CHECK_EQUAL(9032345U, append_entry_traits::recipient_id(proto.append_entry_message));
-        BOOST_CHECK_EQUAL(2U, append_entry_traits::num_entries(proto.append_entry_message));
+        BOOST_CHECK_EQUAL(request_id+i, append_entry_request_traits::request_id(proto.append_entry_request_message));
+        BOOST_CHECK_EQUAL(9032345U, append_entry_request_traits::recipient_id(proto.append_entry_request_message));
+        BOOST_CHECK_EQUAL(2U, append_entry_request_traits::num_entries(proto.append_entry_request_message));
       }
       BOOST_CHECK(op_queue.empty());
     }
@@ -385,26 +385,26 @@ struct RaftProtocolOperationTestFixture
     uint64_t request_id = 192345;
     std::string data_str("This is some checkpoint chunk data");
     {  
-      protocol_operation_type * op = create_append_checkpoint_chunk_operation(request_id, data_str);
+      protocol_operation_type * op = create_append_checkpoint_chunk_request_operation(request_id, data_str);
       op->destroy();
     }
     {  
       test_protocol proto;
-      protocol_operation_type * op = create_append_checkpoint_chunk_operation(request_id, data_str);
+      protocol_operation_type * op = create_append_checkpoint_chunk_request_operation(request_id, data_str);
       op->complete(&proto);
-      BOOST_CHECK_EQUAL(222U, append_checkpoint_chunk_traits::recipient_id(proto.append_checkpoint_chunk_message));
-      BOOST_CHECK_EQUAL(10U, append_checkpoint_chunk_traits::term_number(proto.append_checkpoint_chunk_message));
-      BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::leader_id(proto.append_checkpoint_chunk_message));
-      BOOST_CHECK_EQUAL(request_id, append_checkpoint_chunk_traits::request_id(proto.append_checkpoint_chunk_message));
-      BOOST_CHECK_EQUAL(236U, append_checkpoint_chunk_traits::checkpoint_begin(proto.append_checkpoint_chunk_message));
-      BOOST_CHECK_EQUAL(8643U, append_checkpoint_chunk_traits::checkpoint_end(proto.append_checkpoint_chunk_message));
-      BOOST_CHECK_EQUAL(0, string_slice_compare(data_str, append_checkpoint_chunk_traits::data(proto.append_checkpoint_chunk_message)));
-      BOOST_CHECK(!append_checkpoint_chunk_traits::checkpoint_done(proto.append_checkpoint_chunk_message));
+      BOOST_CHECK_EQUAL(222U, append_checkpoint_chunk_request_traits::recipient_id(proto.append_checkpoint_chunk_request_message));
+      BOOST_CHECK_EQUAL(10U, append_checkpoint_chunk_request_traits::term_number(proto.append_checkpoint_chunk_request_message));
+      BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::leader_id(proto.append_checkpoint_chunk_request_message));
+      BOOST_CHECK_EQUAL(request_id, append_checkpoint_chunk_request_traits::request_id(proto.append_checkpoint_chunk_request_message));
+      BOOST_CHECK_EQUAL(236U, append_checkpoint_chunk_request_traits::checkpoint_begin(proto.append_checkpoint_chunk_request_message));
+      BOOST_CHECK_EQUAL(8643U, append_checkpoint_chunk_request_traits::checkpoint_end(proto.append_checkpoint_chunk_request_message));
+      BOOST_CHECK_EQUAL(0, string_slice_compare(data_str, append_checkpoint_chunk_request_traits::data(proto.append_checkpoint_chunk_request_message)));
+      BOOST_CHECK(!append_checkpoint_chunk_request_traits::checkpoint_done(proto.append_checkpoint_chunk_request_message));
     }
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_append_checkpoint_chunk_operation(request_id + i, data_str);
+        protocol_operation_type * op = create_append_checkpoint_chunk_request_operation(request_id + i, data_str);
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
@@ -413,14 +413,14 @@ struct RaftProtocolOperationTestFixture
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
-        BOOST_CHECK_EQUAL(222U, append_checkpoint_chunk_traits::recipient_id(proto.append_checkpoint_chunk_message));
-        BOOST_CHECK_EQUAL(10U, append_checkpoint_chunk_traits::term_number(proto.append_checkpoint_chunk_message));
-        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_traits::leader_id(proto.append_checkpoint_chunk_message));
-        BOOST_CHECK_EQUAL(request_id+i, append_checkpoint_chunk_traits::request_id(proto.append_checkpoint_chunk_message));
-        BOOST_CHECK_EQUAL(236U, append_checkpoint_chunk_traits::checkpoint_begin(proto.append_checkpoint_chunk_message));
-        BOOST_CHECK_EQUAL(8643U, append_checkpoint_chunk_traits::checkpoint_end(proto.append_checkpoint_chunk_message));
-        BOOST_CHECK_EQUAL(0, string_slice_compare(data_str, append_checkpoint_chunk_traits::data(proto.append_checkpoint_chunk_message)));
-        BOOST_CHECK(!append_checkpoint_chunk_traits::checkpoint_done(proto.append_checkpoint_chunk_message));
+        BOOST_CHECK_EQUAL(222U, append_checkpoint_chunk_request_traits::recipient_id(proto.append_checkpoint_chunk_request_message));
+        BOOST_CHECK_EQUAL(10U, append_checkpoint_chunk_request_traits::term_number(proto.append_checkpoint_chunk_request_message));
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::leader_id(proto.append_checkpoint_chunk_request_message));
+        BOOST_CHECK_EQUAL(request_id+i, append_checkpoint_chunk_request_traits::request_id(proto.append_checkpoint_chunk_request_message));
+        BOOST_CHECK_EQUAL(236U, append_checkpoint_chunk_request_traits::checkpoint_begin(proto.append_checkpoint_chunk_request_message));
+        BOOST_CHECK_EQUAL(8643U, append_checkpoint_chunk_request_traits::checkpoint_end(proto.append_checkpoint_chunk_request_message));
+        BOOST_CHECK_EQUAL(0, string_slice_compare(data_str, append_checkpoint_chunk_request_traits::data(proto.append_checkpoint_chunk_request_message)));
+        BOOST_CHECK(!append_checkpoint_chunk_request_traits::checkpoint_done(proto.append_checkpoint_chunk_request_message));
       }
       BOOST_CHECK(op_queue.empty());
     }
@@ -555,25 +555,25 @@ struct RaftProtocolOperationTestFixture
     uint64_t session_id = 723545234U;
     std::string command_str("This is a command string");
     {  
-      protocol_operation_type * op = create_linearizable_command_operation(endpoints[0], session_id, command_str, now);
+      protocol_operation_type * op = create_linearizable_command_request_operation(endpoints[0], session_id, command_str, now);
       op->destroy();
     }
     {  
       test_protocol proto;
-      protocol_operation_type * op = create_linearizable_command_operation(endpoints[0], session_id, command_str, now);
+      protocol_operation_type * op = create_linearizable_command_request_operation(endpoints[0], session_id, command_str, now);
       op->complete(&proto);
-      BOOST_CHECK_EQUAL(1U, proto.linearizable_command_messages.size());
-      BOOST_REQUIRE(proto.linearizable_command_messages.end() != proto.linearizable_command_messages.find(0));
-      BOOST_CHECK_EQUAL(session_id, linearizable_command_traits::session_id(proto.linearizable_command_messages.at(0).first));
-      BOOST_CHECK_EQUAL(62355342U, linearizable_command_traits::first_unacknowledged_sequence_number(proto.linearizable_command_messages.at(0).first));
-      BOOST_CHECK_EQUAL(823545U, linearizable_command_traits::sequence_number(proto.linearizable_command_messages.at(0).first));
-      BOOST_CHECK_EQUAL(0, string_slice_compare(command_str, linearizable_command_traits::command(proto.linearizable_command_messages.at(0).first)));
-      BOOST_CHECK(now == proto.linearizable_command_messages.at(0).second);
+      BOOST_CHECK_EQUAL(1U, proto.linearizable_command_request_messages.size());
+      BOOST_REQUIRE(proto.linearizable_command_request_messages.end() != proto.linearizable_command_request_messages.find(0));
+      BOOST_CHECK_EQUAL(session_id, linearizable_command_request_traits::session_id(proto.linearizable_command_request_messages.at(0).first));
+      BOOST_CHECK_EQUAL(62355342U, linearizable_command_request_traits::first_unacknowledged_sequence_number(proto.linearizable_command_request_messages.at(0).first));
+      BOOST_CHECK_EQUAL(823545U, linearizable_command_request_traits::sequence_number(proto.linearizable_command_request_messages.at(0).first));
+      BOOST_CHECK_EQUAL(0, string_slice_compare(command_str, linearizable_command_request_traits::command(proto.linearizable_command_request_messages.at(0).first)));
+      BOOST_CHECK(now == proto.linearizable_command_request_messages.at(0).second);
     }
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_linearizable_command_operation(endpoints[i], session_id, command_str, now + std::chrono::seconds(i));
+        protocol_operation_type * op = create_linearizable_command_request_operation(endpoints[i], session_id, command_str, now + std::chrono::seconds(i));
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
@@ -582,13 +582,13 @@ struct RaftProtocolOperationTestFixture
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
-        BOOST_CHECK_EQUAL(1U, proto.linearizable_command_messages.size());
-        BOOST_REQUIRE(proto.linearizable_command_messages.end() != proto.linearizable_command_messages.find(i));
-        BOOST_CHECK_EQUAL(session_id, linearizable_command_traits::session_id(proto.linearizable_command_messages.at(i).first));
-        BOOST_CHECK_EQUAL(62355342U, linearizable_command_traits::first_unacknowledged_sequence_number(proto.linearizable_command_messages.at(i).first));
-        BOOST_CHECK_EQUAL(823545U, linearizable_command_traits::sequence_number(proto.linearizable_command_messages.at(i).first));
-        BOOST_CHECK_EQUAL(0, string_slice_compare(command_str, linearizable_command_traits::command(proto.linearizable_command_messages.at(i).first)));
-        BOOST_CHECK(now+std::chrono::seconds(i) == proto.linearizable_command_messages.at(i).second);
+        BOOST_CHECK_EQUAL(1U, proto.linearizable_command_request_messages.size());
+        BOOST_REQUIRE(proto.linearizable_command_request_messages.end() != proto.linearizable_command_request_messages.find(i));
+        BOOST_CHECK_EQUAL(session_id, linearizable_command_request_traits::session_id(proto.linearizable_command_request_messages.at(i).first));
+        BOOST_CHECK_EQUAL(62355342U, linearizable_command_request_traits::first_unacknowledged_sequence_number(proto.linearizable_command_request_messages.at(i).first));
+        BOOST_CHECK_EQUAL(823545U, linearizable_command_request_traits::sequence_number(proto.linearizable_command_request_messages.at(i).first));
+        BOOST_CHECK_EQUAL(0, string_slice_compare(command_str, linearizable_command_request_traits::command(proto.linearizable_command_request_messages.at(i).first)));
+        BOOST_CHECK(now+std::chrono::seconds(i) == proto.linearizable_command_request_messages.at(i).second);
       }
       BOOST_CHECK(op_queue.empty());
     }
@@ -667,7 +667,7 @@ struct RaftProtocolOperationTestFixture
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
         protocol_operation_type * op = (0 == i%2) ?
-          static_cast<protocol_operation_type *>(create_request_vote_operation(request_id + i)) :
+          static_cast<protocol_operation_type *>(create_vote_request_operation(request_id + i)) :
           static_cast<protocol_operation_type *>(create_vote_response_operation(request_id + i));
         op_queue.push_back(*op);
       }
@@ -678,12 +678,12 @@ struct RaftProtocolOperationTestFixture
         op_queue.pop_front();
         front.complete(&proto);
         if (0 == i%2) {
-          BOOST_CHECK_EQUAL(99U, request_vote_traits::recipient_id(proto.request_vote_message));
-          BOOST_CHECK_EQUAL(1U, request_vote_traits::term_number(proto.request_vote_message));
-          BOOST_CHECK_EQUAL(887U, request_vote_traits::candidate_id(proto.request_vote_message));
-          BOOST_CHECK_EQUAL(request_id + i, request_vote_traits::request_id(proto.request_vote_message));
-          BOOST_CHECK_EQUAL(888542U, request_vote_traits::last_log_index(proto.request_vote_message));
-          BOOST_CHECK_EQUAL(16U, request_vote_traits::last_log_term(proto.request_vote_message));
+          BOOST_CHECK_EQUAL(99U, vote_request_traits::recipient_id(proto.vote_request_message));
+          BOOST_CHECK_EQUAL(1U, vote_request_traits::term_number(proto.vote_request_message));
+          BOOST_CHECK_EQUAL(887U, vote_request_traits::candidate_id(proto.vote_request_message));
+          BOOST_CHECK_EQUAL(request_id + i, vote_request_traits::request_id(proto.vote_request_message));
+          BOOST_CHECK_EQUAL(888542U, vote_request_traits::last_log_index(proto.vote_request_message));
+          BOOST_CHECK_EQUAL(16U, vote_request_traits::last_log_term(proto.vote_request_message));
         } else {
           BOOST_CHECK_EQUAL(1U, vote_response_traits::peer_id(proto.vote_response_message));
           BOOST_CHECK_EQUAL(1U, vote_response_traits::term_number(proto.vote_response_message));

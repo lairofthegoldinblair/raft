@@ -6,7 +6,7 @@
 
 namespace raft {
   namespace native { 
-    class little_request_vote
+    class little_vote_request
     {
     public:
       boost::endian::little_uint64_t request_id;
@@ -27,7 +27,7 @@ namespace raft {
       uint8_t granted;
     };
 
-    class little_append_entry
+    class little_append_entry_request
     {
     public:
       boost::endian::little_uint64_t request_id;
@@ -39,7 +39,7 @@ namespace raft {
       boost::endian::little_uint64_t leader_commit_index;
     };
 
-    class little_append_response
+    class little_append_entry_response
     {
     public:
       boost::endian::little_uint64_t recipient_id;
@@ -71,7 +71,7 @@ namespace raft {
       boost::endian::little_uint8_t result;
     };
 
-    class little_append_checkpoint_chunk
+    class little_append_checkpoint_chunk_request
     {
     public:
       boost::endian::little_uint64_t request_id;
@@ -121,7 +121,7 @@ namespace raft {
       uint8_t dummy;
     };
 
-    class little_linearizable_command
+    class little_linearizable_command_request
     {
     public:
       boost::endian::little_uint64_t session_id;
@@ -218,9 +218,9 @@ namespace raft {
         return sizeof(little_close_session_request);
       }
       
-      static std::size_t serialize_helper(const raft::native::linearizable_command & msg)
+      static std::size_t serialize_helper(const raft::native::linearizable_command_request & msg)
       {
-	return sizeof(little_linearizable_command) + serialize_helper(msg.command);
+	return sizeof(little_linearizable_command_request) + serialize_helper(msg.command);
       }
 
       static std::size_t serialize_helper(raft::mutable_slice && b, const std::string& str)
@@ -297,13 +297,13 @@ namespace raft {
         return sizeof(little_close_session_request);
       }
       
-      static std::size_t serialize_helper(raft::mutable_slice && b, const raft::native::linearizable_command & msg)
+      static std::size_t serialize_helper(raft::mutable_slice && b, const raft::native::linearizable_command_request & msg)
       {
-	auto * buf = reinterpret_cast<little_linearizable_command *>(b.data());
+	auto * buf = reinterpret_cast<little_linearizable_command_request *>(b.data());
 	buf->session_id = msg.session_id;
 	buf->first_unacknowledged_sequence_number = msg.first_unacknowledged_sequence_number;
 	buf->sequence_number = msg.sequence_number;
-	std::size_t sz = sizeof(little_linearizable_command);
+	std::size_t sz = sizeof(little_linearizable_command_request);
 	sz += serialize_helper(b+sz, msg.command);
         return sz;
       }
@@ -422,14 +422,14 @@ namespace raft {
         return sizeof(little_close_session_request);
       }
     
-      static std::size_t deserialize_helper(raft::slice && b, raft::native::messages::linearizable_command_type & msg)
+      static std::size_t deserialize_helper(raft::slice && b, raft::native::messages::linearizable_command_request_type & msg)
       {
-	BOOST_ASSERT(b.size() >= sizeof(little_linearizable_command));
-	auto buf = reinterpret_cast<const little_linearizable_command *>(b.data());
+	BOOST_ASSERT(b.size() >= sizeof(little_linearizable_command_request));
+	auto buf = reinterpret_cast<const little_linearizable_command_request *>(b.data());
 	msg.session_id = buf->session_id;
 	msg.first_unacknowledged_sequence_number = buf->first_unacknowledged_sequence_number;
 	msg.sequence_number = buf->sequence_number;
-	std::size_t sz = sizeof(little_linearizable_command);
+	std::size_t sz = sizeof(little_linearizable_command_request);
 	sz += deserialize_helper(b+sz, msg.command);
 	return sz;
       }
@@ -461,11 +461,11 @@ namespace raft {
     
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(const raft::native::log_entry<raft::native::configuration_description>& entry);
 	
-      static raft::native::messages::request_vote_type deserialize_request_vote(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      static raft::native::messages::vote_request_type deserialize_vote_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
       {
-	raft::native::messages::request_vote_type msg;
-	BOOST_ASSERT(b.first.size() >= sizeof(little_request_vote));
-	const little_request_vote * buf = reinterpret_cast<const little_request_vote *>(b.first.data());
+	raft::native::messages::vote_request_type msg;
+	BOOST_ASSERT(b.first.size() >= sizeof(little_vote_request));
+	const little_vote_request * buf = reinterpret_cast<const little_vote_request *>(b.first.data());
 	msg.set_request_id(buf->request_id);
 	msg.set_recipient_id(buf->recipient_id);
 	msg.set_term_number(buf->term_number);
@@ -488,11 +488,11 @@ namespace raft {
 	return msg;
       }
 
-      static raft::native::messages::append_entry_type deserialize_append_entry(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      static raft::native::messages::append_entry_request_type deserialize_append_entry_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
       {
-	raft::native::messages::append_entry_type msg;
-	BOOST_ASSERT(b.first.size() >= sizeof(little_append_entry));
-	const little_append_entry * buf = reinterpret_cast<const little_append_entry *>(b.first.data());
+	raft::native::messages::append_entry_request_type msg;
+	BOOST_ASSERT(b.first.size() >= sizeof(little_append_entry_request));
+	const little_append_entry_request * buf = reinterpret_cast<const little_append_entry_request *>(b.first.data());
 	msg.request_id = buf->request_id;
 	msg.recipient_id = buf->recipient_id;
 	msg.term_number = buf->term_number;
@@ -500,7 +500,7 @@ namespace raft {
 	msg.previous_log_index = buf->previous_log_index ;
 	msg.previous_log_term = buf->previous_log_term;
 	msg.leader_commit_index = buf->leader_commit_index;
-	std::size_t sz = sizeof(little_append_entry);
+	std::size_t sz = sizeof(little_append_entry_request);
 	sz += serialization::deserialize_helper(b.first+sz, msg.entry);
 	return msg;
       }
@@ -508,8 +508,8 @@ namespace raft {
       static raft::native::messages::append_entry_response_type deserialize_append_entry_response(std::pair<raft::slice, raft::util::call_on_delete> && b)
       {
 	raft::native::messages::append_entry_response_type msg;
-	BOOST_ASSERT(b.first.size() >= sizeof(little_append_response));
-	const little_append_response * buf = reinterpret_cast<const little_append_response *>(b.first.data());
+	BOOST_ASSERT(b.first.size() >= sizeof(little_append_entry_response));
+	const little_append_entry_response * buf = reinterpret_cast<const little_append_entry_response *>(b.first.data());
 	msg.recipient_id = buf->recipient_id;
 	msg.term_number = buf->term_number;
 	msg.request_term_number = buf->request_term_number;
@@ -555,11 +555,11 @@ namespace raft {
 	return msg;
       }
     
-      static raft::native::messages::append_checkpoint_chunk_type deserialize_append_checkpoint_chunk(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      static raft::native::messages::append_checkpoint_chunk_request_type deserialize_append_checkpoint_chunk_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
       {
-	raft::native::messages::append_checkpoint_chunk_type msg;
-	BOOST_ASSERT(b.first.size() >= sizeof(little_append_checkpoint_chunk));
-	auto buf = reinterpret_cast<const little_append_checkpoint_chunk *>(b.first.data());
+	raft::native::messages::append_checkpoint_chunk_request_type msg;
+	BOOST_ASSERT(b.first.size() >= sizeof(little_append_checkpoint_chunk_request));
+	auto buf = reinterpret_cast<const little_append_checkpoint_chunk_request *>(b.first.data());
 	msg.request_id = buf->request_id;
 	msg.recipient_id = buf->recipient_id;
 	msg.term_number= buf->term_number;
@@ -571,7 +571,7 @@ namespace raft {
 	msg.checkpoint_begin = buf->checkpoint_begin;
 	msg.checkpoint_end = buf->checkpoint_end;
 	msg.checkpoint_done = buf->checkpoint_done != 0;
-	std::size_t sz = sizeof(little_append_checkpoint_chunk);
+	std::size_t sz = sizeof(little_append_checkpoint_chunk_request);
 	sz += deserialize_helper(b.first+sz, msg.last_checkpoint_header.configuration.description);
 	sz += deserialize_helper(b.first+sz, msg.data);
 	return msg;
@@ -626,29 +626,29 @@ namespace raft {
 	return msg;
       }
     
-      static raft::native::messages::linearizable_command_type deserialize_linearizable_command(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      static raft::native::messages::linearizable_command_request_type deserialize_linearizable_command_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
       {
-	raft::native::messages::linearizable_command_type msg;
-	BOOST_ASSERT(b.first.size() >= sizeof(little_linearizable_command));
-	auto buf = reinterpret_cast<const little_linearizable_command *>(b.first.data());
+	raft::native::messages::linearizable_command_request_type msg;
+	BOOST_ASSERT(b.first.size() >= sizeof(little_linearizable_command_request));
+	auto buf = reinterpret_cast<const little_linearizable_command_request *>(b.first.data());
 	msg.session_id = buf->session_id;
 	msg.first_unacknowledged_sequence_number = buf->first_unacknowledged_sequence_number;
 	msg.sequence_number = buf->sequence_number;
-	std::size_t sz = sizeof(little_linearizable_command);
+	std::size_t sz = sizeof(little_linearizable_command_request);
 	sz += deserialize_helper(b.first+sz, msg.command);
 	return msg;
       }
     
-      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::request_vote_type && msg)
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::vote_request_type && msg)
       {
-	auto buf = new little_request_vote();
-	buf->request_id = raft::native::messages::request_vote_traits_type::request_id(msg);
-	buf->recipient_id = raft::native::messages::request_vote_traits_type::recipient_id(msg);
-	buf->term_number = raft::native::messages::request_vote_traits_type::term_number(msg);
-	buf->candidate_id = raft::native::messages::request_vote_traits_type::candidate_id(msg);
-	buf->last_log_index = raft::native::messages::request_vote_traits_type::last_log_index(msg);
-	buf->last_log_term = raft::native::messages::request_vote_traits_type::last_log_term(msg);
-	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_request_vote)),
+	auto buf = new little_vote_request();
+	buf->request_id = raft::native::messages::vote_request_traits_type::request_id(msg);
+	buf->recipient_id = raft::native::messages::vote_request_traits_type::recipient_id(msg);
+	buf->term_number = raft::native::messages::vote_request_traits_type::term_number(msg);
+	buf->candidate_id = raft::native::messages::vote_request_traits_type::candidate_id(msg);
+	buf->last_log_index = raft::native::messages::vote_request_traits_type::last_log_index(msg);
+	buf->last_log_term = raft::native::messages::vote_request_traits_type::last_log_term(msg);
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_vote_request)),
 								  [buf]() { delete buf; });
       }
 
@@ -664,11 +664,11 @@ namespace raft {
 								  [buf]() { delete buf; });
       }
 
-      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::append_entry_type && msg)
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::append_entry_request_type && msg)
       {
-        auto to_alloc = sizeof(little_append_entry) + serialize_helper(msg.entry);
+        auto to_alloc = sizeof(little_append_entry_request) + serialize_helper(msg.entry);
 	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
-	auto * buf = reinterpret_cast<little_append_entry *>(b.data());
+	auto * buf = reinterpret_cast<little_append_entry_request *>(b.data());
 	buf->request_id = msg.request_id;
 	buf->recipient_id = msg.recipient_id;
 	buf->term_number = msg.term_number;
@@ -676,7 +676,7 @@ namespace raft {
 	buf->previous_log_index = msg.previous_log_index;
 	buf->previous_log_term = msg.previous_log_term;
 	buf->leader_commit_index = msg.leader_commit_index;
-	auto sz = sizeof(little_append_entry);
+	auto sz = sizeof(little_append_entry_request);
 	sz += serialize_helper(b+sz, msg.entry);      
 	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
 	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
@@ -684,7 +684,7 @@ namespace raft {
 
       static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::append_entry_response_type && msg)
       {
-	auto buf = new little_append_response();
+	auto buf = new little_append_entry_response();
 	buf->recipient_id = msg.recipient_id;
 	buf->term_number = msg.term_number;
 	buf->request_term_number = msg.request_term_number;
@@ -692,7 +692,7 @@ namespace raft {
 	buf->begin_index = msg.begin_index;
 	buf->last_index = msg.last_index;
 	buf->success = (msg.success != 0);
-	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_append_response)),
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_append_entry_response)),
 								  [buf]() { delete buf; });
       }
     
@@ -734,11 +734,11 @@ namespace raft {
 	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
       }
     
-      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::append_checkpoint_chunk_type && msg)
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::append_checkpoint_chunk_request_type && msg)
       {
-        auto to_alloc = sizeof(little_append_checkpoint_chunk) + serialize_helper(msg.last_checkpoint_header.configuration.description) + serialize_helper(msg.data);
+        auto to_alloc = sizeof(little_append_checkpoint_chunk_request) + serialize_helper(msg.last_checkpoint_header.configuration.description) + serialize_helper(msg.data);
 	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
-	auto * buf = reinterpret_cast<little_append_checkpoint_chunk *>(b.data());
+	auto * buf = reinterpret_cast<little_append_checkpoint_chunk_request *>(b.data());
 	buf->request_id = msg.request_id;
 	buf->recipient_id = msg.recipient_id;
 	buf->term_number= msg.term_number;
@@ -750,7 +750,7 @@ namespace raft {
 	buf->checkpoint_begin = msg.checkpoint_begin;
 	buf->checkpoint_end = msg.checkpoint_end;
 	buf->checkpoint_done = msg.checkpoint_done ? 1 : 0;
-	std::size_t sz = sizeof(little_append_checkpoint_chunk);
+	std::size_t sz = sizeof(little_append_checkpoint_chunk_request);
 	sz += serialize_helper(b+sz, msg.last_checkpoint_header.configuration.description);
 	sz += serialize_helper(b+sz, msg.data);
 	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
@@ -801,7 +801,7 @@ namespace raft {
 								  [buf]() { delete buf; });
       }
 
-      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::linearizable_command_type && msg)
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::linearizable_command_request_type && msg)
       {
         auto to_alloc = serialize_helper(msg);
 	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
@@ -834,7 +834,7 @@ namespace raft {
 	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
       }
 
-      static std::pair<raft::slice, raft::util::call_on_delete> serialize_log_entry_command(raft::native::messages::linearizable_command_type && msg)
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize_log_entry_command(raft::native::messages::linearizable_command_request_type && msg)
       {
         auto to_alloc = sizeof(little_log_entry_command) + serialize_helper(msg);
 	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);

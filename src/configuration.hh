@@ -50,9 +50,9 @@ namespace raft {
     {
     }
     
-    void on_append_response(std::chrono::time_point<std::chrono::steady_clock> clock_now,
-			    uint64_t match_index,
-			    uint64_t last_log_index)
+    void on_append_entry_response(std::chrono::time_point<std::chrono::steady_clock> clock_now,
+                                  uint64_t match_index,
+                                  uint64_t last_log_index)
     {
       if (!is_caught_up_ && current_catch_up_iteration_goal_ <= match_index) {
 	auto duration = clock_now - current_catch_up_iteration_start_;

@@ -490,9 +490,9 @@ namespace raft {
     	    session_manager_.on_close_session(client_, serialization_type::deserialize_close_session_request(buf, std::move(deleter)), std::chrono::steady_clock::now());
             break;
           }
-        case serialization_type::LINEARIZABLE_COMMAND:
+        case serialization_type::LINEARIZABLE_COMMAND_REQUEST:
           {
-    	    session_manager_.on_linearizable_command(client_, serialization_type::deserialize_linearizable_command(buf, std::move(deleter)), std::chrono::steady_clock::now());
+    	    session_manager_.on_linearizable_command(client_, serialization_type::deserialize_linearizable_command_request(buf, std::move(deleter)), std::chrono::steady_clock::now());
             break;
           }
     	default:
@@ -710,16 +710,16 @@ namespace raft {
       typedef typename messages_type::log_entry_type log_entry_type;
       typedef typename messages_type::log_entry_traits_type::const_arg_type log_entry_const_arg_type;
       typedef typename messages_type::client_result_type client_result_type;
-      typedef typename messages_type::request_vote_traits_type::arg_type request_vote_arg_type;
+      typedef typename messages_type::vote_request_traits_type::arg_type vote_request_arg_type;
       typedef typename messages_type::vote_response_traits_type::arg_type vote_response_arg_type;
-      typedef typename messages_type::append_checkpoint_chunk_traits_type::arg_type append_checkpoint_chunk_arg_type;
+      typedef typename messages_type::append_checkpoint_chunk_request_traits_type::arg_type append_checkpoint_chunk_request_arg_type;
       typedef typename messages_type::append_checkpoint_chunk_response_traits_type::arg_type append_checkpoint_chunk_response_arg_type;
-      typedef typename messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
+      typedef typename messages_type::append_entry_request_traits_type::arg_type append_entry_request_arg_type;
       typedef typename messages_type::append_entry_response_traits_type::arg_type append_entry_response_arg_type;
       typedef typename messages_type::set_configuration_request_traits_type::arg_type set_configuration_request_arg_type;
       typedef typename messages_type::open_session_request_traits_type::arg_type open_session_request_arg_type;
       typedef typename messages_type::close_session_request_traits_type::arg_type close_session_request_arg_type;
-      typedef typename messages_type::linearizable_command_traits_type::arg_type linearizable_command_arg_type;
+      typedef typename messages_type::linearizable_command_request_traits_type::arg_type linearizable_command_request_arg_type;
       typedef serialization<messages_type, _Serialization> serialization_type;
       typedef typename raft_protocol_type_builder<messages_type, _Builders, _Serialization>::type raft_protocol_type;
       typedef typename raft_protocol_type::communicator_type communicator_type;
@@ -765,27 +765,27 @@ namespace raft {
         protocol_->set_state_change_listener([this](typename raft_protocol_type::state s, uint64_t t) { this->session_manager_->on_protocol_state_change(s, t); });
       }
 
-      void on_request_vote(request_vote_arg_type && req)
+      void on_vote_request(vote_request_arg_type && req)
       {
-        protocol_->on_request_vote(std::move(req), std::chrono::steady_clock::now());
+        protocol_->on_vote_request(std::move(req), std::chrono::steady_clock::now());
       }
 
       void on_vote_response(vote_response_arg_type && resp)
       {
         protocol_->on_vote_response(std::move(resp), std::chrono::steady_clock::now());
       }
-      void on_append_entry(append_entry_arg_type && req)
+      void on_append_entry_request(append_entry_request_arg_type && req)
       {
-        protocol_->on_append_entry(std::move(req), std::chrono::steady_clock::now());
+        protocol_->on_append_entry_request(std::move(req), std::chrono::steady_clock::now());
       }
-      void on_append_response(append_entry_response_arg_type && resp)
+      void on_append_entry_response(append_entry_response_arg_type && resp)
       {
-        protocol_->on_append_response(std::move(resp), std::chrono::steady_clock::now());
+        protocol_->on_append_entry_response(std::move(resp), std::chrono::steady_clock::now());
       }
     
-      void on_append_checkpoint_chunk(append_checkpoint_chunk_arg_type && req)
+      void on_append_checkpoint_chunk_request(append_checkpoint_chunk_request_arg_type && req)
       {
-        protocol_->on_append_checkpoint_chunk(std::move(req), std::chrono::steady_clock::now());
+        protocol_->on_append_checkpoint_chunk_request(std::move(req), std::chrono::steady_clock::now());
       }
       void on_append_checkpoint_chunk_response(append_checkpoint_chunk_response_arg_type && resp)
       {
@@ -834,7 +834,7 @@ namespace raft {
       }
       template<typename _ClientEndpoint>
       void on_linearizable_command(const _ClientEndpoint & ep,
-                                   linearizable_command_arg_type && req,
+                                   linearizable_command_request_arg_type && req,
                                    std::chrono::time_point<std::chrono::steady_clock> clock_now)
       {
         session_manager_->on_linearizable_command(ep, std::move(req), clock_now);
@@ -900,16 +900,16 @@ namespace raft {
       typedef typename messages_type::log_entry_type log_entry_type;
       typedef typename messages_type::log_entry_traits_type::const_arg_type log_entry_const_arg_type;
       typedef typename messages_type::client_result_type client_result_type;
-      typedef typename messages_type::request_vote_traits_type::arg_type request_vote_arg_type;
+      typedef typename messages_type::vote_request_traits_type::arg_type vote_request_arg_type;
       typedef typename messages_type::vote_response_traits_type::arg_type vote_response_arg_type;
-      typedef typename messages_type::append_checkpoint_chunk_traits_type::arg_type append_checkpoint_chunk_arg_type;
+      typedef typename messages_type::append_checkpoint_chunk_request_traits_type::arg_type append_checkpoint_chunk_request_arg_type;
       typedef typename messages_type::append_checkpoint_chunk_response_traits_type::arg_type append_checkpoint_chunk_response_arg_type;
-      typedef typename messages_type::append_entry_traits_type::arg_type append_entry_arg_type;
+      typedef typename messages_type::append_entry_request_traits_type::arg_type append_entry_request_arg_type;
       typedef typename messages_type::append_entry_response_traits_type::arg_type append_entry_response_arg_type;
       typedef typename messages_type::set_configuration_request_traits_type::arg_type set_configuration_request_arg_type;
       typedef typename messages_type::open_session_request_traits_type::arg_type open_session_request_arg_type;
       typedef typename messages_type::close_session_request_traits_type::arg_type close_session_request_arg_type;
-      typedef typename messages_type::linearizable_command_traits_type::arg_type linearizable_command_arg_type;
+      typedef typename messages_type::linearizable_command_request_traits_type::arg_type linearizable_command_request_arg_type;
       typedef serialization<messages_type, _Serialization> serialization_type;
       typedef typename protocol_box_type::raft_protocol_type raft_protocol_type;
       typedef typename raft_protocol_type::communicator_type communicator_type;
@@ -922,11 +922,11 @@ namespace raft {
       // Protocol operations
       typedef raft::util::protocol_operation<protocol_box_type> protocol_operation_type;
       typedef typename raft::util::protocol_operation<protocol_box_type>::queue_type protocol_operation_queue_type;
-      typedef raft::util::request_vote_operation<messages_type, protocol_box_type> request_vote_operation_type;
+      typedef raft::util::vote_request_operation<messages_type, protocol_box_type> vote_request_operation_type;
       typedef raft::util::vote_response_operation<messages_type, protocol_box_type> vote_response_operation_type;
-      typedef raft::util::append_entry_operation<messages_type, protocol_box_type> append_entry_operation_type;
+      typedef raft::util::append_entry_request_operation<messages_type, protocol_box_type> append_entry_request_operation_type;
       typedef raft::util::append_entry_response_operation<messages_type, protocol_box_type> append_entry_response_operation_type;
-      typedef raft::util::append_checkpoint_chunk_operation<messages_type, protocol_box_type> append_checkpoint_chunk_operation_type;
+      typedef raft::util::append_checkpoint_chunk_request_operation<messages_type, protocol_box_type> append_checkpoint_chunk_request_operation_type;
       typedef raft::util::append_checkpoint_chunk_response_operation<messages_type, protocol_box_type> append_checkpoint_chunk_response_operation_type;
 
       typedef raft::util::log_sync_operation<protocol_box_type> log_sync_operation_type;
@@ -1029,27 +1029,27 @@ namespace raft {
         }
       }
 
-      void on_request_vote(request_vote_arg_type && req)
+      void on_vote_request(vote_request_arg_type && req)
       {
-        enqueue(new request_vote_operation_type(std::move(req)));
+        enqueue(new vote_request_operation_type(std::move(req)));
       }
 
       void on_vote_response(vote_response_arg_type && resp)
       {
         enqueue(new vote_response_operation_type(std::move(resp)));
       }
-      void on_append_entry(append_entry_arg_type && req)
+      void on_append_entry_request(append_entry_request_arg_type && req)
       {
-        enqueue(new append_entry_operation_type(std::move(req)));
+        enqueue(new append_entry_request_operation_type(std::move(req)));
       }
-      void on_append_response(append_entry_response_arg_type && resp)
+      void on_append_entry_response(append_entry_response_arg_type && resp)
       {
         enqueue(new append_entry_response_operation_type(std::move(resp)));
       }
     
-      void on_append_checkpoint_chunk(append_checkpoint_chunk_arg_type && req)
+      void on_append_checkpoint_chunk_request(append_checkpoint_chunk_request_arg_type && req)
       {
-        enqueue(new append_checkpoint_chunk_operation_type(std::move(req)));
+        enqueue(new append_checkpoint_chunk_request_operation_type(std::move(req)));
       }
       void on_append_checkpoint_chunk_response(append_checkpoint_chunk_response_arg_type && resp)
       {
@@ -1091,11 +1091,11 @@ namespace raft {
       }
       template<typename _ClientEndpoint>
       void on_linearizable_command(const _ClientEndpoint & ep,
-                                   linearizable_command_arg_type && req,
+                                   linearizable_command_request_arg_type && req,
                                    std::chrono::time_point<std::chrono::steady_clock> clock_now)
       {
-        typedef raft::util::linearizable_command_operation<messages_type, protocol_box_type, _ClientEndpoint> linearizable_command_operation_type;
-        enqueue(new linearizable_command_operation_type(ep, std::move(req), clock_now));
+        typedef raft::util::linearizable_command_request_operation<messages_type, protocol_box_type, _ClientEndpoint> linearizable_command_request_operation_type;
+        enqueue(new linearizable_command_request_operation_type(ep, std::move(req), clock_now));
       }
     
       void handle_timer()
@@ -1135,7 +1135,7 @@ namespace raft {
 	switch(op) {
 	case serialization_type::VOTE_REQUEST:
 	  {
-	    protocol_.on_request_vote(serialization_type::deserialize_request_vote(buf, std::move(deleter)));
+	    protocol_.on_vote_request(serialization_type::deserialize_vote_request(buf, std::move(deleter)));
 	    break;
 	  }
 	case serialization_type::VOTE_RESPONSE:
@@ -1145,17 +1145,17 @@ namespace raft {
 	  }
 	case serialization_type::APPEND_ENTRY_REQUEST:
 	  {
-	    protocol_.on_append_entry(serialization_type::deserialize_append_entry(buf, std::move(deleter)));
+	    protocol_.on_append_entry_request(serialization_type::deserialize_append_entry_request(buf, std::move(deleter)));
 	    break;
 	  }
 	case serialization_type::APPEND_ENTRY_RESPONSE:
 	  {
-	    protocol_.on_append_response(serialization_type::deserialize_append_entry_response(buf, std::move(deleter)));
+	    protocol_.on_append_entry_response(serialization_type::deserialize_append_entry_response(buf, std::move(deleter)));
 	    break;
 	  }
 	case serialization_type::APPEND_CHECKPOINT_CHUNK_REQUEST:
 	  {
-	    protocol_.on_append_checkpoint_chunk(serialization_type::deserialize_append_checkpoint_chunk(buf, std::move(deleter)));
+	    protocol_.on_append_checkpoint_chunk_request(serialization_type::deserialize_append_checkpoint_chunk_request(buf, std::move(deleter)));
 	    break;
 	  }
 	case serialization_type::APPEND_CHECKPOINT_CHUNK_RESPONSE:

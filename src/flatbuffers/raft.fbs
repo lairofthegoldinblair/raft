@@ -32,7 +32,7 @@ table log_entry
     // Populated if type==CONFIGURATION
     configuration:[ubyte] (nested_flatbuffer: "configuration_description");
 }
-table request_vote
+table vote_request
 {
   request_id:ulong;
   recipient_id:ulong;
@@ -56,7 +56,7 @@ table log_entries
   entry:[ubyte] (nested_flatbuffer: "log_entry");
 }
 
-table append_entry
+table append_entry_request
 {
   request_id:ulong;
   recipient_id:ulong;
@@ -81,7 +81,7 @@ table append_entry
   entries:[log_entries];
 }
 
-table append_response
+table append_entry_response
 {
   recipient_id:ulong;
   term_number:ulong;
@@ -111,7 +111,7 @@ table checkpoint_header
 // TODO: Why do we assume that the checkpoint term is in the checkpoint_header in the
 // data and not in the chunk message?  Well, Ongaro assumes that but as you'll notice
 // I've decided to put it in.
-table append_checkpoint_chunk
+table append_checkpoint_chunk_request
 {
   request_id:ulong;
   recipient_id:ulong;
@@ -179,7 +179,7 @@ table close_session_response
 {
 }
 
-table linearizable_command
+table linearizable_command_request
 {
   session_id:ulong;
   first_unacknowledged_sequence_number:ulong;
@@ -187,14 +187,14 @@ table linearizable_command
   command:string;
 }
 
-union any_log_entry_command { open_session_request, open_session_response, close_session_request, close_session_response, linearizable_command }
+union any_log_entry_command { open_session_request, open_session_response, close_session_request, close_session_response, linearizable_command_request }
 
 table log_entry_command
 {
   command:any_log_entry_command;
 }
 
-union any_message { request_vote, vote_response, append_entry, append_response, client_response, set_configuration_request, set_configuration_response, configuration_checkpoint, append_checkpoint_chunk, append_checkpoint_chunk_response }
+union any_message { vote_request, vote_response, append_entry_request, append_entry_response, client_response, set_configuration_request, set_configuration_response, configuration_checkpoint, append_checkpoint_chunk_request, append_checkpoint_chunk_response }
 
 table raft_message
 {

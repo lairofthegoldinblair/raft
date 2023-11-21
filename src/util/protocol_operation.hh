@@ -46,31 +46,31 @@ namespace raft {
     };
 
     template<typename _Messages, typename _Protocol>
-    class request_vote_operation : public protocol_operation<_Protocol>
+    class vote_request_operation : public protocol_operation<_Protocol>
     {
     public:
       typedef protocol_operation<_Protocol> protocol_operation_type;
       typedef _Messages messages_type;
-      typedef typename messages_type::request_vote_traits_type::arg_type request_vote_arg_type;      
+      typedef typename messages_type::vote_request_traits_type::arg_type vote_request_arg_type;      
     private:
-      request_vote_arg_type message_;
+      vote_request_arg_type message_;
     public:
-      request_vote_operation(request_vote_arg_type && msg)
+      vote_request_operation(vote_request_arg_type && msg)
         :
         protocol_operation_type(&do_complete),
         message_(std::move(msg))
       {
       }
-      ~request_vote_operation()
+      ~vote_request_operation()
       {
       }
       static void do_complete(_Protocol * owner, protocol_operation_type * base)
       {
-        request_vote_operation * op(static_cast<request_vote_operation *>(base));
-        request_vote_arg_type msg = std::move(op->message_);
+        vote_request_operation * op(static_cast<vote_request_operation *>(base));
+        vote_request_arg_type msg = std::move(op->message_);
         delete op;
         if (nullptr != owner) {
-          owner->on_request_vote(std::move(msg));
+          owner->on_vote_request(std::move(msg));
         }
       }
     };
@@ -106,31 +106,31 @@ namespace raft {
     };
 
     template<typename _Messages, typename _Protocol>
-    class append_entry_operation : public protocol_operation<_Protocol>
+    class append_entry_request_operation : public protocol_operation<_Protocol>
     {
     public:
       typedef protocol_operation<_Protocol> protocol_operation_type;
       typedef _Messages messages_type;
-      typedef typename messages_type::append_entry_traits_type::arg_type append_entry_arg_type;      
+      typedef typename messages_type::append_entry_request_traits_type::arg_type append_entry_request_arg_type;      
     private:
-      append_entry_arg_type message_;
+      append_entry_request_arg_type message_;
     public:
-      append_entry_operation(append_entry_arg_type && msg)
+      append_entry_request_operation(append_entry_request_arg_type && msg)
         :
         protocol_operation_type(&do_complete),
         message_(std::move(msg))
       {
       }
-      ~append_entry_operation()
+      ~append_entry_request_operation()
       {
       }
       static void do_complete(_Protocol * owner, protocol_operation_type * base)
       {
-        append_entry_operation * op(static_cast<append_entry_operation *>(base));
-        append_entry_arg_type msg = std::move(op->message_);
+        append_entry_request_operation * op(static_cast<append_entry_request_operation *>(base));
+        append_entry_request_arg_type msg = std::move(op->message_);
         delete op;
         if (nullptr != owner) {
-          owner->on_append_entry(std::move(msg));
+          owner->on_append_entry_request(std::move(msg));
         }
       }
     };
@@ -160,37 +160,37 @@ namespace raft {
         append_entry_response_arg_type msg = std::move(op->message_);
         delete op;
         if (nullptr != owner) {
-          owner->on_append_response(std::move(msg));
+          owner->on_append_entry_response(std::move(msg));
         }
       }
     };    
 
     template<typename _Messages, typename _Protocol>
-    class append_checkpoint_chunk_operation : public protocol_operation<_Protocol>
+    class append_checkpoint_chunk_request_operation : public protocol_operation<_Protocol>
     {
     public:
       typedef protocol_operation<_Protocol> protocol_operation_type;
       typedef _Messages messages_type;
-      typedef typename messages_type::append_checkpoint_chunk_traits_type::arg_type append_checkpoint_chunk_arg_type;      
+      typedef typename messages_type::append_checkpoint_chunk_request_traits_type::arg_type append_checkpoint_chunk_request_arg_type;      
     private:
-      append_checkpoint_chunk_arg_type message_;
+      append_checkpoint_chunk_request_arg_type message_;
     public:
-      append_checkpoint_chunk_operation(append_checkpoint_chunk_arg_type && msg)
+      append_checkpoint_chunk_request_operation(append_checkpoint_chunk_request_arg_type && msg)
         :
         protocol_operation_type(&do_complete),
         message_(std::move(msg))
       {
       }
-      ~append_checkpoint_chunk_operation()
+      ~append_checkpoint_chunk_request_operation()
       {
       }
       static void do_complete(_Protocol * owner, protocol_operation_type * base)
       {
-        append_checkpoint_chunk_operation * op(static_cast<append_checkpoint_chunk_operation *>(base));
-        append_checkpoint_chunk_arg_type msg = std::move(op->message_);
+        append_checkpoint_chunk_request_operation * op(static_cast<append_checkpoint_chunk_request_operation *>(base));
+        append_checkpoint_chunk_request_arg_type msg = std::move(op->message_);
         delete op;
         if (nullptr != owner) {
-          owner->on_append_checkpoint_chunk(std::move(msg));
+          owner->on_append_checkpoint_chunk_request(std::move(msg));
         }
       }
     };
@@ -338,19 +338,19 @@ namespace raft {
     };
 
     template<typename _Messages, typename _Protocol, typename _ClientEndpoint>
-    class linearizable_command_operation : public protocol_operation<_Protocol>
+    class linearizable_command_request_operation : public protocol_operation<_Protocol>
     {
     public:
       typedef protocol_operation<_Protocol> protocol_operation_type;
       typedef _Messages messages_type;
       typedef _ClientEndpoint client_endpoint_type;
-      typedef typename messages_type::linearizable_command_traits_type::arg_type linearizable_command_arg_type;      
+      typedef typename messages_type::linearizable_command_request_traits_type::arg_type linearizable_command_request_arg_type;      
     private:
       const client_endpoint_type & client_endpoint_;
-      linearizable_command_arg_type message_;
+      linearizable_command_request_arg_type message_;
       std::chrono::time_point<std::chrono::steady_clock> now_;
     public:
-      linearizable_command_operation(const client_endpoint_type & client_endpoint, linearizable_command_arg_type && msg, std::chrono::time_point<std::chrono::steady_clock> now)
+      linearizable_command_request_operation(const client_endpoint_type & client_endpoint, linearizable_command_request_arg_type && msg, std::chrono::time_point<std::chrono::steady_clock> now)
         :
         protocol_operation_type(&do_complete),
         client_endpoint_(client_endpoint),
@@ -358,13 +358,13 @@ namespace raft {
         now_(now)
       {
       }
-      ~linearizable_command_operation()
+      ~linearizable_command_request_operation()
       {
       }
       static void do_complete(_Protocol * owner, protocol_operation_type * base)
       {
-        linearizable_command_operation * op(static_cast<linearizable_command_operation *>(base));
-        linearizable_command_arg_type msg = std::move(op->message_);
+        linearizable_command_request_operation * op(static_cast<linearizable_command_request_operation *>(base));
+        linearizable_command_request_arg_type msg = std::move(op->message_);
         const client_endpoint_type & client_endpoint(op->client_endpoint_);
         auto now = op->now_;
         delete op;

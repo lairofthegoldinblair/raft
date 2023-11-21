@@ -50,7 +50,7 @@ namespace raft {
 	BOOST_ASSERT(b.first.size() >= ::flatbuffers::GetPrefixedSize(reinterpret_cast<const uint8_t *>(obj))+sizeof(::flatbuffers::uoffset_t));
 	return std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete>(obj, [s = std::move(b)]() {});
       }
-      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_request_vote(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_vote_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
       {
 	return deserialize(std::move(b));
       }
@@ -58,7 +58,7 @@ namespace raft {
       {
 	return deserialize(std::move(b));
       }
-      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_append_entry(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_append_entry_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
       {
 	return deserialize(std::move(b));
       }
@@ -78,7 +78,7 @@ namespace raft {
       {
 	return deserialize(std::move(b));
       }
-      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_append_checkpoint_chunk(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_append_checkpoint_chunk_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
       {
 	return deserialize(std::move(b));
       }
@@ -131,7 +131,7 @@ namespace raft {
       {
 	return deserialize_log_entry_command(std::move(b));
       }
-      static std::pair<const raft::fbs::log_entry_command * , raft::util::call_on_delete> deserialize_linearizable_command(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      static std::pair<const raft::fbs::log_entry_command * , raft::util::call_on_delete> deserialize_linearizable_command_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
       {
 	return deserialize_log_entry_command(std::move(b));
       }

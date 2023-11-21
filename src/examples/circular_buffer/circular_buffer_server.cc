@@ -19,7 +19,7 @@ struct logger
 {
   typedef _Messages messages_type;
   typedef _Serialization serialization_type;
-  typedef typename messages_type::linearizable_command_traits_type linearizable_command_traits_type;
+  typedef typename messages_type::linearizable_command_request_traits_type linearizable_command_request_traits_type;
   typedef typename messages_type::log_entry_command_traits_type log_entry_command_traits_type;
   typedef typename serialization_type::log_entry_command_view_deserialization_type log_entry_command_view_deserialization_type;
   typedef raft::checkpoint_data_store<messages_type> checkpoint_data_store_type;
@@ -59,7 +59,7 @@ struct logger
       return;
     }
     ;
-    auto c = linearizable_command_traits_type::command(log_entry_command_traits_type::linearizable_command(cont->cmd.view()));
+    auto c = linearizable_command_request_traits_type::command(log_entry_command_traits_type::linearizable_command(cont->cmd.view()));
     commands.push_back(std::string(reinterpret_cast<const char *>(c.data()), c.size()));
     // Must reset cont before the callback because the callback may add a new async command                                                                                                                           
     // from the log.   If we reset it after that then we'll lose a async call.                                                                                                                                        
@@ -181,7 +181,7 @@ int run_server(int argc, char ** argv)
   typedef typename _TestType::messages_type::open_session_response_traits_type open_session_response_traits;
   typedef typename _TestType::builders_type::close_session_request_builder_type close_session_request_builder;
   typedef typename _TestType::messages_type::close_session_response_traits_type close_session_response_traits;
-  typedef typename _TestType::builders_type::linearizable_command_builder_type linearizable_command_builder;
+  typedef typename _TestType::builders_type::linearizable_command_request_builder_type linearizable_command_request_builder;
   typedef typename _TestType::messages_type::client_response_traits_type client_response_traits;
   typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
   typedef logger<typename _TestType::messages_type, typename _TestType::serialization_type> state_machine_type;

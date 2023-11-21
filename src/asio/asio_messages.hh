@@ -30,21 +30,21 @@ namespace raft {
     template<typename _Messages, typename _Serialization>
     struct serialization
     {
-      enum Operation { VOTE_REQUEST=0, VOTE_RESPONSE=1, APPEND_ENTRY_REQUEST=2, APPEND_ENTRY_RESPONSE=3, CLIENT_RESPONSE=4, SET_CONFIGURATION_REQUEST=5, SET_CONFIGURATION_RESPONSE=6, APPEND_CHECKPOINT_CHUNK_REQUEST=8, APPEND_CHECKPOINT_CHUNK_RESPONSE=9, OPEN_SESSION_REQUEST=10, OPEN_SESSION_RESPONSE=11, CLOSE_SESSION_REQUEST=12, CLOSE_SESSION_RESPONSE=13, LINEARIZABLE_COMMAND=14 };
-      typedef typename _Messages::request_vote_traits_type::arg_type request_vote_arg_type;
+      enum Operation { VOTE_REQUEST=0, VOTE_RESPONSE=1, APPEND_ENTRY_REQUEST=2, APPEND_ENTRY_RESPONSE=3, CLIENT_RESPONSE=4, SET_CONFIGURATION_REQUEST=5, SET_CONFIGURATION_RESPONSE=6, APPEND_CHECKPOINT_CHUNK_REQUEST=8, APPEND_CHECKPOINT_CHUNK_RESPONSE=9, OPEN_SESSION_REQUEST=10, OPEN_SESSION_RESPONSE=11, CLOSE_SESSION_REQUEST=12, CLOSE_SESSION_RESPONSE=13, LINEARIZABLE_COMMAND_REQUEST=14 };
+      typedef typename _Messages::vote_request_traits_type::arg_type vote_request_arg_type;
       typedef typename _Messages::vote_response_traits_type::arg_type vote_response_arg_type;
-      typedef typename _Messages::append_entry_traits_type::arg_type append_entry_arg_type;
+      typedef typename _Messages::append_entry_request_traits_type::arg_type append_entry_request_arg_type;
       typedef typename _Messages::append_entry_response_traits_type::arg_type append_entry_response_arg_type;
       typedef typename _Messages::client_response_traits_type::arg_type client_response_arg_type;
       typedef typename _Messages::set_configuration_request_traits_type::arg_type set_configuration_request_arg_type;
       typedef typename _Messages::set_configuration_response_traits_type::arg_type set_configuration_response_arg_type;
-      typedef typename _Messages::append_checkpoint_chunk_traits_type::arg_type append_checkpoint_chunk_arg_type;
+      typedef typename _Messages::append_checkpoint_chunk_request_traits_type::arg_type append_checkpoint_chunk_request_arg_type;
       typedef typename _Messages::append_checkpoint_chunk_response_traits_type::arg_type append_checkpoint_chunk_response_arg_type;
       typedef typename _Messages::open_session_request_traits_type::arg_type open_session_request_arg_type;
       typedef typename _Messages::open_session_response_traits_type::arg_type open_session_response_arg_type;
       typedef typename _Messages::close_session_request_traits_type::arg_type close_session_request_arg_type;
       typedef typename _Messages::close_session_response_traits_type::arg_type close_session_response_arg_type;
-      typedef typename _Messages::linearizable_command_traits_type::arg_type linearizable_command_arg_type;
+      typedef typename _Messages::linearizable_command_request_traits_type::arg_type linearizable_command_request_arg_type;
       typedef typename _Messages::log_entry_type log_entry_type;
       typedef _Serialization serialization_type;
 
@@ -60,13 +60,13 @@ namespace raft {
 			      std::move(deleter));
       }
     
-      static std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete> serialize_request_vote(boost::asio::mutable_buffer b, request_vote_arg_type && msg)
+      static std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete> serialize_vote_request(boost::asio::mutable_buffer b, vote_request_arg_type && msg)
       {
-        typedef typename _Messages::request_vote_traits_type rv;
-        BOOST_LOG_TRIVIAL(trace) << "request_vote(recipient_id=" << rv::recipient_id(msg) << ", term_number=" << rv::term_number(msg) <<
+        typedef typename _Messages::vote_request_traits_type rv;
+        BOOST_LOG_TRIVIAL(trace) << "vote_request(recipient_id=" << rv::recipient_id(msg) << ", term_number=" << rv::term_number(msg) <<
           ", candidate_id=" << rv::candidate_id(msg) << ", last_log_index=" << rv::last_log_index(msg) << ", last_log_term=" << rv::last_log_term(msg) << ")";
 	auto inner = serialization_type::serialize(std::move(msg));
-        BOOST_LOG_TRIVIAL(trace) << "request_vote serialzed: " << inner.first;
+        BOOST_LOG_TRIVIAL(trace) << "vote_request serialzed: " << inner.first;
 	static const std::size_t sz = sizeof(rpc_header);
 	BOOST_ASSERT(boost::asio::buffer_size(b) >= sz);
 	rpc_header * header = reinterpret_cast<rpc_header *>(b.data());
@@ -94,7 +94,7 @@ namespace raft {
 	return make_return(b.data(), sz, std::move(inner));
       }
 
-      static std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete> serialize_append_entry(boost::asio::mutable_buffer b, append_entry_arg_type && msg)
+      static std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete> serialize_append_entry_request(boost::asio::mutable_buffer b, append_entry_request_arg_type && msg)
       {
 	// TODO: Make sure the msg fits in our buffer; either throw or support by allocating a new buffer
 	auto inner = serialization_type::serialize(std::move(msg));
@@ -120,7 +120,7 @@ namespace raft {
 	return make_return(b.data(), sz, std::move(inner));
       };
 
-      static std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete> serialize_append_checkpoint_chunk_request(boost::asio::mutable_buffer b, append_checkpoint_chunk_arg_type && msg)
+      static std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete> serialize_append_checkpoint_chunk_request(boost::asio::mutable_buffer b, append_checkpoint_chunk_request_arg_type && msg)
       {
 	// TODO: Make sure the msg fits in our buffer; either throw or support by allocating a new buffer
 	auto inner = serialization_type::serialize(std::move(msg));
@@ -211,7 +211,7 @@ namespace raft {
 	return make_return(b.data(), sz, std::move(inner));
       };
 
-      static std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete> serialize_linearizable_command(boost::asio::mutable_buffer b, linearizable_command_arg_type && msg)
+      static std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete> serialize_linearizable_command_request(boost::asio::mutable_buffer b, linearizable_command_request_arg_type && msg)
       {
 	auto inner = serialization_type::serialize(std::move(msg));
 	static const std::size_t sz = sizeof(rpc_header);
@@ -220,20 +220,20 @@ namespace raft {
 	header->magic = rpc_header::MAGIC();
 	header->payload_length = inner.first.size();
 	header->service = 0;
-	header->operation = LINEARIZABLE_COMMAND;
+	header->operation = LINEARIZABLE_COMMAND_REQUEST;
 	return make_return(b.data(), sz, std::move(inner));
       };
 
       template<typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::request_vote_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::vote_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
-	        typename _M::request_vote_traits_type::arg_type && msg)
+	        typename _M::vote_request_traits_type::arg_type && msg)
       {
-	return serialize_request_vote(b, std::move(msg));
+	return serialize_vote_request(b, std::move(msg));
       }
       
       template<typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::request_vote_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::vote_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
 	        typename _M::vote_response_traits_type::arg_type && msg)
       {
@@ -241,15 +241,15 @@ namespace raft {
       }
       
       template<typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::request_vote_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::vote_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
-	        typename _M::append_entry_traits_type::arg_type && msg)
+	        typename _M::append_entry_request_traits_type::arg_type && msg)
       {
-	return serialize_append_entry(b, std::move(msg));
+	return serialize_append_entry_request(b, std::move(msg));
       }
       
       template<typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::request_vote_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::vote_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
 	        typename _M::append_entry_response_traits_type::arg_type && msg)
       {
@@ -257,15 +257,15 @@ namespace raft {
       }
       
       template<typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::request_vote_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::vote_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
-	        typename _M::append_checkpoint_chunk_traits_type::arg_type && msg)
+	        typename _M::append_checkpoint_chunk_request_traits_type::arg_type && msg)
       {
 	return serialize_append_checkpoint_chunk_request(b, std::move(msg));
       }
       
       template<typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::request_vote_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::vote_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
 	        typename _M::append_checkpoint_chunk_response_traits_type::arg_type && msg)
       {
@@ -273,7 +273,7 @@ namespace raft {
       }
       
       template<typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::request_vote_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::vote_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
 	        typename _M::client_response_traits_type::arg_type && msg)
       {
@@ -281,7 +281,7 @@ namespace raft {
       }
       
       template<typename T, typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::request_vote_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<!has_static_member_function_classify<_S, int32_t(typename _M::vote_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
 	        T && msg)
       {	
@@ -321,25 +321,25 @@ namespace raft {
       }
       
       template<typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<!has_static_member_function_classify_log_entry_command<_S, int32_t(typename _M::linearizable_command_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<!has_static_member_function_classify_log_entry_command<_S, int32_t(typename _M::linearizable_command_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
-                typename _M::linearizable_command_traits_type::arg_type && msg)
+                typename _M::linearizable_command_request_traits_type::arg_type && msg)
       {
-        return serialize_linearizable_command(b, std::move(msg));
+        return serialize_linearizable_command_request(b, std::move(msg));
       }
       
       template<typename _M = _Messages, typename _S = _Serialization>
-      static std::enable_if_t<has_static_member_function_classify<_S, int32_t(typename _M::request_vote_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
+      static std::enable_if_t<has_static_member_function_classify<_S, int32_t(typename _M::vote_request_traits_type::arg_type &&)>::value, std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>>
       serialize(boost::asio::mutable_buffer b,
-      		typename _M::append_entry_traits_type::arg_type && msg)
+      		typename _M::append_entry_request_traits_type::arg_type && msg)
       {
       	switch(serialization_type::classify(std::move(msg))) {
       	case VOTE_REQUEST:
-      	  return serialize_request_vote(b, std::move(msg));
+      	  return serialize_vote_request(b, std::move(msg));
       	case VOTE_RESPONSE:
       	  return serialize_vote_response(b, std::move(msg));
       	case APPEND_ENTRY_REQUEST:
-      	  return serialize_append_entry(b, std::move(msg));
+      	  return serialize_append_entry_request(b, std::move(msg));
       	case APPEND_ENTRY_RESPONSE:
       	  return serialize_append_entry_response(b, std::move(msg));
       	case CLIENT_RESPONSE:
@@ -367,8 +367,8 @@ namespace raft {
       	  return serialize_close_session_request(b, std::move(msg));
       	case CLOSE_SESSION_RESPONSE:
       	  return serialize_close_session_response(b, std::move(msg));
-      	case LINEARIZABLE_COMMAND:
-      	  return serialize_linearizable_command(b, std::move(msg));
+      	case LINEARIZABLE_COMMAND_REQUEST:
+      	  return serialize_linearizable_command_request(b, std::move(msg));
       	default:
       	  throw std::runtime_error("Not yet implemented");
       	}
@@ -380,10 +380,10 @@ namespace raft {
 	return std::make_pair(boost::asio::buffer(inner.first.data(), inner.first.size()), std::move(inner.second));
       }
 	
-      static request_vote_arg_type deserialize_request_vote(boost::asio::const_buffer & b, raft::util::call_on_delete && deleter)
+      static vote_request_arg_type deserialize_vote_request(boost::asio::const_buffer & b, raft::util::call_on_delete && deleter)
       {
 	raft::slice s(reinterpret_cast<const uint8_t *>(b.data()), b.size());
-	return serialization_type::deserialize_request_vote(std::make_pair(std::move(s), std::move(deleter)));
+	return serialization_type::deserialize_vote_request(std::make_pair(std::move(s), std::move(deleter)));
       }
 
       static vote_response_arg_type deserialize_vote_response(boost::asio::const_buffer & b, raft::util::call_on_delete && deleter)
@@ -392,10 +392,10 @@ namespace raft {
 	return serialization_type::deserialize_vote_response(std::make_pair(std::move(s), std::move(deleter)));
       }
 
-      static append_entry_arg_type deserialize_append_entry(boost::asio::const_buffer & b, raft::util::call_on_delete && deleter)
+      static append_entry_request_arg_type deserialize_append_entry_request(boost::asio::const_buffer & b, raft::util::call_on_delete && deleter)
       {
 	raft::slice s(reinterpret_cast<const uint8_t *>(b.data()), b.size());
-	return serialization_type::deserialize_append_entry(std::make_pair(std::move(s), std::move(deleter)));
+	return serialization_type::deserialize_append_entry_request(std::make_pair(std::move(s), std::move(deleter)));
       }
 
       static append_entry_response_arg_type deserialize_append_entry_response(boost::asio::const_buffer & b, raft::util::call_on_delete && deleter)
@@ -422,10 +422,10 @@ namespace raft {
 	return serialization_type::deserialize_set_configuration_response(std::make_pair(std::move(s), std::move(deleter)));
       }
       
-      static append_checkpoint_chunk_arg_type deserialize_append_checkpoint_chunk(boost::asio::const_buffer & b, raft::util::call_on_delete && deleter)
+      static append_checkpoint_chunk_request_arg_type deserialize_append_checkpoint_chunk_request(boost::asio::const_buffer & b, raft::util::call_on_delete && deleter)
       {
 	raft::slice s(reinterpret_cast<const uint8_t *>(b.data()), b.size());
-	return serialization_type::deserialize_append_checkpoint_chunk(std::make_pair(std::move(s), std::move(deleter)));
+	return serialization_type::deserialize_append_checkpoint_chunk_request(std::make_pair(std::move(s), std::move(deleter)));
       }
 
       static append_checkpoint_chunk_response_arg_type deserialize_append_checkpoint_chunk_response(boost::asio::const_buffer & b, raft::util::call_on_delete && deleter)
@@ -458,10 +458,10 @@ namespace raft {
 	return serialization_type::deserialize_close_session_response(std::make_pair(std::move(s), std::move(deleter)));
       }
 
-      static linearizable_command_arg_type deserialize_linearizable_command(boost::asio::const_buffer & b, raft::util::call_on_delete && deleter)
+      static linearizable_command_request_arg_type deserialize_linearizable_command_request(boost::asio::const_buffer & b, raft::util::call_on_delete && deleter)
       {
 	raft::slice s(reinterpret_cast<const uint8_t *>(b.data()), b.size());
-	return serialization_type::deserialize_linearizable_command(std::make_pair(std::move(s), std::move(deleter)));
+	return serialization_type::deserialize_linearizable_command_request(std::make_pair(std::move(s), std::move(deleter)));
       }
     };
 

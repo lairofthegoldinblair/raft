@@ -39,9 +39,9 @@ namespace raft {
         q.push_front(std::move(msg));
       }
   
-      typedef boost::variant<typename _Messages::request_vote_traits_type::arg_type, typename _Messages::vote_response_traits_type::arg_type,
-                             typename _Messages::append_entry_traits_type::arg_type, typename _Messages::append_entry_response_traits_type::arg_type,
-                             typename _Messages::append_checkpoint_chunk_traits_type::arg_type, typename _Messages::append_checkpoint_chunk_response_traits_type::arg_type> any_msg_type;
+      typedef boost::variant<typename _Messages::vote_request_traits_type::arg_type, typename _Messages::vote_response_traits_type::arg_type,
+                             typename _Messages::append_entry_request_traits_type::arg_type, typename _Messages::append_entry_response_traits_type::arg_type,
+                             typename _Messages::append_checkpoint_chunk_request_traits_type::arg_type, typename _Messages::append_checkpoint_chunk_response_traits_type::arg_type> any_msg_type;
       std::deque<any_msg_type> q;
     };
 
