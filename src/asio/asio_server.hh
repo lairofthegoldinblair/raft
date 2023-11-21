@@ -511,9 +511,6 @@ namespace raft {
     {
     public:
       typedef typename _Messages::client_result_type client_result_type;
-      virtual void on_client_response(client_result_type result,
-				      uint64_t index,
-				      std::size_t leader_id) = 0;
       virtual void on_configuration_response(client_result_type result) = 0;
       virtual void on_configuration_response(client_result_type result, const std::vector<std::pair<uint64_t, std::string>> & bad_servers) = 0;
     };
@@ -662,14 +659,6 @@ namespace raft {
       {
         uint8_t * mem = new uint8_t [128*1024];
         this->internal_send(serialization_type::serialize(boost::asio::buffer(mem, 128*1024), std::move(msg)));
-      }
-
-      void on_client_response(client_result_type result,
-			      uint64_t index,
-			      std::size_t leader_id) override
-      {
-	auto resp = client_response_builder().result(result).index(index).leader_id(leader_id).finish();
-	send(std::move(resp));
       }
 
       void on_configuration_response(client_result_type result) override

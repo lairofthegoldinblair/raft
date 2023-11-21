@@ -1808,17 +1808,6 @@ namespace raft {
       std::deque<client_response> responses;
       std::deque<set_configuration_response> configuration_responses;
 
-      void on_client_response(client_result_type result,
-			      uint64_t index,
-			      std::size_t leader_id)
-      {
-	client_response resp;
-	resp.result = convert(result);
-	resp.index = index;
-	resp.leader_id = leader_id;      
-	responses.push_front(resp);
-      }
-
       static client_result convert(client_result_type result)
       {
 	if (_Messages::client_result_success() == result) {
