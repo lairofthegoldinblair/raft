@@ -126,19 +126,19 @@ namespace raft {
       // 2) If two logs have entries at the same index with the same term then all preceeding entries
       // also agree
       //
-      static uint64_t previous_log_index(const_arg_type ae)
+      static uint64_t log_index_begin(const_arg_type ae)
       {
-	return get_append_entry_request(ae)->previous_log_index();
+	return get_append_entry_request(ae)->log_index_begin();
       }
-      // The last term sent (only valid if previous_log_index > 0).
+      // The last term sent (only valid if log_index_begin > 0).
       static uint64_t previous_log_term(const_arg_type ae)
       {
 	return get_append_entry_request(ae)->previous_log_term();
       }
       // Last log entry in message that is committed on leader
-      static uint64_t leader_commit_index(const_arg_type ae)
+      static uint64_t leader_commit_index_end(const_arg_type ae)
       {
-	return get_append_entry_request(ae)->leader_commit_index();
+	return get_append_entry_request(ae)->leader_commit_index_end();
       }
       static std::size_t num_entries(const_arg_type ae)
       {
@@ -214,9 +214,9 @@ namespace raft {
     struct checkpoint_header_traits
     {
       typedef const raft::fbs::checkpoint_header * const_arg_type;
-      static uint64_t last_log_entry_index(const_arg_type msg)
+      static uint64_t log_entry_index_end(const_arg_type msg)
       {
-	return msg->last_log_entry_index();
+	return msg->log_entry_index_end();
       }
       static uint64_t last_log_entry_term(const_arg_type msg)
       {
@@ -234,7 +234,7 @@ namespace raft {
       {
 	return *msg->configuration()->configuration()->Data();
       }
-      static std::pair<const_arg_type, raft::util::call_on_delete> build(uint64_t last_log_entry_index,
+      static std::pair<const_arg_type, raft::util::call_on_delete> build(uint64_t log_entry_index_end,
 									 uint64_t last_log_entry_term,
 									 uint64_t last_log_entry_cluster_time,
 									 uint64_t configuration_index,
@@ -439,9 +439,9 @@ namespace raft {
       {
 	return rv(msg)->candidate_id();
       }
-      static uint64_t last_log_index(const_arg_type msg)
+      static uint64_t log_index_end(const_arg_type msg)
       {
-	return rv(msg)->last_log_index();
+	return rv(msg)->log_index_end();
       }
       static uint64_t last_log_term(const_arg_type msg)
       {
@@ -509,14 +509,14 @@ namespace raft {
 	return aer(msg)->request_id();
       }
       // Beginning of range of entries appended
-      static uint64_t begin_index(const_arg_type msg)
+      static uint64_t index_begin(const_arg_type msg)
       {
-	return aer(msg)->begin_index();
+	return aer(msg)->index_begin();
       }
       // One after the last log entry appended
-      static uint64_t last_index(const_arg_type msg)
+      static uint64_t index_end(const_arg_type msg)
       {
-	return aer(msg)->last_index();
+	return aer(msg)->index_end();
       }
       static bool success(const_arg_type msg)
       {
@@ -552,9 +552,9 @@ namespace raft {
       {
 	return acc(msg)->leader_id();
       }
-      static uint64_t last_checkpoint_index(const_arg_type msg)
+      static uint64_t checkpoint_index_end(const_arg_type msg)
       {
-	return acc(msg)->last_checkpoint_header()->last_log_entry_index();
+	return acc(msg)->last_checkpoint_header()->log_entry_index_end();
       }
       static uint64_t last_checkpoint_term(const_arg_type msg)
       {
@@ -1131,7 +1131,7 @@ simple_configuration_description_builder to()
     class checkpoint_header_builder : public nested_builder_base<checkpoint_header_builder, raft::fbs::checkpoint_header>
     {
     private:
-      uint64_t last_log_entry_index_ = 0;
+      uint64_t log_entry_index_end_ = 0;
       uint64_t last_log_entry_term_ = 0;
       uint64_t last_log_entry_cluster_time_ = 0;
       uint64_t configuration_log_index_ = 0;
@@ -1170,14 +1170,14 @@ simple_configuration_description_builder to()
       }      
       void initialize(fbs_builder_type * bld)
       {
-	bld->add_last_log_entry_index(last_log_entry_index_);
+	bld->add_log_entry_index_end(log_entry_index_end_);
 	bld->add_last_log_entry_term(last_log_entry_term_);
 	bld->add_last_log_entry_cluster_time(last_log_entry_cluster_time_);
 	bld->add_configuration(checkpoint_);
       }
-      checkpoint_header_builder & last_log_entry_index(uint64_t val)
+      checkpoint_header_builder & log_entry_index_end(uint64_t val)
       {
-	last_log_entry_index_ = val;
+	log_entry_index_end_ = val;
 	return *this;
       }
       checkpoint_header_builder & last_log_entry_term(uint64_t val)
@@ -1215,14 +1215,14 @@ simple_configuration_description_builder to()
       }
     };
 
-    std::pair<checkpoint_header_traits::const_arg_type, raft::util::call_on_delete> checkpoint_header_traits::build(uint64_t last_log_entry_index,
+    std::pair<checkpoint_header_traits::const_arg_type, raft::util::call_on_delete> checkpoint_header_traits::build(uint64_t log_entry_index_end,
 														    uint64_t last_log_entry_term,
 														    uint64_t last_log_entry_cluster_time,
 														    uint64_t configuration_index,
 														    const uint8_t * configuration_description)
     {
       auto fbb = std::make_unique<::flatbuffers::FlatBufferBuilder>();
-      fbb->Finish(checkpoint_header_builder(*fbb).last_log_entry_index(last_log_entry_index).last_log_entry_term(last_log_entry_term).last_log_entry_cluster_time(last_log_entry_cluster_time).index(configuration_index).configuration(*configuration_description).finish());
+      fbb->Finish(checkpoint_header_builder(*fbb).log_entry_index_end(log_entry_index_end).last_log_entry_term(last_log_entry_term).last_log_entry_cluster_time(last_log_entry_cluster_time).index(configuration_index).configuration(*configuration_description).finish());
       auto ptr = ::flatbuffers::GetRoot<raft::fbs::checkpoint_header>(fbb->GetBufferPointer());
       return std::pair<checkpoint_header_traits::const_arg_type, raft::util::call_on_delete>(ptr, [f = std::move(fbb)](){});
     }
@@ -1234,7 +1234,7 @@ simple_configuration_description_builder to()
       uint64_t recipient_id_ = 0;
       uint64_t term_number_ = 0;
       uint64_t candidate_id_ = 0;
-      uint64_t last_log_index_ = 0;
+      uint64_t log_index_end_ = 0;
       uint64_t last_log_term_ = 0;
     public:
       void preinitialize()
@@ -1247,7 +1247,7 @@ simple_configuration_description_builder to()
 	bld->add_recipient_id(recipient_id_);
 	bld->add_term_number(term_number_);
 	bld->add_candidate_id(candidate_id_);
-	bld->add_last_log_index(last_log_index_);
+	bld->add_log_index_end(log_index_end_);
 	bld->add_last_log_term(last_log_term_);
       }
       vote_request_builder & request_id(uint64_t val)
@@ -1270,9 +1270,9 @@ simple_configuration_description_builder to()
 	candidate_id_ = val;
 	return *this;
       }
-      vote_request_builder & last_log_index(uint64_t val)
+      vote_request_builder & log_index_end(uint64_t val)
       {
-	last_log_index_ = val;
+	log_index_end_ = val;
 	return *this;
       }
       vote_request_builder & last_log_term(uint64_t val)
@@ -1379,9 +1379,9 @@ simple_configuration_description_builder to()
       uint64_t recipient_id_ = 0;
       uint64_t term_number_ = 0;
       uint64_t leader_id_ = 0;
-      uint64_t previous_log_index_ = 0;
+      uint64_t log_index_begin_ = 0;
       uint64_t previous_log_term_ = 0;
-      uint64_t leader_commit_index_ = 0;
+      uint64_t leader_commit_index_end_ = 0;
       std::vector<flatbuffers::Offset<raft::fbs::log_entries>> entries_vec_;
       ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>>> entries_;
     public:
@@ -1396,9 +1396,9 @@ simple_configuration_description_builder to()
 	bld->add_recipient_id(recipient_id_);
 	bld->add_term_number(term_number_);
 	bld->add_leader_id(leader_id_);
-	bld->add_previous_log_index(previous_log_index_);
+	bld->add_log_index_begin(log_index_begin_);
 	bld->add_previous_log_term(previous_log_term_);
-	bld->add_leader_commit_index(leader_commit_index_);
+	bld->add_leader_commit_index_end(leader_commit_index_end_);
 	bld->add_entries(entries_);
       }
 
@@ -1422,9 +1422,9 @@ simple_configuration_description_builder to()
 	leader_id_ = val;
 	return *this;
       }
-      append_entry_request_builder & previous_log_index(uint64_t val)
+      append_entry_request_builder & log_index_begin(uint64_t val)
       {
-	previous_log_index_ = val;
+	log_index_begin_ = val;
 	return *this;
       }
       append_entry_request_builder & previous_log_term(uint64_t val)
@@ -1432,9 +1432,9 @@ simple_configuration_description_builder to()
 	previous_log_term_ = val;
 	return *this;
       }
-      append_entry_request_builder & leader_commit_index(uint64_t val)
+      append_entry_request_builder & leader_commit_index_end(uint64_t val)
       {
-	leader_commit_index_ = val;
+	leader_commit_index_end_ = val;
 	return *this;
       }
       append_entry_request_builder & entry(const uint8_t & e)
@@ -1461,8 +1461,8 @@ simple_configuration_description_builder to()
       uint64_t term_number_ = 0;
       uint64_t request_term_number_ = 0;
       uint64_t request_id_ = 0;
-      uint64_t begin_index_ = 0;
-      uint64_t last_index_ = 0;
+      uint64_t index_begin_ = 0;
+      uint64_t index_end_ = 0;
       bool success_ = false;
     public:
       void preinitialize()
@@ -1475,8 +1475,8 @@ simple_configuration_description_builder to()
 	  bld->add_term_number(term_number_);
 	  bld->add_request_term_number(request_term_number_);
 	  bld->add_request_id(request_id_);
-	  bld->add_begin_index(begin_index_);
-	  bld->add_last_index(last_index_);
+	  bld->add_index_begin(index_begin_);
+	  bld->add_index_end(index_end_);
 	  bld->add_success(success_);
       }	
       append_entry_response_builder & recipient_id(uint64_t val)
@@ -1499,14 +1499,14 @@ simple_configuration_description_builder to()
 	request_id_ = val;
 	return *this;
       }
-      append_entry_response_builder & begin_index(uint64_t val)
+      append_entry_response_builder & index_begin(uint64_t val)
       {
-	begin_index_ = val;
+	index_begin_ = val;
 	return *this;
       }
-      append_entry_response_builder & last_index(uint64_t val)
+      append_entry_response_builder & index_end(uint64_t val)
       {
-	last_index_ = val;
+	index_end_ = val;
 	return *this;
       }
       append_entry_response_builder & success(bool val)

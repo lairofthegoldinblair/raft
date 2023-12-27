@@ -64,7 +64,7 @@ namespace raft {
       {
         typedef typename _Messages::vote_request_traits_type rv;
         BOOST_LOG_TRIVIAL(trace) << "vote_request(recipient_id=" << rv::recipient_id(msg) << ", term_number=" << rv::term_number(msg) <<
-          ", candidate_id=" << rv::candidate_id(msg) << ", last_log_index=" << rv::last_log_index(msg) << ", last_log_term=" << rv::last_log_term(msg) << ")";
+          ", candidate_id=" << rv::candidate_id(msg) << ", log_index_end=" << rv::log_index_end(msg) << ", last_log_term=" << rv::last_log_term(msg) << ")";
 	auto inner = serialization_type::serialize(std::move(msg));
         BOOST_LOG_TRIVIAL(trace) << "vote_request serialzed: " << inner.first;
 	static const std::size_t sz = sizeof(rpc_header);

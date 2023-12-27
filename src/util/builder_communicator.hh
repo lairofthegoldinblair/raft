@@ -37,10 +37,10 @@ namespace raft {
 			uint64_t recipient_id,
 			uint64_t term_number,
 			uint64_t candidate_id,
-			uint64_t last_log_index,
+			uint64_t log_index_end,
 			uint64_t last_log_term)
       {
-	auto msg = vote_request_builder().request_id(request_id).recipient_id(recipient_id).term_number(term_number).candidate_id(candidate_id).last_log_index(last_log_index).last_log_term(last_log_term).finish();
+	auto msg = vote_request_builder().request_id(request_id).recipient_id(recipient_id).term_number(term_number).candidate_id(candidate_id).log_index_end(log_index_end).last_log_term(last_log_term).finish();
 	this->send(ep, address, std::move(msg));	
       }
 
@@ -50,14 +50,14 @@ namespace raft {
                                 uint64_t recipient_id,
                                 uint64_t term_number,
                                 uint64_t leader_id,
-                                uint64_t previous_log_index,
+                                uint64_t log_index_begin,
                                 uint64_t previous_log_term,
-                                uint64_t leader_commit_index,
+                                uint64_t leader_commit_index_end,
                                 uint64_t num_entries,
                                 EntryProvider entries)
       {
 	append_entry_request_builder bld;
-	bld.request_id(request_id).recipient_id(recipient_id).term_number(term_number).leader_id(leader_id).previous_log_index(previous_log_index).previous_log_term(previous_log_term).leader_commit_index(leader_commit_index);
+	bld.request_id(request_id).recipient_id(recipient_id).term_number(term_number).leader_id(leader_id).log_index_begin(log_index_begin).previous_log_term(previous_log_term).leader_commit_index_end(leader_commit_index_end);
 	for(uint64_t i=0; i<num_entries; ++i) {
 	  bld.entry(entries(i));
 	}
@@ -70,11 +70,11 @@ namespace raft {
 				 uint64_t term_number,
 				 uint64_t request_term_number,
 				 uint64_t request_id,
-				 uint64_t begin_index,
-				 uint64_t last_index,
+				 uint64_t index_begin,
+				 uint64_t index_end,
 				 bool success)
       {
-	auto msg = append_entry_response_builder().recipient_id(recipient_id).term_number(term_number).request_term_number(request_term_number).request_id(request_id).begin_index(begin_index).last_index(last_index).success(success).finish();
+	auto msg = append_entry_response_builder().recipient_id(recipient_id).term_number(term_number).request_term_number(request_term_number).request_id(request_id).index_begin(index_begin).index_end(index_end).success(success).finish();
 	this->send(ep, address, std::move(msg));	
       }
 
@@ -104,7 +104,7 @@ namespace raft {
 	bld.request_id(request_id).recipient_id(recipient_id).term_number(term_number).leader_id(leader_id).checkpoint_begin(checkpoint_begin).checkpoint_end(checkpoint_end).checkpoint_done(checkpoint_done).data(std::move(data));
 	{
 	  auto chb = bld.last_checkpoint_header();
-	  chb.last_log_entry_index(checkpoint_header_traits::last_log_entry_index(&last_checkpoint_header));
+	  chb.log_entry_index_end(checkpoint_header_traits::log_entry_index_end(&last_checkpoint_header));
 	  chb.last_log_entry_term(checkpoint_header_traits::last_log_entry_term(&last_checkpoint_header));
           chb.last_log_entry_cluster_time(checkpoint_header_traits::last_log_entry_cluster_time(&last_checkpoint_header));
 	  chb.index(checkpoint_header_traits::index(&last_checkpoint_header));

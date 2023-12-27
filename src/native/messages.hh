@@ -67,7 +67,7 @@ namespace raft {
     class checkpoint_header
     {
     public:
-      uint64_t last_log_entry_index;
+      uint64_t log_entry_index_end;
       uint64_t last_log_entry_term;
       uint64_t last_log_entry_cluster_time;
       configuration_checkpoint configuration;
@@ -86,9 +86,9 @@ namespace raft {
       {
 	return cr->configuration.description;
       }
-      static uint64_t last_log_entry_index(const_arg_type cr)
+      static uint64_t log_entry_index_end(const_arg_type cr)
       {
-	return cr->last_log_entry_index;
+	return cr->log_entry_index_end;
       }
       static uint64_t last_log_entry_term(const_arg_type cr)
       {
@@ -98,14 +98,14 @@ namespace raft {
       {
 	return cr->last_log_entry_cluster_time;
       }
-      static std::pair<const_arg_type, raft::util::call_on_delete> build(uint64_t last_log_entry_index,
+      static std::pair<const_arg_type, raft::util::call_on_delete> build(uint64_t log_entry_index_end,
                                                                          uint64_t last_log_entry_term,
                                                                          uint64_t last_log_entry_cluster_time,
                                                                          uint64_t configuration_index,
                                                                          const configuration_description * configuration_description)
       {
 	auto tmp = new checkpoint_header();
-	tmp->last_log_entry_index = last_log_entry_index;
+	tmp->log_entry_index_end = log_entry_index_end;
 	tmp->last_log_entry_term = last_log_entry_term;
 	tmp->last_log_entry_cluster_time = last_log_entry_cluster_time;
 	tmp->configuration.index = configuration_index;
@@ -213,7 +213,7 @@ namespace raft {
       uint64_t recipient_id;
       uint64_t term_number;
       uint64_t candidate_id;
-      uint64_t last_log_index;
+      uint64_t log_index_end;
       uint64_t last_log_term;
 
       void set_request_id(uint64_t value)
@@ -232,9 +232,9 @@ namespace raft {
       {
 	candidate_id = value;
       }
-      void set_last_log_index(uint64_t value)
+      void set_log_index_end(uint64_t value)
       {
-	last_log_index = value;
+	log_index_end = value;
       }
       void set_last_log_term(uint64_t value)
       {
@@ -264,9 +264,9 @@ namespace raft {
       {
 	return msg.candidate_id;
       }
-      static uint64_t last_log_index(const_arg_type msg)
+      static uint64_t log_index_end(const_arg_type msg)
       {
-	return msg.last_log_index;
+	return msg.log_index_end;
       }
       static uint64_t last_log_term(const_arg_type msg)
       {
@@ -326,11 +326,11 @@ namespace raft {
       // 2) If two logs have entries at the same index with the same term then all preceeding entries
       // also agree
       //
-      uint64_t previous_log_index;
-      // The last term sent (only valid if previous_log_index > 0).
+      uint64_t log_index_begin;
+      // The last term sent (only valid if log_index_begin > 0).
       uint64_t previous_log_term;
       // Last log entry in message that is committed on leader
-      uint64_t leader_commit_index;
+      uint64_t leader_commit_index_end;
       std::vector<log_entry_type> entry;
 
       void set_recipient_id(uint64_t value)
@@ -345,17 +345,17 @@ namespace raft {
       {
       	leader_id = value;
       }
-      void set_previous_log_index(uint64_t value)
+      void set_log_index_begin(uint64_t value)
       {
-      	previous_log_index = value;
+      	log_index_begin = value;
       }
       void set_previous_log_term(uint64_t value)
       {
       	previous_log_term = value;
       }
-      void set_leader_commit_index(uint64_t value)
+      void set_leader_commit_index_end(uint64_t value)
       {
-      	leader_commit_index = value;
+      	leader_commit_index_end = value;
       }
       void add_entry(const log_entry_type & e)
       {
@@ -395,19 +395,19 @@ namespace raft {
       // 2) If two logs have entries at the same index with the same term then all preceeding entries
       // also agree
       //
-      static uint64_t previous_log_index(const_arg_type ae)
+      static uint64_t log_index_begin(const_arg_type ae)
       {
-	return ae.previous_log_index;
+	return ae.log_index_begin;
       }
-      // The last term sent (only valid if previous_log_index > 0).
+      // The last term sent (only valid if log_index_begin > 0).
       static uint64_t previous_log_term(const_arg_type ae)
       {
 	return ae.previous_log_term;
       }
       // Last log entry in message that is committed on leader
-      static uint64_t leader_commit_index(const_arg_type ae)
+      static uint64_t leader_commit_index_end(const_arg_type ae)
       {
-	return ae.leader_commit_index;
+	return ae.leader_commit_index_end;
       }
       static std::size_t num_entries(const_arg_type ae)
       {
@@ -435,9 +435,9 @@ namespace raft {
       uint64_t request_term_number;
       uint64_t request_id;
       // Beginning of range of entries appended
-      uint64_t begin_index;
+      uint64_t index_begin;
       // One after the last log entry appended
-      uint64_t last_index;
+      uint64_t index_end;
       bool success;
     };
 
@@ -466,14 +466,14 @@ namespace raft {
 	return ae.request_id;
       }
       // Beginning of range of entries appended
-      static uint64_t begin_index(const_arg_type ae)
+      static uint64_t index_begin(const_arg_type ae)
       {
-	return ae.begin_index;
+	return ae.index_begin;
       }
       // One after the last log entry appended
-      static uint64_t last_index(const_arg_type ae)
+      static uint64_t index_end(const_arg_type ae)
       {
-	return ae.last_index;
+	return ae.index_end;
       }
       static bool success(const_arg_type ae)
       {
@@ -522,9 +522,9 @@ namespace raft {
       {
 	return ae.leader_id;
       }
-      static uint64_t last_checkpoint_index(const_arg_type ae)
+      static uint64_t checkpoint_index_end(const_arg_type ae)
       {
-	return ae.last_checkpoint_header.last_log_entry_index;
+	return ae.last_checkpoint_header.log_entry_index_end;
       }
       static uint64_t last_checkpoint_term(const_arg_type ae)
       {
@@ -1085,9 +1085,9 @@ namespace raft {
 	}
       }
       
-      checkpoint_header_builder & last_log_entry_index(uint64_t val)
+      checkpoint_header_builder & log_entry_index_end(uint64_t val)
       {
-	get_object()->last_log_entry_index = val;
+	get_object()->log_entry_index_end = val;
 	return *this;
       }
       checkpoint_header_builder & last_log_entry_term(uint64_t val)
@@ -1128,7 +1128,7 @@ namespace raft {
 	  obj_->recipient_id = 0;
 	  obj_->term_number = 0;
 	  obj_->candidate_id = 0;
-	  obj_->last_log_index = 0;
+	  obj_->log_index_end = 0;
 	  obj_->last_log_term = 0;
 	}
 	return obj_.get();
@@ -1154,9 +1154,9 @@ namespace raft {
 	get_object()->candidate_id = val;
 	return *this;
       }
-      vote_request_builder & last_log_index(uint64_t val)
+      vote_request_builder & log_index_end(uint64_t val)
       {
-	get_object()->last_log_index = val;
+	get_object()->log_index_end = val;
 	return *this;
       }
       vote_request_builder & last_log_term(uint64_t val)
@@ -1261,9 +1261,9 @@ namespace raft {
 	  obj_->recipient_id = 0;
 	  obj_->term_number = 0;
 	  obj_->leader_id = 0;
-	  obj_->previous_log_index = 0;
+	  obj_->log_index_begin = 0;
 	  obj_->previous_log_term = 0;
-	  obj_->leader_commit_index = 0;
+	  obj_->leader_commit_index_end = 0;
 	}
 	return obj_.get();
       }
@@ -1288,9 +1288,9 @@ namespace raft {
 	get_object()->leader_id = val;
 	return *this;
       }
-      append_entry_request_builder & previous_log_index(uint64_t val)
+      append_entry_request_builder & log_index_begin(uint64_t val)
       {
-	get_object()->previous_log_index = val;
+	get_object()->log_index_begin = val;
 	return *this;
       }
       append_entry_request_builder & previous_log_term(uint64_t val)
@@ -1298,9 +1298,9 @@ namespace raft {
 	get_object()->previous_log_term = val;
 	return *this;
       }
-      append_entry_request_builder & leader_commit_index(uint64_t val)
+      append_entry_request_builder & leader_commit_index_end(uint64_t val)
       {
-	get_object()->leader_commit_index = val;
+	get_object()->leader_commit_index_end = val;
 	return *this;
       }
       append_entry_request_builder & entry(const _LogEntry & e)
@@ -1332,8 +1332,8 @@ namespace raft {
 	  obj_->term_number = 0;
 	  obj_->request_term_number = 0;
 	  obj_->request_id  = 0;
-	  obj_->begin_index = 0;
-	  obj_->last_index = 0;
+	  obj_->index_begin = 0;
+	  obj_->index_end = 0;
 	  obj_->success = false;
 	}
 	return obj_.get();
@@ -1359,14 +1359,14 @@ namespace raft {
 	get_object()->request_id = val;
 	return *this;
       }
-      append_entry_response_builder & begin_index(uint64_t val)
+      append_entry_response_builder & index_begin(uint64_t val)
       {
-	get_object()->begin_index = val;
+	get_object()->index_begin = val;
 	return *this;
       }
-      append_entry_response_builder & last_index(uint64_t val)
+      append_entry_response_builder & index_end(uint64_t val)
       {
-	get_object()->last_index = val;
+	get_object()->index_end = val;
 	return *this;
       }
       append_entry_response_builder & success(bool val)

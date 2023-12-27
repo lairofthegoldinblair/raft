@@ -294,7 +294,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftRequestVoteSerializationTest, _TestType, test_
   typedef typename _TestType::builders_type::vote_request_builder_type vote_request_builder;
   typedef typename _TestType::serialization_type serialization_type;
   
-  auto msg = vote_request_builder().recipient_id(99).term_number(1).candidate_id(887).request_id(192345).last_log_index(888542).last_log_term(16).finish();
+  auto msg = vote_request_builder().recipient_id(99).term_number(1).candidate_id(887).request_id(192345).log_index_end(888542).last_log_term(16).finish();
 
   auto result = serialization_type::serialize(std::move(msg));
 
@@ -303,7 +303,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftRequestVoteSerializationTest, _TestType, test_
   BOOST_CHECK_EQUAL(1U, vote_request_traits::term_number(msg2));
   BOOST_CHECK_EQUAL(887U, vote_request_traits::candidate_id(msg2));
   BOOST_CHECK_EQUAL(192345U, vote_request_traits::request_id(msg2));
-  BOOST_CHECK_EQUAL(888542U, vote_request_traits::last_log_index(msg2));
+  BOOST_CHECK_EQUAL(888542U, vote_request_traits::log_index_end(msg2));
   BOOST_CHECK_EQUAL(16U, vote_request_traits::last_log_term(msg2));
 }
 
@@ -343,7 +343,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioSerializationTest, _TestType, test_types)
 
   uint64_t request_id = 597134;
   uint64_t recipient_id = 9032345;
-  auto msg = append_entry_request_builder().request_id(request_id).recipient_id(recipient_id).term_number(99234).leader_id(23445234).previous_log_index(734725345).previous_log_term(3492385345).leader_commit_index(3483458).entry(le1).entry(le2).finish();
+  auto msg = append_entry_request_builder().request_id(request_id).recipient_id(recipient_id).term_number(99234).leader_id(23445234).log_index_begin(734725345).previous_log_term(3492385345).leader_commit_index_end(3483458).entry(le1).entry(le2).finish();
 
   auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
   auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
@@ -361,7 +361,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAppendResponseSerializationTest, _TestType, te
   typedef typename _TestType::builders_type::append_entry_response_builder_type append_entry_response_builder;
   typedef typename _TestType::serialization_type serialization_type;
   
-  auto msg = append_entry_response_builder().recipient_id(222).term_number(10).request_term_number(1).request_id(192345).begin_index(236).last_index(851).success(false).finish();
+  auto msg = append_entry_response_builder().recipient_id(222).term_number(10).request_term_number(1).request_id(192345).index_begin(236).index_end(851).success(false).finish();
 
   auto result = serialization_type::serialize(std::move(msg));
 
@@ -370,8 +370,8 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAppendResponseSerializationTest, _TestType, te
   BOOST_CHECK_EQUAL(10U, append_entry_response_traits::term_number(msg2));
   BOOST_CHECK_EQUAL(1U, append_entry_response_traits::request_term_number(msg2));
   BOOST_CHECK_EQUAL(192345U, append_entry_response_traits::request_id(msg2));
-  BOOST_CHECK_EQUAL(236U, append_entry_response_traits::begin_index(msg2));
-  BOOST_CHECK_EQUAL(851U, append_entry_response_traits::last_index(msg2));
+  BOOST_CHECK_EQUAL(236U, append_entry_response_traits::index_begin(msg2));
+  BOOST_CHECK_EQUAL(851U, append_entry_response_traits::index_end(msg2));
   BOOST_CHECK(!append_entry_response_traits::success(msg2));
 }
 
@@ -421,7 +421,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftRequestVoteAsioSerializationTest, _TestType, t
   typedef typename _TestType::builders_type::vote_request_builder_type vote_request_builder;
   typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
   
-  auto msg = vote_request_builder().recipient_id(99).term_number(1).candidate_id(887).request_id(192345).last_log_index(888542).last_log_term(16).finish();
+  auto msg = vote_request_builder().recipient_id(99).term_number(1).candidate_id(887).request_id(192345).log_index_end(888542).last_log_term(16).finish();
 
   auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
   auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
@@ -432,7 +432,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftRequestVoteAsioSerializationTest, _TestType, t
   BOOST_CHECK_EQUAL(1U, vote_request_traits::term_number(msg2));
   BOOST_CHECK_EQUAL(887U, vote_request_traits::candidate_id(msg2));
   BOOST_CHECK_EQUAL(192345U, vote_request_traits::request_id(msg2));
-  BOOST_CHECK_EQUAL(888542U, vote_request_traits::last_log_index(msg2));
+  BOOST_CHECK_EQUAL(888542U, vote_request_traits::log_index_end(msg2));
   BOOST_CHECK_EQUAL(16U, vote_request_traits::last_log_term(msg2));
 }
 
@@ -462,7 +462,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAppendEntryResponseAsioSerializationTest, _Tes
   typedef typename _TestType::builders_type::append_entry_response_builder_type append_entry_response_builder;
   typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
   
-  auto msg = append_entry_response_builder().recipient_id(222).term_number(10).request_term_number(1).request_id(192345).begin_index(236).last_index(851).success(false).finish();
+  auto msg = append_entry_response_builder().recipient_id(222).term_number(10).request_term_number(1).request_id(192345).index_begin(236).index_end(851).success(false).finish();
 
   auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
   auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
@@ -473,8 +473,8 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAppendEntryResponseAsioSerializationTest, _Tes
   BOOST_CHECK_EQUAL(10U, append_entry_response_traits::term_number(msg2));
   BOOST_CHECK_EQUAL(1U, append_entry_response_traits::request_term_number(msg2));
   BOOST_CHECK_EQUAL(192345U, append_entry_response_traits::request_id(msg2));
-  BOOST_CHECK_EQUAL(236U, append_entry_response_traits::begin_index(msg2));
-  BOOST_CHECK_EQUAL(851U, append_entry_response_traits::last_index(msg2));
+  BOOST_CHECK_EQUAL(236U, append_entry_response_traits::index_begin(msg2));
+  BOOST_CHECK_EQUAL(851U, append_entry_response_traits::index_end(msg2));
   BOOST_CHECK(!append_entry_response_traits::success(msg2));
 }
 
@@ -1134,7 +1134,7 @@ BOOST_AUTO_TEST_CASE(RaftFlatBufferRequestVoteTest)
   rvb.add_recipient_id(0);
   rvb.add_term_number(3);
   rvb.add_candidate_id(1);
-  rvb.add_last_log_index(3);
+  rvb.add_log_index_end(3);
   rvb.add_last_log_term(2);
   auto rv = rvb.Finish();
   auto m = raft::fbs::Createraft_message(fbb, raft::fbs::any_message_vote_request, rv.Union());
@@ -1151,7 +1151,7 @@ BOOST_AUTO_TEST_CASE(RaftFlatBufferRequestVoteTest)
   BOOST_CHECK_EQUAL(0U, vote_request_traits::recipient_id(arg));
   BOOST_CHECK_EQUAL(3U, vote_request_traits::term_number(arg));
   BOOST_CHECK_EQUAL(1U, vote_request_traits::candidate_id(arg));
-  BOOST_CHECK_EQUAL(3U, vote_request_traits::last_log_index(arg));
+  BOOST_CHECK_EQUAL(3U, vote_request_traits::log_index_end(arg));
   BOOST_CHECK_EQUAL(2U, vote_request_traits::last_log_term(arg));
 }
 
@@ -1207,9 +1207,9 @@ BOOST_AUTO_TEST_CASE(RaftFlatBufferAppendEntryTest)
   aeb.add_recipient_id(10345);
   aeb.add_term_number(82342);
   aeb.add_leader_id(7342);
-  aeb.add_previous_log_index(3434);
+  aeb.add_log_index_begin(3434);
   aeb.add_previous_log_term(55234);
-  aeb.add_leader_commit_index(525123);
+  aeb.add_leader_commit_index_end(525123);
   aeb.add_entries(e);
   auto ae = aeb.Finish();
   auto m = raft::fbs::Createraft_message(fbb, raft::fbs::any_message_append_entry_request, ae.Union());
@@ -1453,7 +1453,7 @@ BOOST_AUTO_TEST_CASE(RaftFlatBufferConstructProtocolTest)
   test_raft_type::configuration_manager_type cm(0);
   
   l.append(raft::fbs::log_entry_traits::create_configuration(0, 0, configuration_description_view(five_servers)));
-  l.update_header(0, test_raft_type::INVALID_PEER_ID);
+  l.update_header(0, test_raft_type::INVALID_PEER_ID());
   test_raft_type proto(comm, l, store, cm);
 
   flatbuffers::FlatBufferBuilder fbb;
@@ -1462,7 +1462,7 @@ BOOST_AUTO_TEST_CASE(RaftFlatBufferConstructProtocolTest)
   rvb.add_recipient_id(0);
   rvb.add_term_number(term);
   rvb.add_candidate_id(1);
-  rvb.add_last_log_index(1);
+  rvb.add_log_index_end(1);
   rvb.add_last_log_term(0);
   auto rv = rvb.Finish();
   auto m = raft::fbs::Createraft_message(fbb, raft::fbs::any_message_vote_request, rv.Union());

@@ -610,7 +610,7 @@ struct vote_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_RECIPIENT_ID = 6,
     VT_TERM_NUMBER = 8,
     VT_CANDIDATE_ID = 10,
-    VT_LAST_LOG_INDEX = 12,
+    VT_LOG_INDEX_END = 12,
     VT_LAST_LOG_TERM = 14
   };
   uint64_t request_id() const {
@@ -625,8 +625,8 @@ struct vote_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint64_t candidate_id() const {
     return GetField<uint64_t>(VT_CANDIDATE_ID, 0);
   }
-  uint64_t last_log_index() const {
-    return GetField<uint64_t>(VT_LAST_LOG_INDEX, 0);
+  uint64_t log_index_end() const {
+    return GetField<uint64_t>(VT_LOG_INDEX_END, 0);
   }
   uint64_t last_log_term() const {
     return GetField<uint64_t>(VT_LAST_LOG_TERM, 0);
@@ -637,7 +637,7 @@ struct vote_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID, 8) &&
            VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
            VerifyField<uint64_t>(verifier, VT_CANDIDATE_ID, 8) &&
-           VerifyField<uint64_t>(verifier, VT_LAST_LOG_INDEX, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LOG_INDEX_END, 8) &&
            VerifyField<uint64_t>(verifier, VT_LAST_LOG_TERM, 8) &&
            verifier.EndTable();
   }
@@ -659,8 +659,8 @@ struct vote_requestBuilder {
   void add_candidate_id(uint64_t candidate_id) {
     fbb_.AddElement<uint64_t>(vote_request::VT_CANDIDATE_ID, candidate_id, 0);
   }
-  void add_last_log_index(uint64_t last_log_index) {
-    fbb_.AddElement<uint64_t>(vote_request::VT_LAST_LOG_INDEX, last_log_index, 0);
+  void add_log_index_end(uint64_t log_index_end) {
+    fbb_.AddElement<uint64_t>(vote_request::VT_LOG_INDEX_END, log_index_end, 0);
   }
   void add_last_log_term(uint64_t last_log_term) {
     fbb_.AddElement<uint64_t>(vote_request::VT_LAST_LOG_TERM, last_log_term, 0);
@@ -682,11 +682,11 @@ inline ::flatbuffers::Offset<vote_request> Createvote_request(
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t candidate_id = 0,
-    uint64_t last_log_index = 0,
+    uint64_t log_index_end = 0,
     uint64_t last_log_term = 0) {
   vote_requestBuilder builder_(_fbb);
   builder_.add_last_log_term(last_log_term);
-  builder_.add_last_log_index(last_log_index);
+  builder_.add_log_index_end(log_index_end);
   builder_.add_candidate_id(candidate_id);
   builder_.add_term_number(term_number);
   builder_.add_recipient_id(recipient_id);
@@ -837,9 +837,9 @@ struct append_entry_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
     VT_RECIPIENT_ID = 6,
     VT_TERM_NUMBER = 8,
     VT_LEADER_ID = 10,
-    VT_PREVIOUS_LOG_INDEX = 12,
+    VT_LOG_INDEX_BEGIN = 12,
     VT_PREVIOUS_LOG_TERM = 14,
-    VT_LEADER_COMMIT_INDEX = 16,
+    VT_LEADER_COMMIT_INDEX_END = 16,
     VT_ENTRIES = 18
   };
   uint64_t request_id() const {
@@ -854,14 +854,14 @@ struct append_entry_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
   uint64_t leader_id() const {
     return GetField<uint64_t>(VT_LEADER_ID, 0);
   }
-  uint64_t previous_log_index() const {
-    return GetField<uint64_t>(VT_PREVIOUS_LOG_INDEX, 0);
+  uint64_t log_index_begin() const {
+    return GetField<uint64_t>(VT_LOG_INDEX_BEGIN, 0);
   }
   uint64_t previous_log_term() const {
     return GetField<uint64_t>(VT_PREVIOUS_LOG_TERM, 0);
   }
-  uint64_t leader_commit_index() const {
-    return GetField<uint64_t>(VT_LEADER_COMMIT_INDEX, 0);
+  uint64_t leader_commit_index_end() const {
+    return GetField<uint64_t>(VT_LEADER_COMMIT_INDEX_END, 0);
   }
   const ::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>> *entries() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>> *>(VT_ENTRIES);
@@ -872,9 +872,9 @@ struct append_entry_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
            VerifyField<uint64_t>(verifier, VT_RECIPIENT_ID, 8) &&
            VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
            VerifyField<uint64_t>(verifier, VT_LEADER_ID, 8) &&
-           VerifyField<uint64_t>(verifier, VT_PREVIOUS_LOG_INDEX, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LOG_INDEX_BEGIN, 8) &&
            VerifyField<uint64_t>(verifier, VT_PREVIOUS_LOG_TERM, 8) &&
-           VerifyField<uint64_t>(verifier, VT_LEADER_COMMIT_INDEX, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LEADER_COMMIT_INDEX_END, 8) &&
            VerifyOffset(verifier, VT_ENTRIES) &&
            verifier.VerifyVector(entries()) &&
            verifier.VerifyVectorOfTables(entries()) &&
@@ -898,14 +898,14 @@ struct append_entry_requestBuilder {
   void add_leader_id(uint64_t leader_id) {
     fbb_.AddElement<uint64_t>(append_entry_request::VT_LEADER_ID, leader_id, 0);
   }
-  void add_previous_log_index(uint64_t previous_log_index) {
-    fbb_.AddElement<uint64_t>(append_entry_request::VT_PREVIOUS_LOG_INDEX, previous_log_index, 0);
+  void add_log_index_begin(uint64_t log_index_begin) {
+    fbb_.AddElement<uint64_t>(append_entry_request::VT_LOG_INDEX_BEGIN, log_index_begin, 0);
   }
   void add_previous_log_term(uint64_t previous_log_term) {
     fbb_.AddElement<uint64_t>(append_entry_request::VT_PREVIOUS_LOG_TERM, previous_log_term, 0);
   }
-  void add_leader_commit_index(uint64_t leader_commit_index) {
-    fbb_.AddElement<uint64_t>(append_entry_request::VT_LEADER_COMMIT_INDEX, leader_commit_index, 0);
+  void add_leader_commit_index_end(uint64_t leader_commit_index_end) {
+    fbb_.AddElement<uint64_t>(append_entry_request::VT_LEADER_COMMIT_INDEX_END, leader_commit_index_end, 0);
   }
   void add_entries(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>>> entries) {
     fbb_.AddOffset(append_entry_request::VT_ENTRIES, entries);
@@ -927,14 +927,14 @@ inline ::flatbuffers::Offset<append_entry_request> Createappend_entry_request(
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t leader_id = 0,
-    uint64_t previous_log_index = 0,
+    uint64_t log_index_begin = 0,
     uint64_t previous_log_term = 0,
-    uint64_t leader_commit_index = 0,
+    uint64_t leader_commit_index_end = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<raft::fbs::log_entries>>> entries = 0) {
   append_entry_requestBuilder builder_(_fbb);
-  builder_.add_leader_commit_index(leader_commit_index);
+  builder_.add_leader_commit_index_end(leader_commit_index_end);
   builder_.add_previous_log_term(previous_log_term);
-  builder_.add_previous_log_index(previous_log_index);
+  builder_.add_log_index_begin(log_index_begin);
   builder_.add_leader_id(leader_id);
   builder_.add_term_number(term_number);
   builder_.add_recipient_id(recipient_id);
@@ -949,9 +949,9 @@ inline ::flatbuffers::Offset<append_entry_request> Createappend_entry_requestDir
     uint64_t recipient_id = 0,
     uint64_t term_number = 0,
     uint64_t leader_id = 0,
-    uint64_t previous_log_index = 0,
+    uint64_t log_index_begin = 0,
     uint64_t previous_log_term = 0,
-    uint64_t leader_commit_index = 0,
+    uint64_t leader_commit_index_end = 0,
     const std::vector<::flatbuffers::Offset<raft::fbs::log_entries>> *entries = nullptr) {
   auto entries__ = entries ? _fbb.CreateVector<::flatbuffers::Offset<raft::fbs::log_entries>>(*entries) : 0;
   return raft::fbs::Createappend_entry_request(
@@ -960,9 +960,9 @@ inline ::flatbuffers::Offset<append_entry_request> Createappend_entry_requestDir
       recipient_id,
       term_number,
       leader_id,
-      previous_log_index,
+      log_index_begin,
       previous_log_term,
-      leader_commit_index,
+      leader_commit_index_end,
       entries__);
 }
 
@@ -973,8 +973,8 @@ struct append_entry_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Ta
     VT_TERM_NUMBER = 6,
     VT_REQUEST_TERM_NUMBER = 8,
     VT_REQUEST_ID = 10,
-    VT_BEGIN_INDEX = 12,
-    VT_LAST_INDEX = 14,
+    VT_INDEX_BEGIN = 12,
+    VT_INDEX_END = 14,
     VT_SUCCESS = 16
   };
   uint64_t recipient_id() const {
@@ -989,11 +989,11 @@ struct append_entry_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Ta
   uint64_t request_id() const {
     return GetField<uint64_t>(VT_REQUEST_ID, 0);
   }
-  uint64_t begin_index() const {
-    return GetField<uint64_t>(VT_BEGIN_INDEX, 0);
+  uint64_t index_begin() const {
+    return GetField<uint64_t>(VT_INDEX_BEGIN, 0);
   }
-  uint64_t last_index() const {
-    return GetField<uint64_t>(VT_LAST_INDEX, 0);
+  uint64_t index_end() const {
+    return GetField<uint64_t>(VT_INDEX_END, 0);
   }
   bool success() const {
     return GetField<uint8_t>(VT_SUCCESS, 0) != 0;
@@ -1004,8 +1004,8 @@ struct append_entry_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Ta
            VerifyField<uint64_t>(verifier, VT_TERM_NUMBER, 8) &&
            VerifyField<uint64_t>(verifier, VT_REQUEST_TERM_NUMBER, 8) &&
            VerifyField<uint64_t>(verifier, VT_REQUEST_ID, 8) &&
-           VerifyField<uint64_t>(verifier, VT_BEGIN_INDEX, 8) &&
-           VerifyField<uint64_t>(verifier, VT_LAST_INDEX, 8) &&
+           VerifyField<uint64_t>(verifier, VT_INDEX_BEGIN, 8) &&
+           VerifyField<uint64_t>(verifier, VT_INDEX_END, 8) &&
            VerifyField<uint8_t>(verifier, VT_SUCCESS, 1) &&
            verifier.EndTable();
   }
@@ -1027,11 +1027,11 @@ struct append_entry_responseBuilder {
   void add_request_id(uint64_t request_id) {
     fbb_.AddElement<uint64_t>(append_entry_response::VT_REQUEST_ID, request_id, 0);
   }
-  void add_begin_index(uint64_t begin_index) {
-    fbb_.AddElement<uint64_t>(append_entry_response::VT_BEGIN_INDEX, begin_index, 0);
+  void add_index_begin(uint64_t index_begin) {
+    fbb_.AddElement<uint64_t>(append_entry_response::VT_INDEX_BEGIN, index_begin, 0);
   }
-  void add_last_index(uint64_t last_index) {
-    fbb_.AddElement<uint64_t>(append_entry_response::VT_LAST_INDEX, last_index, 0);
+  void add_index_end(uint64_t index_end) {
+    fbb_.AddElement<uint64_t>(append_entry_response::VT_INDEX_END, index_end, 0);
   }
   void add_success(bool success) {
     fbb_.AddElement<uint8_t>(append_entry_response::VT_SUCCESS, static_cast<uint8_t>(success), 0);
@@ -1053,12 +1053,12 @@ inline ::flatbuffers::Offset<append_entry_response> Createappend_entry_response(
     uint64_t term_number = 0,
     uint64_t request_term_number = 0,
     uint64_t request_id = 0,
-    uint64_t begin_index = 0,
-    uint64_t last_index = 0,
+    uint64_t index_begin = 0,
+    uint64_t index_end = 0,
     bool success = false) {
   append_entry_responseBuilder builder_(_fbb);
-  builder_.add_last_index(last_index);
-  builder_.add_begin_index(begin_index);
+  builder_.add_index_end(index_end);
+  builder_.add_index_begin(index_begin);
   builder_.add_request_id(request_id);
   builder_.add_request_term_number(request_term_number);
   builder_.add_term_number(term_number);
@@ -1137,13 +1137,13 @@ inline ::flatbuffers::Offset<configuration_checkpoint> Createconfiguration_check
 struct checkpoint_header FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef checkpoint_headerBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_LAST_LOG_ENTRY_INDEX = 4,
+    VT_LOG_ENTRY_INDEX_END = 4,
     VT_LAST_LOG_ENTRY_TERM = 6,
     VT_LAST_LOG_ENTRY_CLUSTER_TIME = 8,
     VT_CONFIGURATION = 10
   };
-  uint64_t last_log_entry_index() const {
-    return GetField<uint64_t>(VT_LAST_LOG_ENTRY_INDEX, 0);
+  uint64_t log_entry_index_end() const {
+    return GetField<uint64_t>(VT_LOG_ENTRY_INDEX_END, 0);
   }
   uint64_t last_log_entry_term() const {
     return GetField<uint64_t>(VT_LAST_LOG_ENTRY_TERM, 0);
@@ -1156,7 +1156,7 @@ struct checkpoint_header FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table 
   }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
-           VerifyField<uint64_t>(verifier, VT_LAST_LOG_ENTRY_INDEX, 8) &&
+           VerifyField<uint64_t>(verifier, VT_LOG_ENTRY_INDEX_END, 8) &&
            VerifyField<uint64_t>(verifier, VT_LAST_LOG_ENTRY_TERM, 8) &&
            VerifyField<uint64_t>(verifier, VT_LAST_LOG_ENTRY_CLUSTER_TIME, 8) &&
            VerifyOffset(verifier, VT_CONFIGURATION) &&
@@ -1169,8 +1169,8 @@ struct checkpoint_headerBuilder {
   typedef checkpoint_header Table;
   ::flatbuffers::FlatBufferBuilder &fbb_;
   ::flatbuffers::uoffset_t start_;
-  void add_last_log_entry_index(uint64_t last_log_entry_index) {
-    fbb_.AddElement<uint64_t>(checkpoint_header::VT_LAST_LOG_ENTRY_INDEX, last_log_entry_index, 0);
+  void add_log_entry_index_end(uint64_t log_entry_index_end) {
+    fbb_.AddElement<uint64_t>(checkpoint_header::VT_LOG_ENTRY_INDEX_END, log_entry_index_end, 0);
   }
   void add_last_log_entry_term(uint64_t last_log_entry_term) {
     fbb_.AddElement<uint64_t>(checkpoint_header::VT_LAST_LOG_ENTRY_TERM, last_log_entry_term, 0);
@@ -1194,14 +1194,14 @@ struct checkpoint_headerBuilder {
 
 inline ::flatbuffers::Offset<checkpoint_header> Createcheckpoint_header(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    uint64_t last_log_entry_index = 0,
+    uint64_t log_entry_index_end = 0,
     uint64_t last_log_entry_term = 0,
     uint64_t last_log_entry_cluster_time = 0,
     ::flatbuffers::Offset<raft::fbs::configuration_checkpoint> configuration = 0) {
   checkpoint_headerBuilder builder_(_fbb);
   builder_.add_last_log_entry_cluster_time(last_log_entry_cluster_time);
   builder_.add_last_log_entry_term(last_log_entry_term);
-  builder_.add_last_log_entry_index(last_log_entry_index);
+  builder_.add_log_entry_index_end(log_entry_index_end);
   builder_.add_configuration(configuration);
   return builder_.Finish();
 }

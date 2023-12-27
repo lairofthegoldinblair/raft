@@ -38,7 +38,7 @@ table vote_request
   recipient_id:ulong;
   term_number:ulong;
   candidate_id:ulong;
-  last_log_index:ulong;
+  log_index_end:ulong;
   last_log_term:ulong;
 }
 
@@ -72,11 +72,11 @@ table append_entry_request
   // by ensuring that a peer never appends to its log from a leader unless the content of the last entry is correct; by
   // Part 1) the content of that last entry may be specified by sending the (index,term) from the leader on every append request.
   // One after the last log entry sent.  If no log entries sent yet then 0.
-  previous_log_index:ulong;
-  // The last term sent (only valid if previous_log_index > 0).
+  log_index_begin:ulong;
+  // The last term sent (only valid if log_index_begin > 0).
   previous_log_term:ulong;
-  // Last log entry in message that is committed on leader
-  leader_commit_index:ulong;
+  // One past last log entry in message that is committed on leader
+  leader_commit_index_end:ulong;
   // Log entries in nested format
   entries:[log_entries];
 }
@@ -88,9 +88,9 @@ table append_entry_response
   request_term_number:ulong;
   request_id:ulong;
   // Beginning of range of entries appended
-  begin_index:ulong;
+  index_begin:ulong;
   // One after the last log entry appended
-  last_index:ulong;
+  index_end:ulong;
   success:bool;
 }
 
@@ -102,7 +102,7 @@ table configuration_checkpoint
 
 table checkpoint_header
 {
-  last_log_entry_index:ulong;
+  log_entry_index_end:ulong;
   last_log_entry_term:ulong;
   last_log_entry_cluster_time:ulong;
   configuration:configuration_checkpoint;

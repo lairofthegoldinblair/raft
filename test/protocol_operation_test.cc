@@ -164,7 +164,7 @@ struct RaftProtocolOperationTestFixture
 
   vote_request_operation_type * create_vote_request_operation(uint64_t request_id)
   {
-    return new vote_request_operation_type(vote_request_builder().recipient_id(99).term_number(1).candidate_id(887).request_id(request_id).last_log_index(888542).last_log_term(16).finish());
+    return new vote_request_operation_type(vote_request_builder().recipient_id(99).term_number(1).candidate_id(887).request_id(request_id).log_index_end(888542).last_log_term(16).finish());
   }
   vote_response_operation_type * create_vote_response_operation(uint64_t request_id)
   {
@@ -182,12 +182,12 @@ struct RaftProtocolOperationTestFixture
     auto le2 = log_entry_builder().term(93443434542).data("fjasdjfa;sldfjalsdjfldskfjsdlkfjasldfjl").finish();
 
     uint64_t recipient_id = 9032345;
-    auto msg = append_entry_request_builder().request_id(request_id).recipient_id(recipient_id).term_number(99234).leader_id(23445234).previous_log_index(734725345).previous_log_term(3492385345).leader_commit_index(3483458).entry(le1).entry(le2).finish();
+    auto msg = append_entry_request_builder().request_id(request_id).recipient_id(recipient_id).term_number(99234).leader_id(23445234).log_index_begin(734725345).previous_log_term(3492385345).leader_commit_index_end(3483458).entry(le1).entry(le2).finish();
     return new append_entry_request_operation_type(std::move(msg));
   }
   append_entry_response_operation_type * create_append_entry_response_operation(uint64_t request_id)
   {
-    auto msg = append_entry_response_builder().recipient_id(222).term_number(10).request_term_number(1).request_id(request_id).begin_index(236).last_index(851).success(false).finish();
+    auto msg = append_entry_response_builder().recipient_id(222).term_number(10).request_term_number(1).request_id(request_id).index_begin(236).index_end(851).success(false).finish();
     return new append_entry_response_operation_type(std::move(msg));    
   }
   append_checkpoint_chunk_request_operation_type * create_append_checkpoint_chunk_request_operation(uint64_t request_id, const std::string & data_str)
@@ -241,7 +241,7 @@ struct RaftProtocolOperationTestFixture
       BOOST_CHECK_EQUAL(1U, vote_request_traits::term_number(proto.vote_request_message));
       BOOST_CHECK_EQUAL(887U, vote_request_traits::candidate_id(proto.vote_request_message));
       BOOST_CHECK_EQUAL(request_id, vote_request_traits::request_id(proto.vote_request_message));
-      BOOST_CHECK_EQUAL(888542U, vote_request_traits::last_log_index(proto.vote_request_message));
+      BOOST_CHECK_EQUAL(888542U, vote_request_traits::log_index_end(proto.vote_request_message));
       BOOST_CHECK_EQUAL(16U, vote_request_traits::last_log_term(proto.vote_request_message));
     }
     {  
@@ -260,7 +260,7 @@ struct RaftProtocolOperationTestFixture
         BOOST_CHECK_EQUAL(1U, vote_request_traits::term_number(proto.vote_request_message));
         BOOST_CHECK_EQUAL(887U, vote_request_traits::candidate_id(proto.vote_request_message));
         BOOST_CHECK_EQUAL(request_id + i, vote_request_traits::request_id(proto.vote_request_message));
-        BOOST_CHECK_EQUAL(888542U, vote_request_traits::last_log_index(proto.vote_request_message));
+        BOOST_CHECK_EQUAL(888542U, vote_request_traits::log_index_end(proto.vote_request_message));
         BOOST_CHECK_EQUAL(16U, vote_request_traits::last_log_term(proto.vote_request_message));
       }
       BOOST_CHECK(op_queue.empty());
@@ -353,8 +353,8 @@ struct RaftProtocolOperationTestFixture
       BOOST_CHECK_EQUAL(10U, append_entry_response_traits::term_number(proto.append_entry_response_message));
       BOOST_CHECK_EQUAL(1U, append_entry_response_traits::request_term_number(proto.append_entry_response_message));
       BOOST_CHECK_EQUAL(request_id, append_entry_response_traits::request_id(proto.append_entry_response_message));
-      BOOST_CHECK_EQUAL(236U, append_entry_response_traits::begin_index(proto.append_entry_response_message));
-      BOOST_CHECK_EQUAL(851U, append_entry_response_traits::last_index(proto.append_entry_response_message));
+      BOOST_CHECK_EQUAL(236U, append_entry_response_traits::index_begin(proto.append_entry_response_message));
+      BOOST_CHECK_EQUAL(851U, append_entry_response_traits::index_end(proto.append_entry_response_message));
       BOOST_CHECK(!append_entry_response_traits::success(proto.append_entry_response_message));
     }
     {  
@@ -373,8 +373,8 @@ struct RaftProtocolOperationTestFixture
         BOOST_CHECK_EQUAL(10U, append_entry_response_traits::term_number(proto.append_entry_response_message));
         BOOST_CHECK_EQUAL(1U, append_entry_response_traits::request_term_number(proto.append_entry_response_message));
         BOOST_CHECK_EQUAL(request_id+i, append_entry_response_traits::request_id(proto.append_entry_response_message));
-        BOOST_CHECK_EQUAL(236U, append_entry_response_traits::begin_index(proto.append_entry_response_message));
-        BOOST_CHECK_EQUAL(851U, append_entry_response_traits::last_index(proto.append_entry_response_message));
+        BOOST_CHECK_EQUAL(236U, append_entry_response_traits::index_begin(proto.append_entry_response_message));
+        BOOST_CHECK_EQUAL(851U, append_entry_response_traits::index_end(proto.append_entry_response_message));
         BOOST_CHECK(!append_entry_response_traits::success(proto.append_entry_response_message));
       }
       BOOST_CHECK(op_queue.empty());
@@ -682,7 +682,7 @@ struct RaftProtocolOperationTestFixture
           BOOST_CHECK_EQUAL(1U, vote_request_traits::term_number(proto.vote_request_message));
           BOOST_CHECK_EQUAL(887U, vote_request_traits::candidate_id(proto.vote_request_message));
           BOOST_CHECK_EQUAL(request_id + i, vote_request_traits::request_id(proto.vote_request_message));
-          BOOST_CHECK_EQUAL(888542U, vote_request_traits::last_log_index(proto.vote_request_message));
+          BOOST_CHECK_EQUAL(888542U, vote_request_traits::log_index_end(proto.vote_request_message));
           BOOST_CHECK_EQUAL(16U, vote_request_traits::last_log_term(proto.vote_request_message));
         } else {
           BOOST_CHECK_EQUAL(1U, vote_response_traits::peer_id(proto.vote_response_message));

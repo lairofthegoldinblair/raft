@@ -13,7 +13,7 @@ namespace raft {
       boost::endian::little_uint64_t recipient_id;
       boost::endian::little_uint64_t term_number;
       boost::endian::little_uint64_t candidate_id;
-      boost::endian::little_uint64_t last_log_index;
+      boost::endian::little_uint64_t log_index_end;
       boost::endian::little_uint64_t last_log_term;
     };
     
@@ -34,9 +34,9 @@ namespace raft {
       boost::endian::little_uint64_t recipient_id;
       boost::endian::little_uint64_t term_number;
       boost::endian::little_uint64_t leader_id;
-      boost::endian::little_uint64_t previous_log_index;
+      boost::endian::little_uint64_t log_index_begin;
       boost::endian::little_uint64_t previous_log_term;
-      boost::endian::little_uint64_t leader_commit_index;
+      boost::endian::little_uint64_t leader_commit_index_end;
     };
 
     class little_append_entry_response
@@ -46,8 +46,8 @@ namespace raft {
       boost::endian::little_uint64_t term_number;
       boost::endian::little_uint64_t request_term_number;
       boost::endian::little_uint64_t request_id;
-      boost::endian::little_uint64_t begin_index;
-      boost::endian::little_uint64_t last_index;
+      boost::endian::little_uint64_t index_begin;
+      boost::endian::little_uint64_t index_end;
       uint8_t success;
     };
     
@@ -78,7 +78,7 @@ namespace raft {
       boost::endian::little_uint64_t recipient_id;
       boost::endian::little_uint64_t term_number;
       boost::endian::little_uint64_t leader_id;
-      boost::endian::little_uint64_t last_log_entry_index;
+      boost::endian::little_uint64_t log_entry_index_end;
       boost::endian::little_uint64_t last_log_entry_term;
       boost::endian::little_uint64_t last_log_entry_cluster_time;
       boost::endian::little_uint64_t configuration_index;
@@ -470,7 +470,7 @@ namespace raft {
 	msg.set_recipient_id(buf->recipient_id);
 	msg.set_term_number(buf->term_number);
 	msg.set_candidate_id(buf->candidate_id);
-	msg.set_last_log_index(buf->last_log_index);
+	msg.set_log_index_end(buf->log_index_end);
 	msg.set_last_log_term(buf->last_log_term);
 	return msg;
       }
@@ -497,9 +497,9 @@ namespace raft {
 	msg.recipient_id = buf->recipient_id;
 	msg.term_number = buf->term_number;
 	msg.leader_id = buf->leader_id;
-	msg.previous_log_index = buf->previous_log_index ;
+	msg.log_index_begin = buf->log_index_begin ;
 	msg.previous_log_term = buf->previous_log_term;
-	msg.leader_commit_index = buf->leader_commit_index;
+	msg.leader_commit_index_end = buf->leader_commit_index_end;
 	std::size_t sz = sizeof(little_append_entry_request);
 	sz += serialization::deserialize_helper(b.first+sz, msg.entry);
 	return msg;
@@ -514,8 +514,8 @@ namespace raft {
 	msg.term_number = buf->term_number;
 	msg.request_term_number = buf->request_term_number;
 	msg.request_id = buf->request_id;
-	msg.begin_index = buf->begin_index;
-	msg.last_index = buf->last_index;
+	msg.index_begin = buf->index_begin;
+	msg.index_end = buf->index_end;
 	msg.success = buf->success ? 1 : 0;
 	return msg;
       }
@@ -564,7 +564,7 @@ namespace raft {
 	msg.recipient_id = buf->recipient_id;
 	msg.term_number= buf->term_number;
 	msg.leader_id = buf->leader_id;
-	msg.last_checkpoint_header.last_log_entry_index = buf->last_log_entry_index;
+	msg.last_checkpoint_header.log_entry_index_end = buf->log_entry_index_end;
 	msg.last_checkpoint_header.last_log_entry_term = buf->last_log_entry_term;
 	msg.last_checkpoint_header.last_log_entry_cluster_time = buf->last_log_entry_cluster_time;
 	msg.last_checkpoint_header.configuration.index = buf->configuration_index;
@@ -646,7 +646,7 @@ namespace raft {
 	buf->recipient_id = raft::native::messages::vote_request_traits_type::recipient_id(msg);
 	buf->term_number = raft::native::messages::vote_request_traits_type::term_number(msg);
 	buf->candidate_id = raft::native::messages::vote_request_traits_type::candidate_id(msg);
-	buf->last_log_index = raft::native::messages::vote_request_traits_type::last_log_index(msg);
+	buf->log_index_end = raft::native::messages::vote_request_traits_type::log_index_end(msg);
 	buf->last_log_term = raft::native::messages::vote_request_traits_type::last_log_term(msg);
 	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_vote_request)),
 								  [buf]() { delete buf; });
@@ -673,9 +673,9 @@ namespace raft {
 	buf->recipient_id = msg.recipient_id;
 	buf->term_number = msg.term_number;
 	buf->leader_id = msg.leader_id;
-	buf->previous_log_index = msg.previous_log_index;
+	buf->log_index_begin = msg.log_index_begin;
 	buf->previous_log_term = msg.previous_log_term;
-	buf->leader_commit_index = msg.leader_commit_index;
+	buf->leader_commit_index_end = msg.leader_commit_index_end;
 	auto sz = sizeof(little_append_entry_request);
 	sz += serialize_helper(b+sz, msg.entry);      
 	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
@@ -689,8 +689,8 @@ namespace raft {
 	buf->term_number = msg.term_number;
 	buf->request_term_number = msg.request_term_number;
 	buf->request_id  = msg.request_id;
-	buf->begin_index = msg.begin_index;
-	buf->last_index = msg.last_index;
+	buf->index_begin = msg.index_begin;
+	buf->index_end = msg.index_end;
 	buf->success = (msg.success != 0);
 	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(reinterpret_cast<const uint8_t *>(buf), sizeof(little_append_entry_response)),
 								  [buf]() { delete buf; });
@@ -743,7 +743,7 @@ namespace raft {
 	buf->recipient_id = msg.recipient_id;
 	buf->term_number= msg.term_number;
 	buf->leader_id = msg.leader_id;
-	buf->last_log_entry_index = msg.last_checkpoint_header.last_log_entry_index;
+	buf->log_entry_index_end = msg.last_checkpoint_header.log_entry_index_end;
 	buf->last_log_entry_term = msg.last_checkpoint_header.last_log_entry_term;
 	buf->last_log_entry_cluster_time = msg.last_checkpoint_header.last_log_entry_cluster_time;
 	buf->configuration_index = msg.last_checkpoint_header.configuration.index;

@@ -756,7 +756,7 @@ namespace raft {
 	l_.set_log_header_writer(&log_writer_);
 
 	l_.append(std::move(config));
-	l_.update_header(0, raft_protocol_type::INVALID_PEER_ID);
+	l_.update_header(0, raft_protocol_type::INVALID_PEER_ID());
 	protocol_.reset(new raft_protocol_type(protocol_comm, l_, store_, config_manager_));
 
         // Create the session manager and connect it up to the protocol box
@@ -849,14 +849,14 @@ namespace raft {
           if (!l_.empty()) {
             // TODO: a checkpoint could cause a problem here because we could truncate a log entry that
             // didn't get persisted?  Is this logic sufficient?
-            if (last_log_index_written_ < l_.start_index()) {
-              last_log_index_written_ = l_.start_index();
+            if (last_log_index_written_ < l_.index_begin()) {
+              last_log_index_written_ = l_.index_begin();
             }
-            if (last_log_index_written_ < l_.last_index()) {
+            if (last_log_index_written_ < l_.index_end()) {
               BOOST_LOG_TRIVIAL(info) << "[raft::asio::protocol_box::handle_timer] Server(" << config_manager_.configuration().my_cluster_id()
-                                      << ") writing log records [" << last_log_index_written_ << ", " << l_.last_index() << ")";
+                                      << ") writing log records [" << last_log_index_written_ << ", " << l_.index_end() << ")";
             }
-            for(;last_log_index_written_ < l_.last_index(); ++last_log_index_written_) {
+            for(;last_log_index_written_ < l_.index_end(); ++last_log_index_written_) {
               log_writer_.append_record(serialization_type::serialize(boost::asio::buffer(tmp_buf), l_.entry(last_log_index_written_)), last_log_index_written_);
             }
           }
@@ -868,7 +868,7 @@ namespace raft {
           }
 
           // Time to take a periodic checkpoint?
-          if (l_.start_index() + checkpoint_interval_ <= l_.last_index()) {
+          if (l_.index_begin() + checkpoint_interval_ <= l_.index_end()) {
             BOOST_LOG_TRIVIAL(info) << "[raft::asio::protocol_box::handle_timer] Server(" << config_manager_.configuration().my_cluster_id()
                                     << ") initiating checkpoint";
             session_manager_->on_checkpoint_request(std::chrono::steady_clock::now());

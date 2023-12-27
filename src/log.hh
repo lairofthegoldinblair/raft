@@ -52,7 +52,7 @@ namespace raft {
      */
     std::pair<index_type, index_type> append(std::pair<const entry_type *, raft::util::call_on_delete> && e)
     {
-      index_type start_added = last_index();
+      index_type start_added = index_end();
       entries_.push_back(std::move(e));
       return std::make_pair(start_added, start_added+1);
     }
@@ -60,7 +60,7 @@ namespace raft {
     template<typename InputIterator>
     std::pair<index_type, index_type> append(InputIterator begin, InputIterator end, raft::util::call_on_delete && del)
     {
-      index_type start_added = last_index();
+      index_type start_added = index_end();
       index_type last_added = start_added + std::distance(begin, end);
       for(; begin != end; ++begin) {
 	entries_.push_back(std::make_pair(&*begin, raft::util::call_on_delete()));
@@ -104,16 +104,16 @@ namespace raft {
      */
     uint64_t term(index_type i) const
     {
-      return traits_type::term(entries_.at(i - start_index()).first);
+      return traits_type::term(entries_.at(i - index_begin()).first);
     }
 
     uint64_t cluster_time(index_type i) const
     {
-      return traits_type::cluster_time(entries_.at(i - start_index()).first);
+      return traits_type::cluster_time(entries_.at(i - index_begin()).first);
     }
 
     /**
-     * Only call if !empty().  Returns term(last_index()-1)
+     * Only call if !empty().  Returns term(index_end()-1)
      */
     uint64_t last_entry_term() const
     {
@@ -122,11 +122,11 @@ namespace raft {
 
     uint64_t current_time(index_type i) const
     {
-      return traits_type::current_time(entries_.at(i - start_index()).first);
+      return traits_type::current_time(entries_.at(i - index_begin()).first);
     }
 
     /**
-     * Only call if !empty().  Returns cluster_time(last_index()-1)
+     * Only call if !empty().  Returns cluster_time(index_end()-1)
      */
     uint64_t last_entry_cluster_time() const
     {
@@ -141,14 +141,14 @@ namespace raft {
      */
     const entry_type & entry(index_type i) const
     {
-      return *entries_.at(i - start_index()).first;
+      return *entries_.at(i - index_begin()).first;
     }
 
     /**
      * Index of first entry in log.  Only valid if !empty() or equivalently
-     * if start_index() != last_index().
+     * if index_begin() != index_end().
      */
-    index_type start_index() const
+    index_type index_begin() const
     {
       return start_index_;
     }
@@ -156,7 +156,7 @@ namespace raft {
     /**
      * Points one past the last index inserted.  Always valid.
      */
-    index_type last_index() const
+    index_type index_end() const
     {
       return start_index_ + entries_.size();
     }
@@ -170,7 +170,7 @@ namespace raft {
     }
 
     /**
-     * Throw away the entries of the log in the range [start_index(), idx)
+     * Throw away the entries of the log in the range [index_begin(), idx)
      */
     void truncate_prefix(index_type idx)
     {
@@ -182,11 +182,11 @@ namespace raft {
     }
 
     /**
-     * Throw away the entries of the log in the range [idx, last_index())
+     * Throw away the entries of the log in the range [idx, index_end())
      */
     void truncate_suffix(index_type idx)
     {
-      index_type last = last_index();
+      index_type last = index_end();
       while (idx++ < last && !entries_.empty()) {
 	// TODO: If we are not throwing away all of the entries covered by the delete then
 	// it's a big problem.   If that is the case then we should save the deleter and
