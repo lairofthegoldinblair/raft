@@ -1821,9 +1821,7 @@ namespace raft {
       // is flapping and FOLLOWER logs are getting entries in them that never get committed and this makes it hard for anyone to get votes.
       // Maybe a good way of thinking about why this isn't an issue is that we can lexicographically order peers by the pair (last_log_term, log_index_end)
       // which gives a total ordering.  During any election cycle peers maximal with respect to the total ordering are possible leaders.
-      bool candidate_log_more_complete_than_mine = rv::last_log_term(req) > last_log_entry_term() ||
-	(rv::last_log_term(req) == last_log_entry_term() && rv::log_index_end(req) >= log_index_end());
-
+      bool candidate_log_more_complete_than_mine = candidate_log_more_complete(rv::log_index_end(req), rv::last_log_term(req));
       BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_
                                << " with current vote = " << (voted_for_ != nullptr ? boost::lexical_cast<std::string>(voted_for_->peer_id) : "null")
                                << " candidate_log_more_complete_than_mine = rv::last_log_term(req) > last_log_entry_term() ||"
@@ -2488,6 +2486,10 @@ namespace raft {
     }
 
     // Observers for testing
+    bool candidate_log_more_complete(uint64_t _log_index_end, uint64_t last_log_term) const {
+      return last_log_term > last_log_entry_term() ||
+        (last_log_term == last_log_entry_term() && _log_index_end >= log_index_end());
+    }
     const peer_type & get_peer_from_id(uint64_t peer_id) const {
       return configuration().get_peer_from_id(peer_id);
     }

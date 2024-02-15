@@ -1,3 +1,4 @@
+#define BOOST_TEST_MODULE RaftTests
 #include <array>
 #include <chrono>
 #include <thread>
@@ -23,7 +24,6 @@
 #include "posix_file.hh"
 #include "protocol.hh"
 
-#define BOOST_TEST_MODULE RaftTests
 #include <boost/test/unit_test.hpp>
 
 struct log_init
