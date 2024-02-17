@@ -64,6 +64,12 @@ struct set_configuration_requestBuilder;
 struct set_configuration_response;
 struct set_configuration_responseBuilder;
 
+struct get_configuration_request;
+struct get_configuration_requestBuilder;
+
+struct get_configuration_response;
+struct get_configuration_responseBuilder;
+
 struct open_session_request;
 struct open_session_requestBuilder;
 
@@ -164,37 +170,52 @@ enum any_log_entry_command : uint8_t {
   any_log_entry_command_close_session_request = 3,
   any_log_entry_command_close_session_response = 4,
   any_log_entry_command_linearizable_command_request = 5,
+  any_log_entry_command_client_response = 6,
+  any_log_entry_command_set_configuration_request = 7,
+  any_log_entry_command_set_configuration_response = 8,
+  any_log_entry_command_get_configuration_request = 9,
+  any_log_entry_command_get_configuration_response = 10,
   any_log_entry_command_MIN = any_log_entry_command_NONE,
-  any_log_entry_command_MAX = any_log_entry_command_linearizable_command_request
+  any_log_entry_command_MAX = any_log_entry_command_get_configuration_response
 };
 
-inline const any_log_entry_command (&EnumValuesany_log_entry_command())[6] {
+inline const any_log_entry_command (&EnumValuesany_log_entry_command())[11] {
   static const any_log_entry_command values[] = {
     any_log_entry_command_NONE,
     any_log_entry_command_open_session_request,
     any_log_entry_command_open_session_response,
     any_log_entry_command_close_session_request,
     any_log_entry_command_close_session_response,
-    any_log_entry_command_linearizable_command_request
+    any_log_entry_command_linearizable_command_request,
+    any_log_entry_command_client_response,
+    any_log_entry_command_set_configuration_request,
+    any_log_entry_command_set_configuration_response,
+    any_log_entry_command_get_configuration_request,
+    any_log_entry_command_get_configuration_response
   };
   return values;
 }
 
 inline const char * const *EnumNamesany_log_entry_command() {
-  static const char * const names[7] = {
+  static const char * const names[12] = {
     "NONE",
     "open_session_request",
     "open_session_response",
     "close_session_request",
     "close_session_response",
     "linearizable_command_request",
+    "client_response",
+    "set_configuration_request",
+    "set_configuration_response",
+    "get_configuration_request",
+    "get_configuration_response",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameany_log_entry_command(any_log_entry_command e) {
-  if (::flatbuffers::IsOutRange(e, any_log_entry_command_NONE, any_log_entry_command_linearizable_command_request)) return "";
+  if (::flatbuffers::IsOutRange(e, any_log_entry_command_NONE, any_log_entry_command_get_configuration_response)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesany_log_entry_command()[index];
 }
@@ -223,6 +244,26 @@ template<> struct any_log_entry_commandTraits<raft::fbs::linearizable_command_re
   static const any_log_entry_command enum_value = any_log_entry_command_linearizable_command_request;
 };
 
+template<> struct any_log_entry_commandTraits<raft::fbs::client_response> {
+  static const any_log_entry_command enum_value = any_log_entry_command_client_response;
+};
+
+template<> struct any_log_entry_commandTraits<raft::fbs::set_configuration_request> {
+  static const any_log_entry_command enum_value = any_log_entry_command_set_configuration_request;
+};
+
+template<> struct any_log_entry_commandTraits<raft::fbs::set_configuration_response> {
+  static const any_log_entry_command enum_value = any_log_entry_command_set_configuration_response;
+};
+
+template<> struct any_log_entry_commandTraits<raft::fbs::get_configuration_request> {
+  static const any_log_entry_command enum_value = any_log_entry_command_get_configuration_request;
+};
+
+template<> struct any_log_entry_commandTraits<raft::fbs::get_configuration_response> {
+  static const any_log_entry_command enum_value = any_log_entry_command_get_configuration_response;
+};
+
 bool Verifyany_log_entry_command(::flatbuffers::Verifier &verifier, const void *obj, any_log_entry_command type);
 bool Verifyany_log_entry_commandVector(::flatbuffers::Verifier &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<uint8_t> *types);
 
@@ -232,27 +273,19 @@ enum any_message : uint8_t {
   any_message_vote_response = 2,
   any_message_append_entry_request = 3,
   any_message_append_entry_response = 4,
-  any_message_client_response = 5,
-  any_message_set_configuration_request = 6,
-  any_message_set_configuration_response = 7,
-  any_message_configuration_checkpoint = 8,
-  any_message_append_checkpoint_chunk_request = 9,
-  any_message_append_checkpoint_chunk_response = 10,
+  any_message_append_checkpoint_chunk_request = 5,
+  any_message_append_checkpoint_chunk_response = 6,
   any_message_MIN = any_message_NONE,
   any_message_MAX = any_message_append_checkpoint_chunk_response
 };
 
-inline const any_message (&EnumValuesany_message())[11] {
+inline const any_message (&EnumValuesany_message())[7] {
   static const any_message values[] = {
     any_message_NONE,
     any_message_vote_request,
     any_message_vote_response,
     any_message_append_entry_request,
     any_message_append_entry_response,
-    any_message_client_response,
-    any_message_set_configuration_request,
-    any_message_set_configuration_response,
-    any_message_configuration_checkpoint,
     any_message_append_checkpoint_chunk_request,
     any_message_append_checkpoint_chunk_response
   };
@@ -260,16 +293,12 @@ inline const any_message (&EnumValuesany_message())[11] {
 }
 
 inline const char * const *EnumNamesany_message() {
-  static const char * const names[12] = {
+  static const char * const names[8] = {
     "NONE",
     "vote_request",
     "vote_response",
     "append_entry_request",
     "append_entry_response",
-    "client_response",
-    "set_configuration_request",
-    "set_configuration_response",
-    "configuration_checkpoint",
     "append_checkpoint_chunk_request",
     "append_checkpoint_chunk_response",
     nullptr
@@ -301,22 +330,6 @@ template<> struct any_messageTraits<raft::fbs::append_entry_request> {
 
 template<> struct any_messageTraits<raft::fbs::append_entry_response> {
   static const any_message enum_value = any_message_append_entry_response;
-};
-
-template<> struct any_messageTraits<raft::fbs::client_response> {
-  static const any_message enum_value = any_message_client_response;
-};
-
-template<> struct any_messageTraits<raft::fbs::set_configuration_request> {
-  static const any_message enum_value = any_message_set_configuration_request;
-};
-
-template<> struct any_messageTraits<raft::fbs::set_configuration_response> {
-  static const any_message enum_value = any_message_set_configuration_response;
-};
-
-template<> struct any_messageTraits<raft::fbs::configuration_checkpoint> {
-  static const any_message enum_value = any_message_configuration_checkpoint;
 };
 
 template<> struct any_messageTraits<raft::fbs::append_checkpoint_chunk_request> {
@@ -1638,6 +1651,97 @@ inline ::flatbuffers::Offset<set_configuration_response> Createset_configuration
   return builder_.Finish();
 }
 
+struct get_configuration_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef get_configuration_requestBuilder Builder;
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           verifier.EndTable();
+  }
+};
+
+struct get_configuration_requestBuilder {
+  typedef get_configuration_request Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  explicit get_configuration_requestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<get_configuration_request> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<get_configuration_request>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<get_configuration_request> Createget_configuration_request(
+    ::flatbuffers::FlatBufferBuilder &_fbb) {
+  get_configuration_requestBuilder builder_(_fbb);
+  return builder_.Finish();
+}
+
+struct get_configuration_response FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef get_configuration_responseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_RESULT = 4,
+    VT_ID = 6,
+    VT_CONFIGURATION = 8
+  };
+  raft::fbs::client_result result() const {
+    return static_cast<raft::fbs::client_result>(GetField<int8_t>(VT_RESULT, 0));
+  }
+  uint64_t id() const {
+    return GetField<uint64_t>(VT_ID, 0);
+  }
+  const raft::fbs::simple_configuration_description *configuration() const {
+    return GetPointer<const raft::fbs::simple_configuration_description *>(VT_CONFIGURATION);
+  }
+  bool Verify(::flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<int8_t>(verifier, VT_RESULT, 1) &&
+           VerifyField<uint64_t>(verifier, VT_ID, 8) &&
+           VerifyOffset(verifier, VT_CONFIGURATION) &&
+           verifier.VerifyTable(configuration()) &&
+           verifier.EndTable();
+  }
+};
+
+struct get_configuration_responseBuilder {
+  typedef get_configuration_response Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_result(raft::fbs::client_result result) {
+    fbb_.AddElement<int8_t>(get_configuration_response::VT_RESULT, static_cast<int8_t>(result), 0);
+  }
+  void add_id(uint64_t id) {
+    fbb_.AddElement<uint64_t>(get_configuration_response::VT_ID, id, 0);
+  }
+  void add_configuration(::flatbuffers::Offset<raft::fbs::simple_configuration_description> configuration) {
+    fbb_.AddOffset(get_configuration_response::VT_CONFIGURATION, configuration);
+  }
+  explicit get_configuration_responseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<get_configuration_response> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<get_configuration_response>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<get_configuration_response> Createget_configuration_response(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    raft::fbs::client_result result = raft::fbs::client_result_SUCCESS,
+    uint64_t id = 0,
+    ::flatbuffers::Offset<raft::fbs::simple_configuration_description> configuration = 0) {
+  get_configuration_responseBuilder builder_(_fbb);
+  builder_.add_id(id);
+  builder_.add_configuration(configuration);
+  builder_.add_result(result);
+  return builder_.Finish();
+}
+
 struct open_session_request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef open_session_requestBuilder Builder;
   bool Verify(::flatbuffers::Verifier &verifier) const {
@@ -1893,6 +1997,21 @@ struct log_entry_command FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table 
   const raft::fbs::linearizable_command_request *command_as_linearizable_command_request() const {
     return command_type() == raft::fbs::any_log_entry_command_linearizable_command_request ? static_cast<const raft::fbs::linearizable_command_request *>(command()) : nullptr;
   }
+  const raft::fbs::client_response *command_as_client_response() const {
+    return command_type() == raft::fbs::any_log_entry_command_client_response ? static_cast<const raft::fbs::client_response *>(command()) : nullptr;
+  }
+  const raft::fbs::set_configuration_request *command_as_set_configuration_request() const {
+    return command_type() == raft::fbs::any_log_entry_command_set_configuration_request ? static_cast<const raft::fbs::set_configuration_request *>(command()) : nullptr;
+  }
+  const raft::fbs::set_configuration_response *command_as_set_configuration_response() const {
+    return command_type() == raft::fbs::any_log_entry_command_set_configuration_response ? static_cast<const raft::fbs::set_configuration_response *>(command()) : nullptr;
+  }
+  const raft::fbs::get_configuration_request *command_as_get_configuration_request() const {
+    return command_type() == raft::fbs::any_log_entry_command_get_configuration_request ? static_cast<const raft::fbs::get_configuration_request *>(command()) : nullptr;
+  }
+  const raft::fbs::get_configuration_response *command_as_get_configuration_response() const {
+    return command_type() == raft::fbs::any_log_entry_command_get_configuration_response ? static_cast<const raft::fbs::get_configuration_response *>(command()) : nullptr;
+  }
   bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_COMMAND_TYPE, 1) &&
@@ -1920,6 +2039,26 @@ template<> inline const raft::fbs::close_session_response *log_entry_command::co
 
 template<> inline const raft::fbs::linearizable_command_request *log_entry_command::command_as<raft::fbs::linearizable_command_request>() const {
   return command_as_linearizable_command_request();
+}
+
+template<> inline const raft::fbs::client_response *log_entry_command::command_as<raft::fbs::client_response>() const {
+  return command_as_client_response();
+}
+
+template<> inline const raft::fbs::set_configuration_request *log_entry_command::command_as<raft::fbs::set_configuration_request>() const {
+  return command_as_set_configuration_request();
+}
+
+template<> inline const raft::fbs::set_configuration_response *log_entry_command::command_as<raft::fbs::set_configuration_response>() const {
+  return command_as_set_configuration_response();
+}
+
+template<> inline const raft::fbs::get_configuration_request *log_entry_command::command_as<raft::fbs::get_configuration_request>() const {
+  return command_as_get_configuration_request();
+}
+
+template<> inline const raft::fbs::get_configuration_response *log_entry_command::command_as<raft::fbs::get_configuration_response>() const {
+  return command_as_get_configuration_response();
 }
 
 struct log_entry_commandBuilder {
@@ -1978,18 +2117,6 @@ struct raft_message FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const raft::fbs::append_entry_response *message_as_append_entry_response() const {
     return message_type() == raft::fbs::any_message_append_entry_response ? static_cast<const raft::fbs::append_entry_response *>(message()) : nullptr;
   }
-  const raft::fbs::client_response *message_as_client_response() const {
-    return message_type() == raft::fbs::any_message_client_response ? static_cast<const raft::fbs::client_response *>(message()) : nullptr;
-  }
-  const raft::fbs::set_configuration_request *message_as_set_configuration_request() const {
-    return message_type() == raft::fbs::any_message_set_configuration_request ? static_cast<const raft::fbs::set_configuration_request *>(message()) : nullptr;
-  }
-  const raft::fbs::set_configuration_response *message_as_set_configuration_response() const {
-    return message_type() == raft::fbs::any_message_set_configuration_response ? static_cast<const raft::fbs::set_configuration_response *>(message()) : nullptr;
-  }
-  const raft::fbs::configuration_checkpoint *message_as_configuration_checkpoint() const {
-    return message_type() == raft::fbs::any_message_configuration_checkpoint ? static_cast<const raft::fbs::configuration_checkpoint *>(message()) : nullptr;
-  }
   const raft::fbs::append_checkpoint_chunk_request *message_as_append_checkpoint_chunk_request() const {
     return message_type() == raft::fbs::any_message_append_checkpoint_chunk_request ? static_cast<const raft::fbs::append_checkpoint_chunk_request *>(message()) : nullptr;
   }
@@ -2019,22 +2146,6 @@ template<> inline const raft::fbs::append_entry_request *raft_message::message_a
 
 template<> inline const raft::fbs::append_entry_response *raft_message::message_as<raft::fbs::append_entry_response>() const {
   return message_as_append_entry_response();
-}
-
-template<> inline const raft::fbs::client_response *raft_message::message_as<raft::fbs::client_response>() const {
-  return message_as_client_response();
-}
-
-template<> inline const raft::fbs::set_configuration_request *raft_message::message_as<raft::fbs::set_configuration_request>() const {
-  return message_as_set_configuration_request();
-}
-
-template<> inline const raft::fbs::set_configuration_response *raft_message::message_as<raft::fbs::set_configuration_response>() const {
-  return message_as_set_configuration_response();
-}
-
-template<> inline const raft::fbs::configuration_checkpoint *raft_message::message_as<raft::fbs::configuration_checkpoint>() const {
-  return message_as_configuration_checkpoint();
 }
 
 template<> inline const raft::fbs::append_checkpoint_chunk_request *raft_message::message_as<raft::fbs::append_checkpoint_chunk_request>() const {
@@ -2101,6 +2212,26 @@ inline bool Verifyany_log_entry_command(::flatbuffers::Verifier &verifier, const
       auto ptr = reinterpret_cast<const raft::fbs::linearizable_command_request *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case any_log_entry_command_client_response: {
+      auto ptr = reinterpret_cast<const raft::fbs::client_response *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case any_log_entry_command_set_configuration_request: {
+      auto ptr = reinterpret_cast<const raft::fbs::set_configuration_request *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case any_log_entry_command_set_configuration_response: {
+      auto ptr = reinterpret_cast<const raft::fbs::set_configuration_response *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case any_log_entry_command_get_configuration_request: {
+      auto ptr = reinterpret_cast<const raft::fbs::get_configuration_request *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case any_log_entry_command_get_configuration_response: {
+      auto ptr = reinterpret_cast<const raft::fbs::get_configuration_response *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -2136,22 +2267,6 @@ inline bool Verifyany_message(::flatbuffers::Verifier &verifier, const void *obj
     }
     case any_message_append_entry_response: {
       auto ptr = reinterpret_cast<const raft::fbs::append_entry_response *>(obj);
-      return verifier.VerifyTable(ptr);
-    }
-    case any_message_client_response: {
-      auto ptr = reinterpret_cast<const raft::fbs::client_response *>(obj);
-      return verifier.VerifyTable(ptr);
-    }
-    case any_message_set_configuration_request: {
-      auto ptr = reinterpret_cast<const raft::fbs::set_configuration_request *>(obj);
-      return verifier.VerifyTable(ptr);
-    }
-    case any_message_set_configuration_response: {
-      auto ptr = reinterpret_cast<const raft::fbs::set_configuration_response *>(obj);
-      return verifier.VerifyTable(ptr);
-    }
-    case any_message_configuration_checkpoint: {
-      auto ptr = reinterpret_cast<const raft::fbs::configuration_checkpoint *>(obj);
       return verifier.VerifyTable(ptr);
     }
     case any_message_append_checkpoint_chunk_request: {

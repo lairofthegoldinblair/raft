@@ -822,7 +822,7 @@ struct SessionManagerTestFixture : public raft::test::RaftTestFixtureBase<_TestT
   typedef typename _TestType::messages_type::client_result_type client_result_type;
   typedef communicator_mock<messages_type> client_communicator_type;
   typedef logger<messages_type, serialization_type> state_machine_type;
-  typedef raft::protocol<raft::test::generic_communicator_metafunction, raft::test::native_client_metafunction, messages_type> raft_type;
+  typedef raft::protocol<raft::test::generic_communicator_metafunction, messages_type> raft_type;
   typedef typename raft::state_machine::client_session_manager<messages_type, builders_type, serialization_type, raft_type, client_communicator_type, state_machine_type> session_manager_type;
 
   client_communicator_type communicator;

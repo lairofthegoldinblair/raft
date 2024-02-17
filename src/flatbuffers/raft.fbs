@@ -161,6 +161,17 @@ table set_configuration_response
   bad_servers:simple_configuration_description;
 }
 
+table get_configuration_request
+{
+}
+
+table get_configuration_response
+{
+  result:client_result;
+  id:ulong;
+  configuration:simple_configuration_description;
+}
+
 table open_session_request
 {
 }
@@ -187,14 +198,14 @@ table linearizable_command_request
   command:string;
 }
 
-union any_log_entry_command { open_session_request, open_session_response, close_session_request, close_session_response, linearizable_command_request }
+union any_log_entry_command { open_session_request, open_session_response, close_session_request, close_session_response, linearizable_command_request, client_response, set_configuration_request, set_configuration_response, get_configuration_request, get_configuration_response }
 
 table log_entry_command
 {
   command:any_log_entry_command;
 }
 
-union any_message { vote_request, vote_response, append_entry_request, append_entry_response, client_response, set_configuration_request, set_configuration_response, configuration_checkpoint, append_checkpoint_chunk_request, append_checkpoint_chunk_response }
+union any_message { vote_request, vote_response, append_entry_request, append_entry_response, append_checkpoint_chunk_request, append_checkpoint_chunk_response }
 
 table raft_message
 {

@@ -409,7 +409,7 @@ struct communicator_metafunction
   };
 };
 
-typedef raft::protocol<communicator_metafunction, raft::test::native_client_metafunction, raft::native::messages> test_raft_type;
+typedef raft::protocol<communicator_metafunction, raft::native::messages> test_raft_type;
 
 struct init_logging
 {
@@ -654,7 +654,8 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(BasicTemplatedStateMachineTests, _TestType, test_t
   typedef typename _TestType::messages_type::append_checkpoint_chunk_request_traits_type append_checkpoint_chunk_request_traits;
   typedef typename _TestType::builders_type::append_checkpoint_chunk_request_builder_type append_checkpoint_chunk_request_builder;
   typedef typename _TestType::messages_type::log_entry_traits_type log_entry_traits;
-  typedef raft::protocol<raft::test::generic_communicator_metafunction, raft::test::native_client_metafunction, typename _TestType::messages_type> raft_type;
+  typedef raft::protocol<raft::test::generic_communicator_metafunction, typename _TestType::messages_type> raft_type;
+  typedef raft::test::client<typename _TestType::messages_type> client_type;
 
   auto time_base = std::chrono::steady_clock::now();
   // Track the last update to s.cluster_time()
@@ -690,7 +691,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(BasicTemplatedStateMachineTests, _TestType, test_t
   std::size_t cluster_size = cm.configuration().num_known_peers();
 
   typename raft_type::communicator_type comm;
-  typename raft_type::client_type c;
+  client_type c;  
   typename raft_type::log_type l;
   typename raft_type::checkpoint_data_store_type store;
  
@@ -1002,7 +1003,6 @@ BOOST_AUTO_TEST_CASE(InitializeFromNonEmptyLog)
   // Valid initialization must either be completely empty or there must be a configuration
   // somewhere (log or checkpoint).
   test_raft_type::communicator_type comm;
-  test_raft_type::client_type c;
   test_raft_type::log_type l;
   test_raft_type::checkpoint_data_store_type store;
 
@@ -1100,11 +1100,11 @@ public:
   typedef typename _TestType::messages_type::set_configuration_request_traits_type set_configuration_request_traits;
   typedef typename _TestType::builders_type::set_configuration_request_builder_type set_configuration_request_builder;
   typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
-  typedef raft::protocol<raft::test::generic_communicator_metafunction, raft::test::native_client_metafunction, messages_type> raft_type;
+  typedef raft::protocol<raft::test::generic_communicator_metafunction, messages_type> raft_type;
 
-  RaftTestBase(bool initializeWithCheckpoint=true)
+  RaftTestBase(raft::test::TestFixtureInitialization init = raft::test::TestFixtureInitialization::CHECKPOINT)
     :
-    raft::test::RaftTestFixtureBase<_TestType>(initializeWithCheckpoint)
+    raft::test::RaftTestFixtureBase<_TestType>(init)
   {
   }
   ~RaftTestBase() {}
@@ -1693,6 +1693,58 @@ public:
     this->comm.q.pop_back();
   }
   
+  void AppendEntriesLogSyncEmptyLog()
+  {
+    // Send append entries to a peer that is initialized empty.   This will only work if there is
+    // a configuration sent.
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    {
+      // Send append entries to a peer that is initialized empty but skip the configuration.   This can't generate a
+      // response since without a config the peer doesn't know the leader's address.   It shouldn't crash the peer though.
+      append_entry_request_builder bld;
+      bld.recipient_id(0).term_number(1).leader_id(1).log_index_begin(1).previous_log_term(1).leader_commit_index_end(2);
+      auto le = log_entry_builder().term(1).cluster_time(7823).data("1").finish();
+      auto msg = bld.entry(le).finish();
+      this->protocol->on_append_entry_request(std::move(msg));
+    }
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    {
+      append_entry_request_builder bld;
+      bld.recipient_id(0).term_number(1).leader_id(1).log_index_begin(0).previous_log_term(0).leader_commit_index_end(2);
+      log_entry_builder leb;
+      {
+        auto cb = leb.term(1).cluster_time(7823).configuration();
+        this->add_five_servers(cb.from());
+        cb.to();
+      }
+      bld.entry(leb.finish());
+      auto le = log_entry_builder().term(1).cluster_time(7823).data("1").finish();
+      auto msg = bld.entry(le).finish();
+      this->protocol->on_append_entry_request(std::move(msg));
+    }
+    BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
+    BOOST_CHECK(this->protocol->log_header_sync_required());
+    this->protocol->on_log_header_sync();
+    BOOST_CHECK(!this->protocol->log_header_sync_required());
+    BOOST_CHECK_EQUAL(1U, this->protocol->current_term());
+    BOOST_CHECK_EQUAL(7823U, this->protocol->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+
+    this->protocol->on_log_sync(2);
+    BOOST_CHECK_EQUAL(1U, this->protocol->current_term());
+    BOOST_CHECK_EQUAL(7823U, this->protocol->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
+    BOOST_CHECK_EQUAL(1U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, append_entry_response_traits::recipient_id(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_entry_response_traits::term_number(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(1U, append_entry_response_traits::request_term_number(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_entry_response_traits::index_begin(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(2U, append_entry_response_traits::index_end(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK(append_entry_response_traits::success(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    this->comm.q.pop_back();
+  }
+  
   // Test the transition from follower to candiate to follower
   void FollowerToCandidateToFollower()
   {
@@ -1855,7 +1907,7 @@ public:
 	{
 	  auto cdb = chb.index(0).log_entry_index_end(2).last_log_entry_term(1).last_log_entry_cluster_time(0).configuration();
 	  {
-	    auto fsb = cdb.from();
+            this->add_five_servers(cdb.from());
 	  }
 	  {
 	    auto fsb = cdb.to();
@@ -1929,7 +1981,7 @@ public:
 	{
 	  auto cdb = chb.index(0).log_entry_index_end(2).last_log_entry_term(1).last_log_entry_cluster_time(0).configuration();
 	  {
-	    auto fsb = cdb.from();
+            this->add_five_servers(cdb.from());
 	  }
 	  {
 	    auto fsb = cdb.to();
@@ -2661,15 +2713,22 @@ public:
   {
     uint64_t term=1;
     this->make_leader(term);
+    uint64_t request_id = 0;
     uint64_t commit_index = this->protocol->commit_index();
     uint64_t client_index=this->l.index_end();
     this->send_client_request_and_commit(term, "1", client_index++);  
 
     BOOST_CHECK_EQUAL(5U, this->num_known_peers());
-    this->stage_new_server(term, commit_index+1);
 
+    // Make sure configuration is five servers with (initial) id 0
+    this->check_configuration_servers(term, request_id++, 0, 5U);
+
+    // Stage a sixth server
+    this->stage_new_server(term, commit_index+1);
+    
     // This should catch up newly added server.  Based on this we should
     // move to transitional
+    BOOST_CHECK(!this->cm->configuration().staging_servers_caught_up());
     this->send_client_request_and_commit(term, "2", client_index++);
     BOOST_CHECK(this->cm->configuration().staging_servers_caught_up());
     BOOST_CHECK(log_entry_traits::is_command(&this->l.entry(this->l.index_end()-1)));
@@ -2725,7 +2784,35 @@ public:
 	this->c.configuration_responses.pop_back();
       }
       expected += 1;
-    }  
+    }
+    // Stable configuration is NOT committed at this point so we get a retry
+    BOOST_CHECK_EQUAL(commit_index + 3U, this->protocol->commit_index());
+    this->check_configuration_retry(term, request_id++);
+    BOOST_CHECK_EQUAL(commit_index + 3U, this->protocol->commit_index());
+
+    // Hit timer so that leader sends stable configuration to peers
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    this->now += std::chrono::milliseconds(600);
+    this->protocol->on_timer(this->now);
+    expected=1;
+    BOOST_CHECK_EQUAL(this->num_known_peers() - 1U, this->comm.q.size());
+    while(this->comm.q.size() > 0) {
+      BOOST_CHECK_EQUAL(expected, append_entry_request_traits::recipient_id(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(term, append_entry_request_traits::term_number(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(0U, append_entry_request_traits::leader_id(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(commit_index+3U, append_entry_request_traits::leader_commit_index_end(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(commit_index+3U, append_entry_request_traits::log_index_begin(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK_EQUAL(term, append_entry_request_traits::previous_log_term(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_REQUIRE_EQUAL(1U, append_entry_request_traits::num_entries(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+      BOOST_CHECK(log_entry_traits::is_configuration(&append_entry_request_traits::get_entry(boost::get<append_entry_request_arg_type>(this->comm.q.back()), 0)));
+      auto resp = append_entry_response_builder().recipient_id(expected).term_number(term).request_term_number(term).index_begin(commit_index+3U).index_end(commit_index+4U).success(true).finish();
+      this->protocol->on_append_entry_response(std::move(resp), this->now);
+      this->comm.q.pop_back();
+      expected += 1;
+    }    
+    BOOST_CHECK_EQUAL(commit_index + 4U, this->protocol->commit_index());
+    // Make sure configuration is six servers
+    this->check_configuration_servers(term, request_id++, commit_index+3U, 6U);
   }
 
   void JointConsensusAddServerLostLeadershipFailure()
@@ -3007,6 +3094,12 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesLogSync, _TestType, test_typ
   t.AppendEntriesLogSync();
 }
 
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesLogSyncEmptyLog, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t(raft::test::TestFixtureInitialization::EMPTY);
+  t.AppendEntriesLogSyncEmptyLog();
+}
+
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesNegativeResponse, _TestType, test_types)
 {
   RaftTestBase<_TestType> t;
@@ -3043,9 +3136,21 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendCheckpointChunk, _TestType, test_ty
   t.AppendCheckpointChunk();
 }
 
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendCheckpointChunkEmptyLog, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t(raft::test::TestFixtureInitialization::EMPTY);
+  t.AppendCheckpointChunk();
+}
+
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendCheckpointChunkSlowHeaderSync, _TestType, test_types)
 {
   RaftTestBase<_TestType> t;
+  t.AppendCheckpointChunkSlowHeaderSync();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendCheckpointChunkSlowHeaderSyncEmptyLog, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t(raft::test::TestFixtureInitialization::EMPTY);
   t.AppendCheckpointChunkSlowHeaderSync();
 }
 
@@ -3135,7 +3240,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedCandidateAppendEntriesAtSameTerm, _TestTy
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedJointConsensusAddServerNewLeaderFinishesCommit, _TestType, test_types)
 {
-  RaftTestBase<_TestType> t(false);
+  RaftTestBase<_TestType> t(raft::test::TestFixtureInitialization::LOG);
   t.JointConsensusAddServerNewLeaderFinishesCommit();
 }
 

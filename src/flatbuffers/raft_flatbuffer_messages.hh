@@ -61,32 +61,6 @@ namespace raft {
       }
     };
 
-    struct client_response_traits
-    {
-      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
-      typedef const arg_type & const_arg_type;
-      static const client_response *  get_client_response(const_arg_type ae)
-      {
-	return  ae.first->message_as_client_response();
-      }
-      static client_result result(const_arg_type cr)
-      {
-        return get_client_response(cr)->result();
-      }
-      static uint64_t index(const_arg_type cr)
-      {
-        return get_client_response(cr)->index();
-      }
-      static uint64_t leader_id(const_arg_type cr)
-      {
-        return get_client_response(cr)->leader_id();
-      }
-      static slice response(const_arg_type msg)
-      {
-	return slice(reinterpret_cast<const uint8_t *>(get_client_response(msg)->response()->c_str()),
-		     get_client_response(msg)->response()->size());
-      }
-    };
     // Returns a reference to the first bytes of data in raft::fbs::entries
     // struct get_log_entries_data
     // {
@@ -619,57 +593,6 @@ namespace raft {
       }
     };
   
-    class set_configuration_request_traits
-    {
-    public:
-      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
-      typedef const arg_type & const_arg_type;
-    
-      static const raft::fbs::set_configuration_request * scr(const_arg_type msg)
-      {
-	return msg.first->message_as_set_configuration_request();
-      }
-    
-      static const raft::fbs::simple_configuration_description & new_configuration(const_arg_type msg)
-      {
-	return *scr(msg)->new_configuration();
-      }
-      static uint64_t old_id(const_arg_type msg)
-      {
-	return scr(msg)->old_id();
-      }
-    };
-
-    class set_configuration_response_traits
-    {
-    public:
-      typedef std::pair<const raft_message *, raft::util::call_on_delete> arg_type;
-      typedef const arg_type & const_arg_type;
-    
-      static const raft::fbs::set_configuration_response * scr(const_arg_type msg)
-      {
-	return msg.first->message_as_set_configuration_response();
-      }
-    
-      static raft::fbs::client_result result(const_arg_type msg)
-      {
-	return scr(msg)->result();
-      }
-      static std::size_t bad_servers_size(const_arg_type msg)
-      {
-	return scr(msg)->bad_servers()->servers()->size();
-      }
-      static uint64_t bad_servers_id(const_arg_type msg, std::size_t i)
-      {
-	return scr(msg)->bad_servers()->servers()->Get(i)->id();
-      }
-      static std::string_view bad_servers_address(const_arg_type msg, std::size_t i)
-      {
-	return std::string_view(scr(msg)->bad_servers()->servers()->Get(i)->address()->c_str(),
-				scr(msg)->bad_servers()->servers()->Get(i)->address()->size());
-      }
-    };
-
     class open_session_request_traits
     {
     public:
@@ -813,6 +736,125 @@ namespace raft {
       }
     };
     
+    struct client_response_traits
+    {
+      typedef std::pair<const log_entry_command *, raft::util::call_on_delete> arg_type;
+      typedef const arg_type & const_arg_type;
+      static const client_response *  get_client_response(const_arg_type ae)
+      {
+	return  ae.first->command_as_client_response();
+      }
+      static client_result result(const_arg_type cr)
+      {
+        return get_client_response(cr)->result();
+      }
+      static uint64_t index(const_arg_type cr)
+      {
+        return get_client_response(cr)->index();
+      }
+      static uint64_t leader_id(const_arg_type cr)
+      {
+        return get_client_response(cr)->leader_id();
+      }
+      static slice response(const_arg_type msg)
+      {
+	return slice(reinterpret_cast<const uint8_t *>(get_client_response(msg)->response()->c_str()),
+		     get_client_response(msg)->response()->size());
+      }
+    };
+
+    class set_configuration_request_traits
+    {
+    public:
+      typedef std::pair<const log_entry_command *, raft::util::call_on_delete> arg_type;
+      typedef const arg_type & const_arg_type;
+    
+      static const raft::fbs::set_configuration_request * scr(const_arg_type msg)
+      {
+	return msg.first->command_as_set_configuration_request();
+      }
+    
+      static const raft::fbs::simple_configuration_description & new_configuration(const_arg_type msg)
+      {
+	return *scr(msg)->new_configuration();
+      }
+      static uint64_t old_id(const_arg_type msg)
+      {
+	return scr(msg)->old_id();
+      }
+    };
+
+    class set_configuration_response_traits
+    {
+    public:
+      typedef std::pair<const log_entry_command *, raft::util::call_on_delete> arg_type;
+      typedef const arg_type & const_arg_type;
+    
+      static const raft::fbs::set_configuration_response * scr(const_arg_type msg)
+      {
+	return msg.first->command_as_set_configuration_response();
+      }
+    
+      static raft::fbs::client_result result(const_arg_type msg)
+      {
+	return scr(msg)->result();
+      }
+      static const raft::fbs::simple_configuration_description & bad_servers(const_arg_type msg)
+      {
+	return *scr(msg)->bad_servers();
+      }
+      static std::size_t bad_servers_size(const_arg_type msg)
+      {
+	return scr(msg)->bad_servers()->servers()->size();
+      }
+      static uint64_t bad_servers_id(const_arg_type msg, std::size_t i)
+      {
+	return scr(msg)->bad_servers()->servers()->Get(i)->id();
+      }
+      static std::string_view bad_servers_address(const_arg_type msg, std::size_t i)
+      {
+	return std::string_view(scr(msg)->bad_servers()->servers()->Get(i)->address()->c_str(),
+				scr(msg)->bad_servers()->servers()->Get(i)->address()->size());
+      }
+    };
+
+    class get_configuration_request_traits
+    {
+    public:
+      typedef std::pair<const log_entry_command *, raft::util::call_on_delete> arg_type;
+      typedef const arg_type & const_arg_type;
+    
+      static const raft::fbs::get_configuration_request * scr(const_arg_type msg)
+      {
+	return msg.first->command_as_get_configuration_request();
+      }
+    };
+
+    class get_configuration_response_traits
+    {
+    public:
+      typedef std::pair<const log_entry_command *, raft::util::call_on_delete> arg_type;
+      typedef const arg_type & const_arg_type;
+    
+      static const raft::fbs::get_configuration_response * scr(const_arg_type msg)
+      {
+	return msg.first->command_as_get_configuration_response();
+      }
+    
+      static raft::fbs::client_result result(const_arg_type msg)
+      {
+	return scr(msg)->result();
+      }
+      static const raft::fbs::simple_configuration_description & configuration(const_arg_type msg)
+      {
+	return *scr(msg)->configuration();
+      }
+      static uint64_t id(const_arg_type msg)
+      {
+	return scr(msg)->id();
+      }
+    };
+
     struct log_entry_command_traits
     {
       // Start of the size prefixed flat buffer 
@@ -872,6 +914,8 @@ namespace raft {
 
       typedef set_configuration_request_traits set_configuration_request_traits_type;
       typedef set_configuration_response_traits set_configuration_response_traits_type;
+      typedef get_configuration_request_traits get_configuration_request_traits_type;
+      typedef get_configuration_response_traits get_configuration_response_traits_type;
 
       typedef server_description configuration_description_server_type;
       typedef server_description_traits server_description_traits_type;
@@ -1330,48 +1374,6 @@ simple_configuration_description_builder to()
       }
     };
 
-    class client_response_builder : public raft_message_builder_base<client_response_builder, raft::fbs::client_response>
-    {
-    private:
-      client_result result_= client_result_FAIL;
-      uint64_t index_ = 0;
-      uint64_t leader_id_ = 0;
-      ::flatbuffers::Offset<::flatbuffers::String> response_;
-    public:
-      void preinitialize()
-      {
-      }
-      
-      void initialize(fbs_builder_type * bld)
-      {
-	bld->add_result(result_);
-	bld->add_index(index_);
-	bld->add_leader_id(leader_id_);
-	bld->add_response(response_);
-      }
-      client_response_builder & result(client_result val)
-      {
-	result_ = val;
-	return *this;
-      }
-      client_response_builder & index(uint64_t val)
-      {
-	index_ = val;
-	return *this;
-      }
-      client_response_builder & leader_id(uint64_t val)
-      {
-	leader_id_ = val;
-	return *this;
-      }
-      client_response_builder & response(raft::slice && val)
-      {
-	response_ = fbb().CreateString(raft::slice::buffer_cast<const char *>(val),
-                                       raft::slice::buffer_size(val));
-	return *this;
-      }
-    };
-
     class append_entry_request_builder : public raft_message_builder_base<append_entry_request_builder, raft::fbs::append_entry_request>
     {
     private:
@@ -1645,68 +1647,6 @@ simple_configuration_description_builder to()
       }
     };
 
-    class set_configuration_request_builder : public raft_message_builder_base<set_configuration_request_builder, raft::fbs::set_configuration_request>
-    {
-    private:
-      uint64_t old_id_ = 0;
-      ::flatbuffers::Offset<raft::fbs::simple_configuration_description> new_configuration_;
-    public:
-      void preinitialize()
-      {
-      }
-      
-      void initialize(fbs_builder_type * bld)
-      {
-	  bld->add_old_id(old_id_);
-	  bld->add_new_configuration(new_configuration_);
-      }	
-      set_configuration_request_builder & old_id(uint64_t val)
-      {
-	old_id_ = val;
-	return *this;
-      }
-      set_configuration_request_builder & new_configuration(::flatbuffers::Offset<raft::fbs::simple_configuration_description> val)
-      {
-	new_configuration_ = val;
-	return *this;
-      }
-      simple_configuration_description_builder new_configuration()
-      {
-	return simple_configuration_description_builder(fbb(), [this](::flatbuffers::Offset<raft::fbs::simple_configuration_description> val) { this->new_configuration(val); });
-      }
-    };
-
-    class set_configuration_response_builder : public raft_message_builder_base<set_configuration_response_builder, raft::fbs::set_configuration_response>
-    {
-    private:
-      client_result result_ = client_result_FAIL;
-      ::flatbuffers::Offset<raft::fbs::simple_configuration_description> bad_servers_;
-    public:
-      void preinitialize()
-      {
-      }
-      
-      void initialize(fbs_builder_type * bld)
-      {
-	  bld->add_result(result_);
-	  bld->add_bad_servers(bad_servers_);
-      }	
-      set_configuration_response_builder & result(client_result val)
-      {
-	result_ = val;
-	return *this;
-      }
-      set_configuration_response_builder & bad_servers(::flatbuffers::Offset<raft::fbs::simple_configuration_description> val)
-      {
-	bad_servers_ = val;
-	return *this;
-      }
-      simple_configuration_description_builder bad_servers()
-      {
-	return simple_configuration_description_builder(fbb(), [this](::flatbuffers::Offset<raft::fbs::simple_configuration_description> val) { this->bad_servers(val); });
-      }
-    };
-
     class log_entry_builder
     {
     private:
@@ -1933,6 +1873,160 @@ simple_configuration_description_builder to()
       }
     };
 
+    class client_response_builder : public log_entry_command_builder_base<client_response_builder, raft::fbs::client_response>
+    {
+    private:
+      client_result result_= client_result_FAIL;
+      uint64_t index_ = 0;
+      uint64_t leader_id_ = 0;
+      ::flatbuffers::Offset<::flatbuffers::String> response_;
+    public:
+      void preinitialize()
+      {
+      }
+      
+      void initialize(fbs_builder_type * bld)
+      {
+	bld->add_result(result_);
+	bld->add_index(index_);
+	bld->add_leader_id(leader_id_);
+	bld->add_response(response_);
+      }
+      client_response_builder & result(client_result val)
+      {
+	result_ = val;
+	return *this;
+      }
+      client_response_builder & index(uint64_t val)
+      {
+	index_ = val;
+	return *this;
+      }
+      client_response_builder & leader_id(uint64_t val)
+      {
+	leader_id_ = val;
+	return *this;
+      }
+      client_response_builder & response(raft::slice && val)
+      {
+	response_ = fbb().CreateString(raft::slice::buffer_cast<const char *>(val),
+                                       raft::slice::buffer_size(val));
+	return *this;
+      }
+    };
+
+    class set_configuration_request_builder : public log_entry_command_builder_base<set_configuration_request_builder, raft::fbs::set_configuration_request>
+    {
+    private:
+      uint64_t old_id_ = 0;
+      ::flatbuffers::Offset<raft::fbs::simple_configuration_description> new_configuration_;
+    public:
+      void preinitialize()
+      {
+      }
+      
+      void initialize(fbs_builder_type * bld)
+      {
+	  bld->add_old_id(old_id_);
+	  bld->add_new_configuration(new_configuration_);
+      }	
+      set_configuration_request_builder & old_id(uint64_t val)
+      {
+	old_id_ = val;
+	return *this;
+      }
+      set_configuration_request_builder & new_configuration(::flatbuffers::Offset<raft::fbs::simple_configuration_description> val)
+      {
+	new_configuration_ = val;
+	return *this;
+      }
+      simple_configuration_description_builder new_configuration()
+      {
+	return simple_configuration_description_builder(fbb(), [this](::flatbuffers::Offset<raft::fbs::simple_configuration_description> val) { this->new_configuration(val); });
+      }
+    };
+
+    class set_configuration_response_builder : public log_entry_command_builder_base<set_configuration_response_builder, raft::fbs::set_configuration_response>
+    {
+    private:
+      client_result result_ = client_result_FAIL;
+      ::flatbuffers::Offset<raft::fbs::simple_configuration_description> bad_servers_;
+    public:
+      void preinitialize()
+      {
+      }
+      
+      void initialize(fbs_builder_type * bld)
+      {
+	  bld->add_result(result_);
+	  bld->add_bad_servers(bad_servers_);
+      }	
+      set_configuration_response_builder & result(client_result val)
+      {
+	result_ = val;
+	return *this;
+      }
+      set_configuration_response_builder & bad_servers(::flatbuffers::Offset<raft::fbs::simple_configuration_description> val)
+      {
+	bad_servers_ = val;
+	return *this;
+      }
+      simple_configuration_description_builder bad_servers()
+      {
+	return simple_configuration_description_builder(fbb(), [this](::flatbuffers::Offset<raft::fbs::simple_configuration_description> val) { this->bad_servers(val); });
+      }
+    };
+
+    class get_configuration_request_builder : public log_entry_command_builder_base<get_configuration_request_builder, raft::fbs::get_configuration_request>
+    {
+    public:
+      void preinitialize()
+      {
+      }
+      
+      void initialize(fbs_builder_type * bld)
+      {
+      }	
+    };
+
+    class get_configuration_response_builder : public log_entry_command_builder_base<get_configuration_response_builder, raft::fbs::get_configuration_response>
+    {
+    private:
+      client_result result_ = client_result_FAIL;
+      uint64_t id_ = 0;
+      ::flatbuffers::Offset<raft::fbs::simple_configuration_description> configuration_;
+    public:
+      void preinitialize()
+      {
+      }
+      
+      void initialize(fbs_builder_type * bld)
+      {
+	  bld->add_result(result_);
+	  bld->add_id(id_);
+	  bld->add_configuration(configuration_);
+      }	
+      get_configuration_response_builder & result(client_result val)
+      {
+	result_ = val;
+	return *this;
+      }
+      get_configuration_response_builder & id(uint64_t val)
+      {
+	id_ = val;
+	return *this;
+      }
+      get_configuration_response_builder & configuration(::flatbuffers::Offset<raft::fbs::simple_configuration_description> val)
+      {
+	configuration_ = val;
+	return *this;
+      }
+      simple_configuration_description_builder configuration()
+      {
+	return simple_configuration_description_builder(fbb(), [this](::flatbuffers::Offset<raft::fbs::simple_configuration_description> val) { this->configuration(val); });
+      }
+    };
+
     class builders
     {
     public:
@@ -1945,6 +2039,8 @@ simple_configuration_description_builder to()
       typedef append_checkpoint_chunk_response_builder append_checkpoint_chunk_response_builder_type;
       typedef set_configuration_request_builder set_configuration_request_builder_type;
       typedef set_configuration_response_builder set_configuration_response_builder_type;
+      typedef get_configuration_request_builder get_configuration_request_builder_type;
+      typedef get_configuration_response_builder get_configuration_response_builder_type;
       typedef log_entry_builder log_entry_builder_type;
       typedef open_session_request_builder open_session_request_builder_type;
       typedef open_session_response_builder open_session_response_builder_type;

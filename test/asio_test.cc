@@ -627,6 +627,121 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(RaftClientResponseAsioSerializationTest, _TestType
   BOOST_TEST(client_response_traits::leader_id(msg1) == 23);
 }
 
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftSetConfigurationRequestAsioSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::server_description_traits_type server_description_traits;
+  typedef typename _TestType::messages_type::simple_configuration_description_traits_type simple_configuration_description_traits;
+  typedef typename _TestType::messages_type::set_configuration_request_traits_type set_configuration_request_traits;
+  typedef typename _TestType::builders_type::set_configuration_request_builder_type set_configuration_request_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  
+  set_configuration_request_builder bld;
+  {
+    auto cfg = bld.old_id(99).new_configuration();
+    cfg.server().id(0).address("192.168.1.1");
+    cfg.server().id(1).address("192.168.1.2");
+    cfg.server().id(2).address("192.168.1.3");
+  }
+  auto msg = bld.finish();
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_REQUIRE(nullptr != header);
+  BOOST_CHECK_EQUAL(serialization_type::SET_CONFIGURATION_REQUEST, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg1 = serialization_type::deserialize_set_configuration_request(result.first[1], std::move(result.second));
+  BOOST_TEST(set_configuration_request_traits::old_id(msg1) == 99);
+  auto cfg1 = &set_configuration_request_traits::new_configuration(msg1);
+  BOOST_TEST_REQUIRE(simple_configuration_description_traits::size(cfg1) == 3);
+  BOOST_TEST(server_description_traits::id(&simple_configuration_description_traits::get(cfg1, 0)) == 0);
+  BOOST_TEST(server_description_traits::address(&simple_configuration_description_traits::get(cfg1, 0)).compare("192.168.1.1") == 0);
+  BOOST_TEST(server_description_traits::id(&simple_configuration_description_traits::get(cfg1, 1)) == 1);
+  BOOST_TEST(server_description_traits::address(&simple_configuration_description_traits::get(cfg1, 1)).compare("192.168.1.2") == 0);
+  BOOST_TEST(server_description_traits::id(&simple_configuration_description_traits::get(cfg1, 2)) == 2);
+  BOOST_TEST(server_description_traits::address(&simple_configuration_description_traits::get(cfg1, 2)).compare("192.168.1.3") == 0);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftSetConfigurationResponseAsioSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::server_description_traits_type server_description_traits;
+  typedef typename _TestType::messages_type::simple_configuration_description_traits_type simple_configuration_description_traits;
+  typedef typename _TestType::messages_type::set_configuration_response_traits_type set_configuration_response_traits;
+  typedef typename _TestType::builders_type::set_configuration_response_builder_type set_configuration_response_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  
+  set_configuration_response_builder bld;
+  {
+    auto cfg = bld.result(_TestType::messages_type::client_result_fail()).bad_servers();
+    cfg.server().id(0).address("192.168.1.1");
+    cfg.server().id(1).address("192.168.1.2");
+    cfg.server().id(2).address("192.168.1.3");
+  }
+  auto msg = bld.finish();
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_REQUIRE(nullptr != header);
+  BOOST_CHECK_EQUAL(serialization_type::SET_CONFIGURATION_RESPONSE, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg1 = serialization_type::deserialize_set_configuration_response(result.first[1], std::move(result.second));
+  BOOST_TEST(set_configuration_response_traits::result(msg1) == _TestType::messages_type::client_result_fail());
+  auto cfg1 = &set_configuration_response_traits::bad_servers(msg1);
+  BOOST_TEST_REQUIRE(simple_configuration_description_traits::size(cfg1) == 3);
+  BOOST_TEST(server_description_traits::id(&simple_configuration_description_traits::get(cfg1, 0)) == 0);
+  BOOST_TEST(server_description_traits::address(&simple_configuration_description_traits::get(cfg1, 0)).compare("192.168.1.1") == 0);
+  BOOST_TEST(server_description_traits::id(&simple_configuration_description_traits::get(cfg1, 1)) == 1);
+  BOOST_TEST(server_description_traits::address(&simple_configuration_description_traits::get(cfg1, 1)).compare("192.168.1.2") == 0);
+  BOOST_TEST(server_description_traits::id(&simple_configuration_description_traits::get(cfg1, 2)) == 2);
+  BOOST_TEST(server_description_traits::address(&simple_configuration_description_traits::get(cfg1, 2)).compare("192.168.1.3") == 0);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftGetConfigurationRequestAsioSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::get_configuration_request_traits_type get_configuration_request_traits;
+  typedef typename _TestType::builders_type::get_configuration_request_builder_type get_configuration_request_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  
+  get_configuration_request_builder bld;
+  auto msg = bld.finish();
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_REQUIRE(nullptr != header);
+  BOOST_CHECK_EQUAL(serialization_type::GET_CONFIGURATION_REQUEST, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg1 = serialization_type::deserialize_get_configuration_request(result.first[1], std::move(result.second));
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftGetConfigurationResponseAsioSerializationTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::server_description_traits_type server_description_traits;
+  typedef typename _TestType::messages_type::simple_configuration_description_traits_type simple_configuration_description_traits;
+  typedef typename _TestType::messages_type::get_configuration_response_traits_type get_configuration_response_traits;
+  typedef typename _TestType::builders_type::get_configuration_response_builder_type get_configuration_response_builder;
+  typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
+  
+  get_configuration_response_builder bld;
+  {
+    auto cfg = bld.id(99).configuration();
+    cfg.server().id(0).address("192.168.1.1");
+    cfg.server().id(1).address("192.168.1.2");
+    cfg.server().id(2).address("192.168.1.3");
+  }
+  auto msg = bld.finish();
+  auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+  auto header = boost::asio::buffer_cast<const raft::asio::rpc_header *>(result.first[0]);
+  BOOST_REQUIRE(nullptr != header);
+  BOOST_CHECK_EQUAL(serialization_type::GET_CONFIGURATION_RESPONSE, header->operation);
+  BOOST_CHECK_EQUAL(boost::asio::buffer_size(result.first), header->payload_length+sizeof(raft::asio::rpc_header));
+  auto msg1 = serialization_type::deserialize_get_configuration_response(result.first[1], std::move(result.second));
+  BOOST_TEST(get_configuration_response_traits::id(msg1) == 99);
+  auto cfg1 = &get_configuration_response_traits::configuration(msg1);
+  BOOST_TEST_REQUIRE(simple_configuration_description_traits::size(cfg1) == 3);
+  BOOST_TEST(server_description_traits::id(&simple_configuration_description_traits::get(cfg1, 0)) == 0);
+  BOOST_TEST(server_description_traits::address(&simple_configuration_description_traits::get(cfg1, 0)).compare("192.168.1.1") == 0);
+  BOOST_TEST(server_description_traits::id(&simple_configuration_description_traits::get(cfg1, 1)) == 1);
+  BOOST_TEST(server_description_traits::address(&simple_configuration_description_traits::get(cfg1, 1)).compare("192.168.1.2") == 0);
+  BOOST_TEST(server_description_traits::id(&simple_configuration_description_traits::get(cfg1, 2)) == 2);
+  BOOST_TEST(server_description_traits::address(&simple_configuration_description_traits::get(cfg1, 2)).compare("192.168.1.3") == 0);
+}
+
 BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioWriteQueueTest, _TestType, test_types)
 {
   typedef typename _TestType::messages_type::linearizable_command_request_traits_type linearizable_command_request_traits;
@@ -886,188 +1001,398 @@ struct auto_io_service_thread
   }
 };
 
-BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioTest, _TestType, test_types)
+template<typename _TestType>
+class RaftAsioTestFixture
 {
+public:
+  typedef typename _TestType::messages_type::log_entry_type log_entry_type;
   typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
   typedef typename _TestType::builders_type::open_session_request_builder_type open_session_request_builder;
   typedef typename _TestType::messages_type::open_session_response_traits_type open_session_response_traits;
   typedef typename _TestType::builders_type::close_session_request_builder_type close_session_request_builder;
   typedef typename _TestType::messages_type::close_session_response_traits_type close_session_response_traits;
   typedef typename _TestType::builders_type::linearizable_command_request_builder_type linearizable_command_request_builder;
+  typedef typename _TestType::builders_type::set_configuration_request_builder_type set_configuration_request_builder;
+  typedef typename _TestType::messages_type::set_configuration_response_traits_type set_configuration_response_traits;
+  typedef typename _TestType::builders_type::get_configuration_request_builder_type get_configuration_request_builder;
+  typedef typename _TestType::messages_type::get_configuration_response_traits_type get_configuration_response_traits;
   typedef typename _TestType::messages_type::client_response_traits_type client_response_traits;
+  
+  typedef typename _TestType::messages_type::simple_configuration_description_traits_type simple_configuration_description_traits;
+  typedef typename _TestType::messages_type::server_description_traits_type server_description_traits;  
   typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
   typedef logger<typename _TestType::messages_type, typename _TestType::serialization_type> state_machine_type;
   typedef raft::asio::tcp_server<typename _TestType::messages_type, typename _TestType::builders_type, typename _TestType::serialization_type, state_machine_type> tcp_server_type;
+
   boost::asio::io_service ios;
-  auto make_config = []() {
-    log_entry_builder leb;
-    {	
-      auto cb = leb.term(0).configuration();
-      {
-	auto scb = cb.from();
-	scb.server().id(0).address("127.0.0.1:9133");
-	scb.server().id(1).address("127.0.0.1:9134");
-	scb.server().id(2).address("127.0.0.1:9135");
-      }
-      cb.to();
-    }
-    return leb.finish();
-  };
+  boost::asio::ip::tcp::endpoint ep1;
+  boost::asio::ip::tcp::endpoint cep1;
+  tcp_server_type s1;
+  boost::asio::ip::tcp::endpoint ep2;
+  boost::asio::ip::tcp::endpoint cep2;
+  tcp_server_type s2;
+  boost::asio::ip::tcp::endpoint ep3;
+  boost::asio::ip::tcp::endpoint cep3;
+  tcp_server_type s3;
 
-  // 913x ports are for peers to connect to one another
-  // 813x ports are for clients to connect
-  boost::asio::ip::tcp::endpoint ep1(boost::asio::ip::tcp::v4(), 9133);
-  boost::asio::ip::tcp::endpoint cep1(boost::asio::ip::tcp::v4(), 8133);
-  tcp_server_type s1(ios, 0, ep1, cep1, make_config(), (boost::format("%1%/tmp/raft_log_dir_1") % ::getenv("HOME")).str());
-  boost::asio::ip::tcp::endpoint ep2(boost::asio::ip::tcp::v4(), 9134);
-  boost::asio::ip::tcp::endpoint cep2(boost::asio::ip::tcp::v4(), 8134);
-  tcp_server_type s2(ios, 1, ep2, cep2, make_config(), (boost::format("%1%/tmp/raft_log_dir_2") % ::getenv("HOME")).str());
-  boost::asio::ip::tcp::endpoint ep3(boost::asio::ip::tcp::v4(), 9135);
-  boost::asio::ip::tcp::endpoint cep3(boost::asio::ip::tcp::v4(), 8135);
-  tcp_server_type s3(ios, 2, ep3, cep3, make_config(), (boost::format("%1%/tmp/raft_log_dir_3") % ::getenv("HOME")).str());
+  std::array<const tcp_server_type *, 3> servers;
 
-  std::array<const tcp_server_type *, 3> servers = { &s1, &s2, &s3 };
-
-  std::array<boost::asio::ip::tcp::endpoint, 3> client_endpoints = { cep1, cep2, cep3 };
-
-  auto_io_service_thread server_thread(ios);
-  
-  // Wait for leadership to settle
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-  // Validate leadership
+  std::array<boost::asio::ip::tcp::endpoint, 3> client_endpoints;
   uint64_t leader_id = std::numeric_limits<uint64_t>::max();
-  
-  // Create a client session
-  for(std::size_t i=0; i<3; ++i) {
-    std::array<boost::asio::ip::tcp::endpoint, 1> eps = { client_endpoints[i] };
-    boost::asio::ip::tcp::socket client_socket(ios);
-    boost::asio::connect(client_socket, eps);
-    uint64_t session_id = 0;
-    {
-      open_session_request_builder bld;
-      auto msg = bld.finish();
-      auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
-      auto bytes_transferred = boost::asio::write(client_socket, result.first);
-      BOOST_TEST(bytes_transferred == boost::asio::buffer_size(result.first));
-      raft::asio::rpc_header header;
-      bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&header, sizeof(raft::asio::rpc_header)));
-      BOOST_TEST(bytes_transferred == sizeof(raft::asio::rpc_header));
-      BOOST_TEST(header.magic == raft::asio::rpc_header::MAGIC());
-      BOOST_TEST(header.payload_length > 0);
-      BOOST_TEST(header.operation == serialization_type::OPEN_SESSION_RESPONSE);
-      uint8_t *  buf = new uint8_t [header.payload_length];
-      raft::util::call_on_delete deleter([ptr = buf](){ delete [] ptr; });    
-      bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&buf[0], header.payload_length));
-      BOOST_TEST(bytes_transferred == header.payload_length);
-      boost::asio::const_buffer asio_buf(buf, header.payload_length);
-      auto resp = serialization_type::deserialize_open_session_response(asio_buf, std::move(deleter));
-      session_id = open_session_response_traits::session_id(resp);
-    }
-    if (session_id > 0) {
-      // Should  only be at most one leader
-      BOOST_TEST(leader_id == std::numeric_limits<uint64_t>::max());
-      leader_id = i;
-      close_session_request_builder bld;
-      auto msg = bld.session_id(session_id).finish();
-      auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
-      auto bytes_transferred = boost::asio::write(client_socket, result.first);
-      BOOST_TEST(bytes_transferred == boost::asio::buffer_size(result.first));
-      raft::asio::rpc_header header;
-      bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&header, sizeof(raft::asio::rpc_header)));
-      BOOST_TEST(bytes_transferred == sizeof(raft::asio::rpc_header));
-      BOOST_TEST(header.magic == raft::asio::rpc_header::MAGIC());
-      BOOST_TEST(header.payload_length > 0);
-      BOOST_TEST(header.operation == serialization_type::CLOSE_SESSION_RESPONSE);
-      uint8_t *  buf = new uint8_t [header.payload_length];
-      raft::util::call_on_delete deleter([ptr = buf](){ delete [] ptr; });    
-      bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&buf[0], header.payload_length));
-      BOOST_TEST(bytes_transferred == header.payload_length);
-      boost::asio::const_buffer asio_buf(buf, header.payload_length);
-      auto resp = serialization_type::deserialize_close_session_response(asio_buf, std::move(deleter));
-    }
-  }
-  // Should be exactly one leader
-  BOOST_TEST_REQUIRE(leader_id != std::numeric_limits<uint64_t>::max());
+  uint64_t configuration_id = 0;
+  std::array<std::string, 4> cmds;
+  auto_io_service_thread server_thread;
 
-  // Append the following strings to the state machine
-  std::array<std::string, 4> cmds = { "foo", "bar", "baz", "bat" };
+  template<typename _Config>
+  RaftAsioTestFixture(_Config make_config)
+    :
+    // 913x ports are for peers to connect to one another
+    // 813x ports are for clients to connect
+    ep1(boost::asio::ip::tcp::v4(), 9133),
+    cep1(boost::asio::ip::tcp::v4(), 8133),
+    s1(ios, 0, ep1, cep1, make_config(0), (boost::format("%1%/tmp/raft_log_dir_1") % ::getenv("HOME")).str()),
+    ep2(boost::asio::ip::tcp::v4(), 9134),
+    cep2(boost::asio::ip::tcp::v4(), 8134),
+    s2(ios, 1, ep2, cep2, make_config(1), (boost::format("%1%/tmp/raft_log_dir_2") % ::getenv("HOME")).str()),
+    ep3(boost::asio::ip::tcp::v4(), 9135),
+    cep3(boost::asio::ip::tcp::v4(), 8135),
+    s3(ios, 2, ep3, cep3, make_config(2), (boost::format("%1%/tmp/raft_log_dir_3") % ::getenv("HOME")).str()),
+    servers({ &s1, &s2, &s3 }),
+    client_endpoints({ cep1, cep2, cep3 }),
+    cmds({ "foo", "bar", "baz", "bat" }),
+    server_thread(ios)
   {
-    std::array<boost::asio::ip::tcp::endpoint, 1> eps = { client_endpoints[leader_id] };
-    boost::asio::ip::tcp::socket client_socket(ios);
-    boost::asio::connect(client_socket, eps);
-    uint64_t session_id = 0;
+  }
+
+  template<typename _Container>
+  void determine_leadership(const _Container & ids)
+  {
+  
+    // Wait for leadership to settle
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    // Validate leadership
+    leader_id = std::numeric_limits<uint64_t>::max();
+  
+    // Create a client session
+    for(auto i : ids) {
+      std::array<boost::asio::ip::tcp::endpoint, 1> eps = { client_endpoints[i] };
+      boost::asio::ip::tcp::socket client_socket(ios);
+      boost::asio::connect(client_socket, eps);
+      uint64_t session_id = 0;
+      {
+        open_session_request_builder bld;
+        auto msg = bld.finish();
+        auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+        auto bytes_transferred = boost::asio::write(client_socket, result.first);
+        BOOST_TEST(bytes_transferred == boost::asio::buffer_size(result.first));
+        raft::asio::rpc_header header;
+        bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&header, sizeof(raft::asio::rpc_header)));
+        BOOST_TEST(bytes_transferred == sizeof(raft::asio::rpc_header));
+        BOOST_TEST(header.magic == raft::asio::rpc_header::MAGIC());
+        BOOST_TEST(header.payload_length > 0);
+        BOOST_TEST(header.operation == serialization_type::OPEN_SESSION_RESPONSE);
+        uint8_t *  buf = new uint8_t [header.payload_length];
+        raft::util::call_on_delete deleter([ptr = buf](){ delete [] ptr; });    
+        bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&buf[0], header.payload_length));
+        BOOST_TEST(bytes_transferred == header.payload_length);
+        boost::asio::const_buffer asio_buf(buf, header.payload_length);
+        auto resp = serialization_type::deserialize_open_session_response(asio_buf, std::move(deleter));
+        session_id = open_session_response_traits::session_id(resp);
+      }
+      if (session_id > 0) {
+        // Should  only be at most one leader
+        BOOST_TEST(leader_id == std::numeric_limits<uint64_t>::max());
+        leader_id = i;
+        close_session_request_builder bld;
+        auto msg = bld.session_id(session_id).finish();
+        auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+        auto bytes_transferred = boost::asio::write(client_socket, result.first);
+        BOOST_TEST(bytes_transferred == boost::asio::buffer_size(result.first));
+        raft::asio::rpc_header header;
+        bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&header, sizeof(raft::asio::rpc_header)));
+        BOOST_TEST(bytes_transferred == sizeof(raft::asio::rpc_header));
+        BOOST_TEST(header.magic == raft::asio::rpc_header::MAGIC());
+        BOOST_TEST(header.payload_length > 0);
+        BOOST_TEST(header.operation == serialization_type::CLOSE_SESSION_RESPONSE);
+        uint8_t *  buf = new uint8_t [header.payload_length];
+        raft::util::call_on_delete deleter([ptr = buf](){ delete [] ptr; });    
+        bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&buf[0], header.payload_length));
+        BOOST_TEST(bytes_transferred == header.payload_length);
+        boost::asio::const_buffer asio_buf(buf, header.payload_length);
+        auto resp = serialization_type::deserialize_close_session_response(asio_buf, std::move(deleter));
+      }
+    }
+    // Should be exactly one leader
+    BOOST_TEST_REQUIRE(leader_id != std::numeric_limits<uint64_t>::max());
+  }
+
+  void append_strings()
+  {
+    
+    // Append the following strings to the state machine
     {
-      open_session_request_builder bld;
+      std::array<boost::asio::ip::tcp::endpoint, 1> eps = { client_endpoints[leader_id] };
+      boost::asio::ip::tcp::socket client_socket(ios);
+      boost::asio::connect(client_socket, eps);
+      uint64_t session_id = 0;
+      {
+        open_session_request_builder bld;
+        auto msg = bld.finish();
+        auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+        auto bytes_transferred = boost::asio::write(client_socket, result.first);
+        BOOST_TEST(bytes_transferred == boost::asio::buffer_size(result.first));
+        raft::asio::rpc_header header;
+        bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&header, sizeof(raft::asio::rpc_header)));
+        BOOST_TEST(bytes_transferred == sizeof(raft::asio::rpc_header));
+        BOOST_TEST(header.magic == raft::asio::rpc_header::MAGIC());
+        BOOST_TEST(header.payload_length > 0);
+        BOOST_TEST(header.operation == serialization_type::OPEN_SESSION_RESPONSE);
+        uint8_t *  buf = new uint8_t [header.payload_length];
+        raft::util::call_on_delete deleter([ptr = buf](){ delete [] ptr; });    
+        bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&buf[0], header.payload_length));
+        BOOST_TEST(bytes_transferred == header.payload_length);
+        boost::asio::const_buffer asio_buf(buf, header.payload_length);
+        auto resp = serialization_type::deserialize_open_session_response(asio_buf, std::move(deleter));
+        session_id = open_session_response_traits::session_id(resp);
+      }
+      BOOST_TEST(session_id > 0);
+
+      for(std::size_t i=0; i<4; ++i) {
+        linearizable_command_request_builder bld;
+        auto msg = bld.session_id(session_id).first_unacknowledged_sequence_number(i).sequence_number(i).command(raft::slice::create(cmds[i])).finish();
+        auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+        auto bytes_transferred = boost::asio::write(client_socket, result.first);
+        BOOST_TEST(bytes_transferred == boost::asio::buffer_size(result.first));
+        raft::asio::rpc_header header;
+        bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&header, sizeof(raft::asio::rpc_header)));
+        BOOST_TEST(bytes_transferred == sizeof(raft::asio::rpc_header));
+        BOOST_TEST(header.magic == raft::asio::rpc_header::MAGIC());
+        BOOST_TEST(header.payload_length > 0);
+        BOOST_TEST(header.operation == serialization_type::CLIENT_RESPONSE);
+        uint8_t *  buf = new uint8_t [header.payload_length];
+        raft::util::call_on_delete deleter([ptr = buf](){ delete [] ptr; });    
+        bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&buf[0], header.payload_length));
+        BOOST_TEST(bytes_transferred == header.payload_length);
+        boost::asio::const_buffer asio_buf(buf, header.payload_length);
+        auto resp = serialization_type::deserialize_client_response(asio_buf, std::move(deleter));
+        BOOST_TEST(_TestType::messages_type::client_result_success() == client_response_traits::result(resp));
+        BOOST_TEST(leader_id == client_response_traits::leader_id(resp));
+      }
+      if (session_id > 0) {
+        close_session_request_builder bld;
+        auto msg = bld.session_id(session_id).finish();
+        auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+        auto bytes_transferred = boost::asio::write(client_socket, result.first);
+        BOOST_TEST(bytes_transferred == boost::asio::buffer_size(result.first));
+        raft::asio::rpc_header header;
+        bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&header, sizeof(raft::asio::rpc_header)));
+        BOOST_TEST(bytes_transferred == sizeof(raft::asio::rpc_header));
+        BOOST_TEST(header.magic == raft::asio::rpc_header::MAGIC());
+        BOOST_TEST(header.payload_length > 0);
+        BOOST_TEST(header.operation == serialization_type::CLOSE_SESSION_RESPONSE);
+        uint8_t *  buf = new uint8_t [header.payload_length];
+        raft::util::call_on_delete deleter([ptr = buf](){ delete [] ptr; });    
+        bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&buf[0], header.payload_length));
+        BOOST_TEST(bytes_transferred == header.payload_length);
+        boost::asio::const_buffer asio_buf(buf, header.payload_length);
+        auto resp = serialization_type::deserialize_close_session_response(asio_buf, std::move(deleter));
+      }
+    }
+  }
+
+  void update_configuration(std::size_t num_servers)
+  {
+    BOOST_TEST_MESSAGE("Updating Raft configuration to have " << num_servers << " servers");
+    {
+      std::array<boost::asio::ip::tcp::endpoint, 1> eps = { client_endpoints[leader_id] };
+      boost::asio::ip::tcp::socket client_socket(ios);
+      boost::asio::connect(client_socket, eps);
+      set_configuration_request_builder bld;
+      {
+        auto cfg = bld.old_id(configuration_id).new_configuration();
+        for(std::size_t i=0; i<num_servers; ++i) {
+          cfg.server().id(i).address((boost::format("127.0.0.1:%1%") % (9133+i)).str().c_str());
+        }
+      }
       auto msg = bld.finish();
       auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
       auto bytes_transferred = boost::asio::write(client_socket, result.first);
+      BOOST_TEST_MESSAGE("Wrote SET_CONFIGURATION_REQUEST with bytes_transferred=" << bytes_transferred);
       BOOST_TEST(bytes_transferred == boost::asio::buffer_size(result.first));
       raft::asio::rpc_header header;
       bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&header, sizeof(raft::asio::rpc_header)));
       BOOST_TEST(bytes_transferred == sizeof(raft::asio::rpc_header));
       BOOST_TEST(header.magic == raft::asio::rpc_header::MAGIC());
       BOOST_TEST(header.payload_length > 0);
-      BOOST_TEST(header.operation == serialization_type::OPEN_SESSION_RESPONSE);
+      BOOST_TEST(header.operation == serialization_type::SET_CONFIGURATION_RESPONSE);
       uint8_t *  buf = new uint8_t [header.payload_length];
       raft::util::call_on_delete deleter([ptr = buf](){ delete [] ptr; });    
       bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&buf[0], header.payload_length));
       BOOST_TEST(bytes_transferred == header.payload_length);
       boost::asio::const_buffer asio_buf(buf, header.payload_length);
-      auto resp = serialization_type::deserialize_open_session_response(asio_buf, std::move(deleter));
-      session_id = open_session_response_traits::session_id(resp);
-    }
-    BOOST_TEST(session_id > 0);
-    for(std::size_t i=0; i<4; ++i) {
-      linearizable_command_request_builder bld;
-      auto msg = bld.session_id(session_id).first_unacknowledged_sequence_number(i).sequence_number(i).command(raft::slice::create(cmds[i])).finish();
-      auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
-      auto bytes_transferred = boost::asio::write(client_socket, result.first);
-      BOOST_TEST(bytes_transferred == boost::asio::buffer_size(result.first));
-      raft::asio::rpc_header header;
-      bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&header, sizeof(raft::asio::rpc_header)));
-      BOOST_TEST(bytes_transferred == sizeof(raft::asio::rpc_header));
-      BOOST_TEST(header.magic == raft::asio::rpc_header::MAGIC());
-      BOOST_TEST(header.payload_length > 0);
-      BOOST_TEST(header.operation == serialization_type::CLIENT_RESPONSE);
-      uint8_t *  buf = new uint8_t [header.payload_length];
-      raft::util::call_on_delete deleter([ptr = buf](){ delete [] ptr; });    
-      bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&buf[0], header.payload_length));
-      BOOST_TEST(bytes_transferred == header.payload_length);
-      boost::asio::const_buffer asio_buf(buf, header.payload_length);
-      auto resp = serialization_type::deserialize_client_response(asio_buf, std::move(deleter));
-      BOOST_TEST(_TestType::messages_type::client_result_success() == client_response_traits::result(resp));
-      BOOST_TEST(leader_id == client_response_traits::leader_id(resp));
-    }
-    if (session_id > 0) {
-      close_session_request_builder bld;
-      auto msg = bld.session_id(session_id).finish();
-      auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
-      auto bytes_transferred = boost::asio::write(client_socket, result.first);
-      BOOST_TEST(bytes_transferred == boost::asio::buffer_size(result.first));
-      raft::asio::rpc_header header;
-      bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&header, sizeof(raft::asio::rpc_header)));
-      BOOST_TEST(bytes_transferred == sizeof(raft::asio::rpc_header));
-      BOOST_TEST(header.magic == raft::asio::rpc_header::MAGIC());
-      BOOST_TEST(header.payload_length > 0);
-      BOOST_TEST(header.operation == serialization_type::CLOSE_SESSION_RESPONSE);
-      uint8_t *  buf = new uint8_t [header.payload_length];
-      raft::util::call_on_delete deleter([ptr = buf](){ delete [] ptr; });    
-      bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&buf[0], header.payload_length));
-      BOOST_TEST(bytes_transferred == header.payload_length);
-      boost::asio::const_buffer asio_buf(buf, header.payload_length);
-      auto resp = serialization_type::deserialize_close_session_response(asio_buf, std::move(deleter));
-    }
+      auto resp = serialization_type::deserialize_set_configuration_response(asio_buf, std::move(deleter));
+      BOOST_TEST(_TestType::messages_type::client_result_success() == set_configuration_response_traits::result(resp));      
+      BOOST_TEST(0 == simple_configuration_description_traits::size(&set_configuration_response_traits::bad_servers(resp)));
+    }  
+    // Wait for log records to propagate to clients
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
   }
 
-  server_thread.shutdown();
+  void  get_configuration(std::size_t num_servers)
+  {
+    {
+      std::array<boost::asio::ip::tcp::endpoint, 1> eps = { client_endpoints[leader_id] };
+      boost::asio::ip::tcp::socket client_socket(ios);
+      boost::asio::connect(client_socket, eps);
+      get_configuration_request_builder bld;
+      auto msg = bld.finish();
+      auto result = serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+      auto bytes_transferred = boost::asio::write(client_socket, result.first);
+      BOOST_TEST_MESSAGE("Wrote GET_CONFIGURATION_REQUEST with bytes_transferred=" << bytes_transferred);
+      BOOST_TEST(bytes_transferred == boost::asio::buffer_size(result.first));
+      raft::asio::rpc_header header;
+      bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&header, sizeof(raft::asio::rpc_header)));
+      BOOST_TEST(bytes_transferred == sizeof(raft::asio::rpc_header));
+      BOOST_TEST(header.magic == raft::asio::rpc_header::MAGIC());
+      BOOST_TEST(header.payload_length > 0);
+      BOOST_TEST(header.operation == serialization_type::GET_CONFIGURATION_RESPONSE);
+      uint8_t *  buf = new uint8_t [header.payload_length];
+      raft::util::call_on_delete deleter([ptr = buf](){ delete [] ptr; });    
+      bytes_transferred = boost::asio::read(client_socket, boost::asio::buffer(&buf[0], header.payload_length));
+      BOOST_TEST(bytes_transferred == header.payload_length);
+      boost::asio::const_buffer asio_buf(buf, header.payload_length);
+      auto resp = serialization_type::deserialize_get_configuration_response(asio_buf, std::move(deleter));
+      BOOST_TEST(_TestType::messages_type::client_result_success() == get_configuration_response_traits::result(resp));
+      configuration_id = get_configuration_response_traits::id(resp);
+      BOOST_TEST_REQUIRE(num_servers == simple_configuration_description_traits::size(&get_configuration_response_traits::configuration(resp)));
+      for(std::size_t i=0; i<num_servers; ++i) {
+        auto & server = simple_configuration_description_traits::get(&get_configuration_response_traits::configuration(resp), i);
+        BOOST_TEST(i == server_description_traits::id(&server));
+        BOOST_TEST(0 == (boost::format("127.0.0.1:%1%") % (9133+i)).str().compare(server_description_traits::address(&server)));
+      }
+    }  
+  }
 
-  for(auto s : servers) {
-    BOOST_TEST_REQUIRE(cmds.size() == s->state_machine().commands.size());
-    for(std::size_t i=0; i<cmds.size(); ++i) {
-      BOOST_TEST(boost::algorithm::equals(cmds[i], s->state_machine().commands[i]));
+  void shutdown_and_check_state_machines()
+  {
+    server_thread.shutdown();
+
+    for(auto s : servers) {
+      BOOST_TEST_REQUIRE(cmds.size() == s->state_machine().commands.size());
+      for(std::size_t i=0; i<cmds.size(); ++i) {
+        BOOST_TEST(boost::algorithm::equals(cmds[i], s->state_machine().commands[i]));
+      }
     }
   }
+};
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::log_entry_type log_entry_type;
+  typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
+  auto make_config = [](std::size_t i) {
+                         log_entry_builder leb;
+                         {	
+                           auto cb = leb.term(0).configuration();
+                           {
+                             auto scb = cb.from();
+                             scb.server().id(0).address("127.0.0.1:9133");
+                             scb.server().id(1).address("127.0.0.1:9134");
+                             scb.server().id(2).address("127.0.0.1:9135");
+                           }
+                           cb.to();
+                         }
+                         return leb.finish();
+                     };
+  RaftAsioTestFixture<_TestType> test(make_config);
+  std::set<std::size_t> candidates = { 0, 1, 2 };
+  test.determine_leadership(candidates);
+  test.append_strings();
+  test.shutdown_and_check_state_machines();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioGetConfigurationTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::log_entry_type log_entry_type;
+  typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
+  auto make_config = [](std::size_t i) {
+                         log_entry_builder leb;
+                         {	
+                           auto cb = leb.term(0).configuration();
+                           {
+                             auto scb = cb.from();
+                             scb.server().id(0).address("127.0.0.1:9133");
+                             scb.server().id(1).address("127.0.0.1:9134");
+                             scb.server().id(2).address("127.0.0.1:9135");
+                           }
+                           cb.to();
+                         }
+                         return leb.finish();
+                     };
+  RaftAsioTestFixture<_TestType> test(make_config);
+  std::set<std::size_t> candidates = { 0, 1, 2 };
+  test.determine_leadership(candidates);
+  test.get_configuration(3);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioAddServerTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::log_entry_type log_entry_type;
+  typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
+  // Start with configuration with just server 0
+  auto make_config = [](std::size_t i) {
+                       if (0 == i) {
+                         log_entry_builder leb;
+                         {	
+                           auto cb = leb.term(0).configuration();
+                           {
+                             auto scb = cb.from();
+                             scb.server().id(0).address("127.0.0.1:9133");
+                           }
+                           cb.to();
+                         }
+                         return leb.finish();
+                       } else {
+                         return std::pair<const log_entry_type *, raft::util::call_on_delete>(nullptr, raft::util::call_on_delete());
+                       }
+                     };
+  RaftAsioTestFixture<_TestType> test(make_config);
+  std::set<std::size_t> candidates = { 0 };
+  test.determine_leadership(candidates);
+  test.get_configuration(1);
+  test.append_strings();
+  test.update_configuration(3);
+  test.get_configuration(3);
+  test.shutdown_and_check_state_machines();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(RaftAsioRemoveServerTest, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::log_entry_type log_entry_type;
+  typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
+  auto make_config = [](std::size_t i) {
+                         log_entry_builder leb;
+                         {	
+                           auto cb = leb.term(0).configuration();
+                           {
+                             auto scb = cb.from();
+                             scb.server().id(0).address("127.0.0.1:9133");
+                             scb.server().id(1).address("127.0.0.1:9134");
+                             scb.server().id(2).address("127.0.0.1:9135");
+                           }
+                           cb.to();
+                         }
+                         return leb.finish();
+                     };
+  RaftAsioTestFixture<_TestType> test(make_config);
+  std::set<std::size_t> candidates = { 0, 1, 2 };
+  test.determine_leadership(candidates);
+  test.append_strings();
+  test.get_configuration(3);
+  test.update_configuration(2);
+  test.get_configuration(2);
+  test.shutdown_and_check_state_machines();
 }
 
 BOOST_AUTO_TEST_CASE(CallOnDeleteVectorTest)
@@ -1439,12 +1764,11 @@ public:
   }
 };
   
-typedef raft::protocol<flatbuffer_communicator_metafunction, raft::test::native_client_metafunction, raft::fbs::messages> test_raft_type;
+typedef raft::protocol<flatbuffer_communicator_metafunction, raft::fbs::messages> test_raft_type;
 
 BOOST_AUTO_TEST_CASE(RaftFlatBufferConstructProtocolTest)
 {
   test_raft_type::communicator_type comm;
-  test_raft_type::client_type c;
   test_raft_type::log_type l;
   test_raft_type::checkpoint_data_store_type store;
 

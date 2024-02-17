@@ -66,18 +66,6 @@ namespace raft {
       {
 	return deserialize(std::move(b));
       };    
-      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_client_response(std::pair<raft::slice, raft::util::call_on_delete> && b)
-      {
-	return deserialize(std::move(b));
-      }
-      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_set_configuration_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
-      {
-	return deserialize(std::move(b));
-      }
-      static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_set_configuration_response(std::pair<raft::slice, raft::util::call_on_delete> && b)
-      {
-	return deserialize(std::move(b));
-      }
       static std::pair<const raft::fbs::raft_message * , raft::util::call_on_delete> deserialize_append_checkpoint_chunk_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
       {
 	return deserialize(std::move(b));
@@ -135,7 +123,26 @@ namespace raft {
       {
 	return deserialize_log_entry_command(std::move(b));
       }
-
+      static std::pair<const raft::fbs::log_entry_command * , raft::util::call_on_delete> deserialize_client_response(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	return deserialize_log_entry_command(std::move(b));
+      }
+      static std::pair<const raft::fbs::log_entry_command * , raft::util::call_on_delete> deserialize_set_configuration_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	return deserialize_log_entry_command(std::move(b));
+      }
+      static std::pair<const raft::fbs::log_entry_command * , raft::util::call_on_delete> deserialize_set_configuration_response(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	return deserialize_log_entry_command(std::move(b));
+      }
+      static std::pair<const raft::fbs::log_entry_command * , raft::util::call_on_delete> deserialize_get_configuration_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	return deserialize_log_entry_command(std::move(b));
+      }
+      static std::pair<const raft::fbs::log_entry_command * , raft::util::call_on_delete> deserialize_get_configuration_response(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	return deserialize_log_entry_command(std::move(b));
+      }
     };
   }
 }

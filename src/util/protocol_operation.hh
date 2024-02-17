@@ -263,6 +263,44 @@ namespace raft {
       }
     };
 
+    template<typename _Messages, typename _Protocol, typename _Client>
+    class get_configuration_request_operation : public protocol_operation<_Protocol>
+    {
+    public:
+      typedef protocol_operation<_Protocol> protocol_operation_type;
+      typedef _Messages messages_type;
+      typedef _Client client_type;
+      typedef typename messages_type::get_configuration_request_traits_type::arg_type get_configuration_request_arg_type;      
+    private:
+      client_type client_;
+      get_configuration_request_arg_type message_;
+      std::chrono::time_point<std::chrono::steady_clock> now_;
+    public:
+      get_configuration_request_operation(client_type && client, get_configuration_request_arg_type && msg, std::chrono::time_point<std::chrono::steady_clock> now)
+        :
+        protocol_operation_type(&do_complete),
+        client_(std::move(client)),
+        message_(std::move(msg)),
+        now_(now)
+      {
+      }
+      ~get_configuration_request_operation()
+      {
+      }
+      static void do_complete(_Protocol * owner, protocol_operation_type * base)
+      {
+        get_configuration_request_operation * op(static_cast<get_configuration_request_operation *>(base));
+        get_configuration_request_arg_type msg = std::move(op->message_);
+        
+        client_type client = std::move(op->client_);
+        auto now = op->now_;
+        delete op;
+        if (nullptr != owner) {
+          owner->on_get_configuration(std::move(client), std::move(msg), now);
+        }
+      }
+    };
+
     template<typename _Messages, typename _Protocol, typename _ClientEndpoint>
     class open_session_request_operation : public protocol_operation<_Protocol>
     {

@@ -456,6 +456,7 @@ namespace raft {
       typedef _Protocol protocol_type;
       typedef _Client client_type;
       typedef _ClientSessionManager session_manager_type;
+      typedef typename messages_type::client_result_type client_result_type;
     private:
       protocol_type & protocol_;
       session_manager_type & session_manager_;
@@ -480,6 +481,14 @@ namespace raft {
     	    protocol_.on_set_configuration(*client_, serialization_type::deserialize_set_configuration_request(buf, std::move(deleter)), std::chrono::steady_clock::now());
     	    break;
     	  }
+    	case serialization_type::GET_CONFIGURATION_REQUEST:
+    	  {
+            auto callback = [this](client_result_type result, uint64_t id, std::vector<std::pair<uint64_t, std::string>> && cfg) {
+                              this->client_->on_get_configuration_response(result, id, std::move(cfg));
+                            };
+    	    protocol_.on_get_configuration(std::move(callback), serialization_type::deserialize_get_configuration_request(buf, std::move(deleter)), std::chrono::steady_clock::now());
+    	    break;
+    	  }
         case serialization_type::OPEN_SESSION_REQUEST:
           {
     	    session_manager_.on_open_session(client_, serialization_type::deserialize_open_session_request(buf, std::move(deleter)), std::chrono::steady_clock::now());
@@ -496,32 +505,10 @@ namespace raft {
             break;
           }
     	default:
-    	  BOOST_LOG_TRIVIAL(warning) << "client_dispatcher received unsupported operation " << op;
+    	  BOOST_LOG_TRIVIAL(error) << "client_dispatcher received unsupported operation " << op;
     	  break;
     	}
       }
-    };
-
-    // Ugh since client depends on the protocol type and protocol depends on the client type
-    // I have to break the cycle.   There are some pure template solutions out there but they
-    // seem to rely on partial specializaiton which entails copying a ton of code so I am using
-    // inheritence here.   TODO: think about this some more
-    template<typename _Messages>
-    class raft_client_base
-    {
-    public:
-      typedef typename _Messages::client_result_type client_result_type;
-      virtual void on_configuration_response(client_result_type result) = 0;
-      virtual void on_configuration_response(client_result_type result, const std::vector<std::pair<uint64_t, std::string>> & bad_servers) = 0;
-    };
-    
-    struct raft_client_metafunction
-    {
-      template <typename _Messages>
-      struct apply
-      {
-	typedef raft_client_base<_Messages> type;
-      };
     };
 
     template<typename T>
@@ -590,7 +577,7 @@ namespace raft {
 
     // This is both a client communicator and receiver
     template<typename _Messages, typename _Builders, typename _Serialization, typename _Protocol, typename _ClientSessionManager>
-    class raft_client : public raft_receiver<client_dispatcher<_Messages, _Builders, _Serialization, _Protocol, raft_client<_Messages, _Builders, _Serialization, _Protocol, _ClientSessionManager>, _ClientSessionManager>>, public raft_client_base<_Messages>, public raft_client_multi_thread_policy<raft_client<_Messages, _Builders, _Serialization, _Protocol, _ClientSessionManager>>
+    class raft_client : public raft_receiver<client_dispatcher<_Messages, _Builders, _Serialization, _Protocol, raft_client<_Messages, _Builders, _Serialization, _Protocol, _ClientSessionManager>, _ClientSessionManager>>, public raft_client_multi_thread_policy<raft_client<_Messages, _Builders, _Serialization, _Protocol, _ClientSessionManager>>, public raft::client_completion_operation<_Messages>
     {
     private:
       std::deque<std::pair<std::array<boost::asio::const_buffer, 2>, raft::util::call_on_delete>> write_queue_;
@@ -630,8 +617,10 @@ namespace raft {
       typedef client_dispatcher<_Messages, _Builders, _Serialization, _Protocol, raft_client<_Messages, _Builders, _Serialization, _Protocol, _ClientSessionManager>, _ClientSessionManager> dispatcher_type;
       typedef typename dispatcher_type::messages_type::client_result_type client_result_type;
       typedef typename dispatcher_type::serialization_type serialization_type;
-      typedef typename dispatcher_type::builders_type::client_response_builder_type client_response_builder;
       typedef typename dispatcher_type::builders_type::set_configuration_response_builder_type set_configuration_response_builder;
+      typedef typename dispatcher_type::messages_type::set_configuration_response_traits_type::arg_type set_configuration_response_arg_type;
+      typedef typename dispatcher_type::builders_type::get_configuration_response_builder_type get_configuration_response_builder;
+      typedef typename dispatcher_type::messages_type::get_configuration_response_traits_type::arg_type get_configuration_response_arg_type;
       typedef typename dispatcher_type::messages_type::open_session_response_traits_type::arg_type open_session_response_arg_type;
       typedef typename dispatcher_type::messages_type::close_session_response_traits_type::arg_type close_session_response_arg_type;
       typedef typename dispatcher_type::messages_type::client_response_traits_type::arg_type client_response_arg_type;
@@ -639,6 +628,7 @@ namespace raft {
       raft_client(uint64_t server_id, boost::asio::ip::tcp::socket && s, boost::asio::ip::tcp::endpoint && e, dispatcher_type && dispatcher)
 	:
 	raft_receiver<dispatcher_type>(server_id, std::move(s), std::move(e), std::move(dispatcher)),
+        client_completion_operation<_Messages>(&do_client_complete),
         write_outstanding_(false)
       {
 	// TODO: This is grotesque; set the dispatcher to know that this is the client
@@ -661,26 +651,14 @@ namespace raft {
         this->internal_send(serialization_type::serialize(boost::asio::buffer(mem, 128*1024), std::move(msg)));
       }
 
-      void on_configuration_response(client_result_type result) override
+      void send_set_configuration_response(set_configuration_response_arg_type && resp)
       {
-	auto resp = set_configuration_response_builder().result(result).finish();
-	send(std::move(resp));
+        send(std::move(resp));
       }
-    
-      void on_configuration_response(client_result_type result, const std::vector<std::pair<uint64_t, std::string>> & bad_servers) override
+      void send_get_configuration_response(get_configuration_response_arg_type && resp)
       {
-        set_configuration_response_builder bld;
-	bld.result(result);
-	{
-	  auto scdb = bld.bad_servers();
-	  for(const auto & bs : bad_servers) {
-	    scdb.server().id(bs.first).address(bs.second.c_str());
-	  }
-	}
-	auto resp = bld.finish();
-	send(std::move(resp));	
+        send(std::move(resp));
       }
-
       void send_open_session_response(open_session_response_arg_type && resp)
       {
         send(std::move(resp));
@@ -693,12 +671,50 @@ namespace raft {
       {
         send(std::move(resp));
       }
+
+      // Set configuration client completion
+      static void do_client_complete(client_completion_operation<_Messages> * base,
+                                     client_result_type result,
+                                     std::vector<std::pair<uint64_t, std::string>> && bad_servers)
+      {
+        raft_client * cli(static_cast<raft_client *>(base));
+        cli->on_configuration_response(result, std::move(bad_servers));
+      }
+
+      void on_configuration_response(client_result_type result, std::vector<std::pair<uint64_t, std::string>> && bad_servers)
+      {
+        set_configuration_response_builder bld;
+	bld.result(result);
+	{
+	  auto scdb = bld.bad_servers();
+	  for(const auto & bs : bad_servers) {
+	    scdb.server().id(bs.first).address(bs.second.c_str());
+	  }
+	}
+	auto resp = bld.finish();
+	send_set_configuration_response(std::move(resp));	
+      }
+
+      void on_get_configuration_response(client_result_type result, uint64_t id, std::vector<std::pair<uint64_t, std::string>> && cfg)
+      {
+        get_configuration_response_builder bld;
+	bld.result(result);
+        bld.id(id);
+	{
+	  auto scdb = bld.configuration();
+	  for(const auto & server : cfg) {
+	    scdb.server().id(server.first).address(server.second.c_str());
+	  }
+	}
+	auto resp = bld.finish();
+	send_get_configuration_response(std::move(resp));	
+      }
     };
 
     template<typename _Messages, typename _Builders, typename _Serialization>
     struct raft_protocol_type_builder
     {
-      typedef raft::protocol<asio_tcp_communicator_metafunction<_Builders, _Serialization>, raft_client_metafunction, _Messages> type;
+      typedef raft::protocol<asio_tcp_communicator_metafunction<_Builders, _Serialization>, _Messages> type;
     };
 
     template<typename _Messages, typename _Builders, typename _Serialization, typename _StateMachine, typename _ClientCommunicator, typename _LogWriter>
@@ -717,6 +733,7 @@ namespace raft {
       typedef typename messages_type::append_entry_request_traits_type::arg_type append_entry_request_arg_type;
       typedef typename messages_type::append_entry_response_traits_type::arg_type append_entry_response_arg_type;
       typedef typename messages_type::set_configuration_request_traits_type::arg_type set_configuration_request_arg_type;
+      typedef typename messages_type::get_configuration_request_traits_type::arg_type get_configuration_request_arg_type;
       typedef typename messages_type::open_session_request_traits_type::arg_type open_session_request_arg_type;
       typedef typename messages_type::close_session_request_traits_type::arg_type close_session_request_arg_type;
       typedef typename messages_type::linearizable_command_request_traits_type::arg_type linearizable_command_request_arg_type;
@@ -755,7 +772,9 @@ namespace raft {
 	// Set sync callback in the log (TODO: Fix this is dumb way of doing things)
 	l_.set_log_header_writer(&log_writer_);
 
-	l_.append(std::move(config));
+        if (nullptr != config.first) {
+          l_.append(std::move(config));
+        }
 	l_.update_header(0, raft_protocol_type::INVALID_PEER_ID());
 	protocol_.reset(new raft_protocol_type(protocol_comm, l_, store_, config_manager_));
 
@@ -796,6 +815,12 @@ namespace raft {
       void on_set_configuration(_Client & client, set_configuration_request_arg_type && req, std::chrono::time_point<std::chrono::steady_clock> now)
       {
         protocol_->on_set_configuration(client, std::move(req), now);
+      }
+      
+      template<typename _Client>
+      void on_get_configuration(_Client && client, get_configuration_request_arg_type && req, std::chrono::time_point<std::chrono::steady_clock> now)
+      {
+        protocol_->on_get_configuration(std::move(client), std::move(req), now);
       }
       
       void on_log_sync(uint64_t index)
@@ -907,6 +932,7 @@ namespace raft {
       typedef typename messages_type::append_entry_request_traits_type::arg_type append_entry_request_arg_type;
       typedef typename messages_type::append_entry_response_traits_type::arg_type append_entry_response_arg_type;
       typedef typename messages_type::set_configuration_request_traits_type::arg_type set_configuration_request_arg_type;
+      typedef typename messages_type::get_configuration_request_traits_type::arg_type get_configuration_request_arg_type;
       typedef typename messages_type::open_session_request_traits_type::arg_type open_session_request_arg_type;
       typedef typename messages_type::close_session_request_traits_type::arg_type close_session_request_arg_type;
       typedef typename messages_type::linearizable_command_request_traits_type::arg_type linearizable_command_request_arg_type;
@@ -964,11 +990,11 @@ namespace raft {
             if (!this->op_queue_.empty()) {
               this->op_queue_.swap(tmp);
             } else {
-              BOOST_LOG_TRIVIAL(trace) << "[raft::asio::protocol_box_thread::thread_proc] Server(" << my_cluster_id_
-                                       << ") beginning condition variable wait";
+              // BOOST_LOG_TRIVIAL(trace) << "[raft::asio::protocol_box_thread::thread_proc] Server(" << my_cluster_id_
+              //                          << ") beginning condition variable wait";
               this->condvar_.wait_for(lk, std::chrono::milliseconds(1));
-              BOOST_LOG_TRIVIAL(trace) << "[raft::asio::protocol_box_thread::thread_proc] Server(" << my_cluster_id_
-                                       << ") ending condition variable wait";
+              // BOOST_LOG_TRIVIAL(trace) << "[raft::asio::protocol_box_thread::thread_proc] Server(" << my_cluster_id_
+              //                          << ") ending condition variable wait";
             }
           }
           auto now = std::chrono::steady_clock::now();
@@ -1061,6 +1087,13 @@ namespace raft {
       {
         typedef raft::util::set_configuration_request_operation<messages_type, protocol_box_type, _Client> set_configuration_request_operation_type;
         enqueue(new set_configuration_request_operation_type(client, std::move(req), clock_now));
+      }
+      
+      template<typename _Client>
+      void on_get_configuration(_Client && client, get_configuration_request_arg_type && req, std::chrono::time_point<std::chrono::steady_clock> clock_now)
+      {
+        typedef raft::util::get_configuration_request_operation<messages_type, protocol_box_type, _Client> get_configuration_request_operation_type;
+        enqueue(new get_configuration_request_operation_type(std::move(client), std::move(req), clock_now));
       }
       
       void on_log_sync(uint64_t index)
@@ -1164,7 +1197,7 @@ namespace raft {
 	    break;
 	  }
 	default:
-	  BOOST_LOG_TRIVIAL(warning) << "peer_dispatcher received unsupported operation " << op;
+	  BOOST_LOG_TRIVIAL(error) << "peer_dispatcher received unsupported operation " << op;
 	  break;
 	}
       }

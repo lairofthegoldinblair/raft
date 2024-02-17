@@ -71,6 +71,19 @@ namespace raft {
       boost::endian::little_uint8_t result;
     };
 
+    class little_get_configuration_request
+    {
+    public:
+      uint8_t dummy;
+    };
+
+    class little_get_configuration_response
+    {
+    public:
+      boost::endian::little_uint8_t result;
+      boost::endian::little_uint64_t id;
+    };
+
     class little_append_checkpoint_chunk_request
     {
     public:
@@ -555,6 +568,27 @@ namespace raft {
 	return msg;
       }
     
+      static raft::native::messages::get_configuration_request_type deserialize_get_configuration_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	raft::native::messages::get_configuration_request_type msg;
+	BOOST_ASSERT(b.first.size() >= sizeof(little_get_configuration_request));
+	auto buf = reinterpret_cast<const little_get_configuration_request *>(b.first.data());
+        BOOST_ASSERT(buf->dummy == 0xef);
+	return msg;
+      }
+    
+      static raft::native::messages::get_configuration_response_type deserialize_get_configuration_response(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	raft::native::messages::get_configuration_response_type msg;
+	BOOST_ASSERT(b.first.size() >= sizeof(little_get_configuration_response));
+	auto buf = reinterpret_cast<const little_get_configuration_response *>(b.first.data());
+	msg.result = convert_client_result(buf->result);
+	msg.id = buf->id;
+	std::size_t sz = sizeof(little_get_configuration_response);
+	sz += deserialize_helper(b.first+sz, msg.configuration);
+	return msg;
+      }
+    
       static raft::native::messages::append_checkpoint_chunk_request_type deserialize_append_checkpoint_chunk_request(std::pair<raft::slice, raft::util::call_on_delete> && b)
       {
 	raft::native::messages::append_checkpoint_chunk_request_type msg;
@@ -730,6 +764,30 @@ namespace raft {
 	buf->result = msg.result;
 	auto sz = sizeof(little_set_configuration_response);
 	sz += serialize_helper(b+sz, msg.bad_servers);
+	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
+      }
+    
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::get_configuration_request_type && msg)
+      {
+        auto to_alloc = sizeof(little_get_configuration_request);
+	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
+	auto * buf = reinterpret_cast<little_get_configuration_request *>(b.data());
+        buf->dummy = 0xef;
+	auto sz = sizeof(little_get_configuration_request);
+	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
+      }
+
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize(raft::native::messages::get_configuration_response_type && msg)
+      {
+        auto to_alloc = sizeof(little_get_configuration_response) + serialize_helper(msg.configuration);
+	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
+	auto * buf = reinterpret_cast<little_get_configuration_response *>(b.data());
+	buf->result = msg.result;
+	buf->id = msg.id;
+	auto sz = sizeof(little_get_configuration_response);
+	sz += serialize_helper(b+sz, msg.configuration);
 	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
 	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
       }

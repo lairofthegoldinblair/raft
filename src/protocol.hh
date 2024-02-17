@@ -13,6 +13,7 @@
 #include "log.hh"
 #include "peer.hh"
 #include "slice.hh"
+#include "util/json.hh"
 
 // General TODO:
 // log_entry_type::entry should probably be async since we shouldn't assume the entire log can fit into memory.
@@ -110,6 +111,51 @@ namespace raft {
     bool granted;
   };
 
+  // Non-polymorphic base class that "inlines" a vtable for a method
+  template<typename _Messages>
+  class client_completion_operation
+  {
+  public:
+    typedef _Messages messages_type;
+    typedef typename messages_type::client_result_type client_result_type;
+    // typedef boost::intrusive::list_member_hook<boost::intrusive::link_mode<boost::intrusive::normal_link> > link_type;
+    // link_type list_hook_;
+
+    // typedef boost::intrusive::member_hook<client_completion_operation, 
+    //                                       link_type, 
+    //                                       &client_completion_operation::list_hook_> operation_queue_option;
+    // typedef boost::intrusive::list<client_completion_operation, operation_queue_option, boost::intrusive::constant_time_size<true> > queue_type;
+      
+  protected:
+    typedef void (*func_type)(client_completion_operation*, client_result_type, std::vector<std::pair<uint64_t, std::string>> && );
+    client_completion_operation(func_type func)
+      :
+      func_(func)
+    {
+    }
+
+    ~client_completion_operation()
+    {
+    }
+  private:
+    func_type func_;
+  public:
+    void on_configuration_response(client_result_type result, std::vector<std::pair<uint64_t, std::string>> && bad_servers)
+    {
+      func_(this, result, std::move(bad_servers));
+    }
+
+    void on_configuration_response(client_result_type result)
+    {
+      func_(this, result, std::vector<std::pair<uint64_t, std::string>>());
+    }
+
+    void destroy()
+    {
+      complete(messages_type::client_result_fail());
+    }
+  };
+
   // Per-server state related to checkpoints
   // This class is a CRTP to add checkpointability to an underlying Raft protocol
   //
@@ -130,11 +176,17 @@ namespace raft {
     typedef _Messages messages_type;
     typedef typename messages_type::append_checkpoint_chunk_request_traits_type append_checkpoint_chunk_request_traits_type;
     typedef typename messages_type::append_checkpoint_chunk_request_traits_type::arg_type append_checkpoint_chunk_request_arg_type;
+    typedef typename messages_type::configuration_description_traits_type configuration_description_traits_type;
+    typedef typename messages_type::simple_configuration_description_traits_type simple_configuration_description_traits_type;
+    typedef typename messages_type::server_description_traits_type server_description_traits_type;
     typedef checkpoint_data_store<messages_type> checkpoint_data_store_type;
     typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
     typedef typename checkpoint_data_store_type::header_type checkpoint_header_type;
     typedef typename checkpoint_data_store_type::header_traits_type checkpoint_header_traits_type;
     
+    // JSON printer
+    typedef raft::util::json<messages_type> json_type;
+
   private:
     protocol_type * protocol()
     {
@@ -183,8 +235,9 @@ namespace raft {
 
   protected:
     // Append Checkpoint Chunk processing
-    std::pair<uint64_t, bool> write_checkpoint_chunk(append_checkpoint_chunk_request_arg_type && req)
+    std::tuple<uint64_t, const std::string &, bool> write_checkpoint_chunk(append_checkpoint_chunk_request_arg_type && req)
     {
+      static std::string empty;
       typedef append_checkpoint_chunk_request_traits_type acc;
 
       // This is a bit unpleasant.   If this req initiates a checkpoint then
@@ -200,8 +253,32 @@ namespace raft {
       auto req_checkpoint_end = acc::checkpoint_end(req);
       
       if (!current_checkpoint_) {
-	const auto & header(acc::last_checkpoint_header(req));
-	current_checkpoint_.reset(new in_progress_checkpoint<checkpoint_data_store_type>(store_, &header, [r = std::move(req)](){}));
+        // TODO: This is an unfortunate design flaw in the use of deleters which try to hide the difference between moving pointers
+        // moving objects.   In the former case one can always take a reference to *part* of the message (e.g. member of a struct) and
+        // that reference will remain valid when the pointer is moved.   However in the latter case assumption is no longer valid in all
+        // cases (such as the aforementioned referencing of a struct member).
+        // Making this heap allocation converts everything to the *moving pointers* case.
+        std::unique_ptr<append_checkpoint_chunk_request_arg_type> owned(new append_checkpoint_chunk_request_arg_type(std::move(req)));
+	const auto & header(acc::last_checkpoint_header(*owned));
+        BOOST_LOG_TRIVIAL(info) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
+          " creating in progress checkpoint with header: " << json_type::checkpoint_header(header);
+        // We may not know yet how to contact the leader so we look into the header to grab the address for responses.
+        std::string leader_address;
+        const auto & cfg(configuration_description_traits_type::from(&checkpoint_header_traits_type::configuration(&header)));
+        for(std::size_t i=0; i<simple_configuration_description_traits_type::size(&cfg); ++i) {
+          const auto & server(simple_configuration_description_traits_type::get(&cfg, i));
+          if (server_description_traits_type::id(&server) == req_leader_id) {
+            leader_address = server_description_traits_type::address(&server);
+            break;
+          }
+        }
+        if (leader_address.empty()) {
+          BOOST_LOG_TRIVIAL(warning) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
+            " received checkpoint chunk from leader " << req_leader_id <<
+            " which did not contain the leader in the configuration.";
+          return std::tuple<uint64_t, const std::string &, bool>(current_checkpoint_->end(), empty, false);
+        }
+	current_checkpoint_.reset(new in_progress_checkpoint<checkpoint_data_store_type>(store_, &header, std::move(leader_address), [o = std::move(owned)](){}));
       }
 
       // N.B. req might be invalid at this point
@@ -210,14 +287,15 @@ namespace raft {
 	BOOST_LOG_TRIVIAL(warning) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
 	  " received checkpoint chunk at " << req_checkpoint_begin <<
 	  " expecting at offset " << current_checkpoint_->end() << ".  Ignoring append_checkpoint_chunk_request message.";
-	return { current_checkpoint_->end(), false };
+	return { current_checkpoint_->end(), empty, false };
       }
 
       current_checkpoint_->write(std::move(req_data));
       BOOST_LOG_TRIVIAL(info) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
         " received checkpoint chunk from leader_id=" << req_leader_id << " request_id=" << req_request_id <<
         " containing byte_range=[" << req_checkpoint_begin << "," << req_checkpoint_end << ")"
-        " for checkpoint at index " << req_checkpoint_index_end;
+        " for checkpoint at index " << req_checkpoint_index_end <<
+        " with header " << json_type::checkpoint_header(current_checkpoint_->file_->header());
 
       if (req_checkpoint_done) {
 	if (req_checkpoint_index_end < last_checkpoint_index_end()) {
@@ -239,7 +317,7 @@ namespace raft {
         }
       }
       // If checkpoint not done then we can respond immediately.
-      return { current_checkpoint_->end(), !req_checkpoint_done };
+      return { current_checkpoint_->end(), current_checkpoint_->leader_address_, !req_checkpoint_done };
     }
     
   public:
@@ -287,10 +365,7 @@ namespace raft {
       auto header = protocol()->create_checkpoint_header(checkpoint_index_end);
       if (header.first != nullptr) {
 	BOOST_LOG_TRIVIAL(info) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
-	  " initiated checkpoint at index " << checkpoint_index_end << " with checkpoint header" <<
-          " index_end=" <<checkpoint_header_traits_type::log_entry_index_end(header.first) <<
-          " last_term=" <<  checkpoint_header_traits_type::last_log_entry_term(header.first) <<
-          " last_cluster_time=" << checkpoint_header_traits_type::last_log_entry_cluster_time(header.first);
+	  " initiated checkpoint at index " << checkpoint_index_end << " with checkpoint header " << json_type::checkpoint_header(*header.first);
         return store_.create(std::move(header));
       } else {
         return checkpoint_data_ptr();
@@ -379,8 +454,10 @@ namespace raft {
 	// TODO: Interface to load checkpoint state now that it is complete
 	// TODO: Do we want an async interface for loading checkpoint state into memory?
 	store_.commit(current_checkpoint_->file_);
-        protocol()->send_append_checkpoint_chunk_response(checkpoint_chunk_response_sync_continuations_[0]);
+        // We need to load the checkpoint before sending the response because we may need the configuration
+        // to tell us to whom to send the response...
         this->load_checkpoint(clock_now);
+        protocol()->send_append_checkpoint_chunk_response(checkpoint_chunk_response_sync_continuations_[0]);
       }
       current_checkpoint_.reset();
       checkpoint_chunk_response_sync_continuations_.resize(0);
@@ -388,8 +465,8 @@ namespace raft {
   };
 
   // A protocol instance encapsulates what a participant in the Raft consensus protocol knows about itself
-  template<typename _Communicator, typename _Client, typename _Messages>
-  class protocol : public server_checkpoint<_Messages, protocol<_Communicator, _Client, _Messages>>
+  template<typename _Communicator, typename _Messages>
+  class protocol : public server_checkpoint<_Messages, protocol<_Communicator, _Messages>>
   {
   public:
     // Communicator types
@@ -397,8 +474,8 @@ namespace raft {
     typedef typename _Communicator::template apply<messages_type>::type communicator_type;
 
     // Client types
-    typedef typename _Client::template apply<messages_type>::type client_type;
-
+    typedef client_completion_operation<_Messages> client_type;
+    
     // Checkpoint types
     typedef checkpoint_data_store<messages_type> checkpoint_data_store_type;
     typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
@@ -440,13 +517,21 @@ namespace raft {
     typedef typename messages_type::append_entry_response_traits_type::arg_type append_entry_response_arg_type;
     typedef typename messages_type::set_configuration_request_traits_type set_configuration_request_traits_type;
     typedef typename messages_type::set_configuration_request_traits_type::arg_type set_configuration_request_arg_type;
+    typedef typename messages_type::get_configuration_request_traits_type get_configuration_request_traits_type;
+    typedef typename messages_type::get_configuration_request_traits_type::arg_type get_configuration_request_arg_type;
 
     // Configuration types
     typedef configuration_manager<peer_metafunction, messages_type> configuration_manager_type;
     typedef typename configuration_manager_type::configuration_type configuration_type;
+    typedef typename configuration_type::configuration_description_traits_type configuration_description_traits_type;
+    typedef typename configuration_type::simple_configuration_description_traits_type simple_configuration_description_traits_type;
+    typedef typename configuration_type::server_description_traits_type server_description_traits_type;
 
     // The complete peer type which includes info about both per-peer checkpoint and configuration state.
     typedef typename configuration_manager_type::peer_type peer_type;
+
+    // JSON printer
+    typedef raft::util::json<messages_type> json_type;
 
     enum state { LEADER, FOLLOWER, CANDIDATE };
 
@@ -971,17 +1056,26 @@ namespace raft {
 
       // Do we have all log entries up to this one?
       if (ae::log_index_begin(req) > log_index_end()) {
-	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	  " received append entry with gap.  req.log_index_begin=" << ae::log_index_begin(req) <<
-	  " log_index_end()=" << log_index_end();
-	comm_.append_entry_response(req_leader_id, get_peer_from_id(req_leader_id).address,
-				    my_cluster_id(),
-				    current_term_,
-				    req_term_number,
-                                    req_id,
-				    log_index_end(),
-				    log_index_end(),
-				    false);
+        // TODO: Totally possible that this leader was added in a configuration that we haven't
+        // received yet.   In that case we can't tell it that it needs to back up.   Will it do that
+        // anyway???
+        if (configuration().is_valid_peer(req_leader_id)) {
+          BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+            " received append entry with gap.  req.log_index_begin=" << ae::log_index_begin(req) <<
+            " log_index_end()=" << log_index_end();
+          comm_.append_entry_response(req_leader_id, get_peer_from_id(req_leader_id).address,
+                                      my_cluster_id(),
+                                      current_term_,
+                                      req_term_number,
+                                      req_id,
+                                      log_index_end(),
+                                      log_index_end(),
+                                      false);
+        } else {
+          BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+            " received append entry from unknown leader " << req_leader_id << " with gap.  req.log_index_begin=" << ae::log_index_begin(req) <<
+            " log_index_end()=" << log_index_end() << "; unable to send response";
+        }
 	BOOST_LOG_TRIVIAL(trace) << "[internal_append_entry_request] Exiting";
 	return;
       }
@@ -991,18 +1085,25 @@ namespace raft {
       // See the extended Raft paper Figure 7 for examples of how this can come to pass.
       if (ae::log_index_begin(req) > log_index_begin() &&
 	  ae::previous_log_term(req) != log_.term(ae::log_index_begin(req)-1)) {
-	BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	  " received append entry with mismatch term.  req.log_index_begin=" << ae::log_index_begin(req) <<
-	  " req.previous_log_term=" << ae::previous_log_term(req) <<
-	  " log_.entry(" << (ae::log_index_begin(req)-1) << ").term=" << log_.term(ae::log_index_begin(req)-1);
-	comm_.append_entry_response(req_leader_id, get_peer_from_id(req_leader_id).address,
-				    my_cluster_id(),
-				    current_term_,
-				    req_term_number,
-                                    req_id,
-				    ae::log_index_begin(req),
-				    ae::log_index_begin(req),
-				    false);
+        if (configuration().is_valid_peer(req_leader_id)) {
+          BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+            " received append entry with mismatch term.  req.log_index_begin=" << ae::log_index_begin(req) <<
+            " req.previous_log_term=" << ae::previous_log_term(req) <<
+            " log_.entry(" << (ae::log_index_begin(req)-1) << ").term=" << log_.term(ae::log_index_begin(req)-1);
+          comm_.append_entry_response(req_leader_id, get_peer_from_id(req_leader_id).address,
+                                      my_cluster_id(),
+                                      current_term_,
+                                      req_term_number,
+                                      req_id,
+                                      ae::log_index_begin(req),
+                                      ae::log_index_begin(req),
+                                      false);
+        } else {
+          BOOST_LOG_TRIVIAL(warning) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+            " received append entry from unknown leader " << req_leader_id << " with mismatch term.  req.log_index_begin=" << ae::log_index_begin(req) <<
+            " req.previous_log_term=" << ae::previous_log_term(req) <<
+            " log_.entry(" << (ae::log_index_begin(req)-1) << ").term=" << log_.term(ae::log_index_begin(req)-1) << ". Unable to send response.";
+        }          
 	BOOST_LOG_TRIVIAL(trace) << "[internal_append_entry_request] Exiting";
 	return;
       }
@@ -1089,10 +1190,10 @@ namespace raft {
 	uint64_t idx = entry_log_index;
 	for(std::size_t i=it; i<entry_end; ++i, ++idx) {
 	  // Make sure any configuration entries added are reflected in the configuration manager.
-	  if (log_entry_traits_type::is_configuration(&ae::get_entry(req, it))) {
+	  if (log_entry_traits_type::is_configuration(&ae::get_entry(req, i))) {
 	    BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	      " received new configuration at index " << idx;
-	    configuration_.add_logged_description(idx, ae::get_entry(req, it), clock_now);
+	    configuration_.add_logged_description(idx, ae::get_entry(req, i), clock_now);
 	  }
 	  // Append to the log
 	  std::pair<log_index_type, log_index_type> range;
@@ -1203,15 +1304,15 @@ namespace raft {
       // N.B. req might be invalid at this point
 
       // If checkpoint done then we should not be told to send a response.
-      BOOST_ASSERT(!(req_checkpoint_done && ret.second));
+      BOOST_ASSERT(!(req_checkpoint_done && std::get<2>(ret)));
 
-      if (ret.second) {
-        comm_.append_checkpoint_chunk_response(req_leader_id, get_peer_from_id(req_leader_id).address,
+      if (std::get<2>(ret)) {
+        comm_.append_checkpoint_chunk_response(req_leader_id, std::get<1>(ret),
                                                my_cluster_id(),
                                                current_term_,
                                                current_term_,
                                                req_request_id,
-                                               ret.first);
+                                               std::get<0>(ret));
       }
     }
 
@@ -1226,6 +1327,9 @@ namespace raft {
       auto last_term = checkpoint_header_traits_type::last_log_entry_term(&header);
       auto last_cluster_time = checkpoint_header_traits_type::last_log_entry_cluster_time(&header);
 
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+        " setting checkpoint header : " << json_type::checkpoint_header(header);
+      
       // How to handle the state machine?  We just learned of commits that are incorporated into the
       // checkpoint state, but we won't get the log entries corresponding to those commits, we can't call apply_log_entries() here.
       // TENTATIVE ANSWER: Checkpoint was loaded into the state machine so we only have to update applied_index_end_ to
@@ -1274,7 +1378,7 @@ namespace raft {
 	// but I'm not sure I think that needs to be assumed (just that we sync the
 	// log before responding to LEADER about append_entries).
       }
-
+      // TODO: Maybe this should happen before configuration truncation above?
       configuration_.set_checkpoint(header, clock_now);
     }
 
@@ -1563,7 +1667,7 @@ namespace raft {
 	     configuration_manager_type & config_manager,
              std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now())
       :
-      server_checkpoint<_Messages, protocol<_Communicator, _Client, _Messages>>(store),
+      server_checkpoint<_Messages, protocol<_Communicator, _Messages>>(store),
       comm_(comm),
       config_change_client_(nullptr),
       state_(FOLLOWER),
@@ -1603,6 +1707,9 @@ namespace raft {
         cluster_clock_.set(log_.last_entry_cluster_time(), now);
       }
 
+      // TODO: Must this voted for peer id be in the configurations in the log or might
+      // it only be in the configuration of the checkpoint (i.e. do we have to load the checkpoint
+      // before setting voted_for_).
       // NOTE: We set voted_for_ and current_term_ from the log header so we do not
       // sync!  This is the only place in which this should set them without a sync.
       if (INVALID_PEER_ID() != log_.voted_for()) {
@@ -1665,12 +1772,12 @@ namespace raft {
 	if (configuration().is_staging()) {
 	  if (!configuration().staging_servers_caught_up()) {
 	    BOOST_ASSERT(config_change_client_ != nullptr);
-	    auto bad_servers = configuration().staging_servers_making_progress();
+	    auto bad_servers = configuration().staging_servers_not_making_progress();
 	    if (0 < bad_servers.size()) {
 	      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 		" some server in new configuration not making progress so rejecting configuration.";
 	      configuration().reset_staging_servers(clock_now);
-	      config_change_client_->on_configuration_response(messages_type::client_result_fail(), bad_servers);
+	      config_change_client_->on_configuration_response(messages_type::client_result_fail(), std::move(bad_servers));
 	      config_change_client_ = nullptr;
 	    } else {
 	      BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
@@ -1764,6 +1871,12 @@ namespace raft {
     void on_vote_request(vote_request_arg_type && req, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       typedef vote_request_traits_type rv;
+      if(!configuration().is_valid_peer(rv::candidate_id(req))) {
+        BOOST_LOG_TRIVIAL(error) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+          " received vote_request from unknown peer " << rv::candidate_id(req) <<
+          ". Ignoring vote_request message";
+        return;
+      }
       if (rv::term_number(req) < current_term_) {
         BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
           " received vote request at lower term " << rv::term_number(req) <<
@@ -1887,6 +2000,12 @@ namespace raft {
                           std::chrono::time_point<std::chrono::steady_clock> now)
     {
       typedef vote_response_traits_type vr;
+      if(!configuration().is_valid_peer(vr::peer_id(resp))) {
+        BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+          " received vote_response from unknown peer " << vr::peer_id(resp) <<
+          ". Ignoring vote_response message";
+        return;
+      }
       switch(state_) {
       case CANDIDATE:
 	// Detect if this response if from a vote_request on a previous
@@ -1943,15 +2062,17 @@ namespace raft {
     {
       typedef append_entry_request_traits_type ae;
       if (ae::term_number(req) < current_term_) {
-	// There is a leader out there that needs to know it's been left behind.
-	comm_.append_entry_response(ae::leader_id(req), get_peer_from_id(ae::leader_id(req)).address, 
-				    my_cluster_id(),
-				    current_term_,
-				    ae::term_number(req),
-				    ae::request_id(req),
-				    log_index_end(),
-				    log_index_end(),
-				    false);
+        if(configuration().is_valid_peer(ae::leader_id(req))) {
+          // There is a leader out there that needs to know it's been left behind.
+          comm_.append_entry_response(ae::leader_id(req), get_peer_from_id(ae::leader_id(req)).address, 
+                                      my_cluster_id(),
+                                      current_term_,
+                                      ae::term_number(req),
+                                      ae::request_id(req),
+                                      log_index_end(),
+                                      log_index_end(),
+                                      false);
+        }
 	return;
       }
 
@@ -2119,15 +2240,18 @@ namespace raft {
     }
     void on_append_checkpoint_chunk_request(append_checkpoint_chunk_request_arg_type && req, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
+      BOOST_LOG_TRIVIAL(trace) << "Server(" << my_cluster_id() << ") at term " << current_term_ << " " << json_type::append_checkpoint_chunk_request(req);
       typedef append_checkpoint_chunk_request_traits_type acc;
       if (acc::term_number(req) < current_term_) {
-	// There is a leader out there that needs to know it's been left behind.
-	comm_.append_checkpoint_chunk_response(acc::leader_id(req), get_peer_from_id(acc::leader_id(req)).address,
-					       my_cluster_id(),
-					       current_term_,
-					       acc::term_number(req),
-                                               acc::request_id(req),
-					       0);
+        if(configuration().is_valid_peer(acc::leader_id(req))) {
+          // There is a leader out there that needs to know it's been left behind.
+          comm_.append_checkpoint_chunk_response(acc::leader_id(req), get_peer_from_id(acc::leader_id(req)).address,
+                                                 my_cluster_id(),
+                                                 current_term_,
+                                                 acc::term_number(req),
+                                                 acc::request_id(req),
+                                                 0);
+        }
 	return;
       }
 
@@ -2270,6 +2394,8 @@ namespace raft {
               " index_begin=" << it->second.index_begin <<
               " index_end=" << it->second.index_end <<
               " success=" << (it->second.term == current_term_ ? "true" : "false");
+            // TODO: Is the assertion really true?
+            BOOST_ASSERT(configuration().is_valid_peer(it->second.leader_id));
 	    // TODO: Can I respond to more than what was requested?  Possibly useful idea for pipelined append_entry_request
 	    // requests in which we can sync the log once for multiple append_entries.
 	    comm_.append_entry_response(it->second.leader_id, get_peer_from_id(it->second.leader_id).address,
@@ -2313,6 +2439,8 @@ namespace raft {
 	// TODO: I think the following is currently valid because I disallow advancing the term
 	// when a header sync has been requested.
 	// BOOST_ASSERT(current_term_ == vr.term_number);
+        // TODO: Is the assertion really true?
+        BOOST_ASSERT(configuration().is_valid_peer(vr.candidate_id));
 	comm_.vote_response(vr.candidate_id, get_peer_from_id(vr.candidate_id).address,
 			    my_cluster_id(),
 			    vr.term_number,
@@ -2437,6 +2565,8 @@ namespace raft {
 
     void send_append_checkpoint_chunk_response(const append_checkpoint_chunk_response_continuation & resp)
     {
+      // Checkpoint configuration should have had the leader id in it so we should have a valid peer
+      BOOST_ASSERT(configuration().is_valid_peer(resp.leader_id));
       comm_.append_checkpoint_chunk_response(resp.leader_id, get_peer_from_id(resp.leader_id).address,
                                              my_cluster_id(),
                                              resp.term_number,
@@ -2469,6 +2599,11 @@ namespace raft {
     template<typename _Callback>
     void async_linearizable_read_only_query_fence(_Callback && cb, std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
+      // Early detect not leader
+      if (state_ != LEADER) {
+        cb(messages_type::client_result_not_leader());
+        return;
+      }
       // First get quorum at a new request id to make sure we are still the cluster leader, if not the leader, we might be missing
       // a command the client committed and our response would break linearizability (though it would still be
       // serializable).
@@ -2476,6 +2611,31 @@ namespace raft {
       request_id_quorum_continuations_[request_id_] = std::function<void(client_result_type)>(std::move(cb));
       BOOST_LOG_TRIVIAL(debug) << "Enqueuing linearizable read only query at request_id_ " << request_id_;
       send_heartbeats(true, clock_now);
+      // Special case of single member cluster, check for immediate quorum
+      update_last_request_id_quorum();
+    }
+
+    template<typename _Callback>
+    void on_get_configuration(_Callback && cb, get_configuration_request_arg_type && req, std::chrono::time_point<std::chrono::steady_clock> clock_now)
+    {
+      auto completion = [this, client_callback=std::move(cb)](client_result_type result) {
+                          std::vector<std::pair<uint64_t, std::string>> cfg;
+                          if (result != messages_type::client_result_success()) {
+                            client_callback(messages_type::client_result_not_leader(), 0, std::move(cfg));
+                            return;
+                          }
+                          if (!this->configuration().is_stable() || this->commit_index() <= this->configuration().configuration_id()) {
+                            client_callback(messages_type::client_result_retry(), 0, std::move(cfg));
+                            return;
+                          }
+                          const auto & f = configuration_description_traits_type::from(this->configuration().description());
+                          for(std::size_t i = 0; i < simple_configuration_description_traits_type::size(&f); ++i) {
+                            cfg.push_back(std::make_pair((uint64_t) server_description_traits_type::id(&simple_configuration_description_traits_type::get(&f, i)),
+                                                         std::string(server_description_traits_type::address(&simple_configuration_description_traits_type::get(&f, i)))));
+                          }
+                          client_callback(messages_type::client_result_success(), this->configuration().configuration_id(), std::move(cfg));
+                        };
+      async_linearizable_read_only_query_fence(std::move(completion), clock_now);
     }
 
     // Create a seed configuration record with a single server configuration for a log.

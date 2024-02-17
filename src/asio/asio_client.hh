@@ -107,6 +107,12 @@ namespace raft {
       typedef typename builders_type::linearizable_command_request_builder_type linearizable_command_request_builder;
       typedef typename messages_type::client_response_traits_type client_response_traits;
       typedef typename messages_type::client_result_type client_result_type;
+      typedef typename messages_type::set_configuration_response_traits_type set_configuration_response_traits;
+      typedef typename builders_type::set_configuration_request_builder_type set_configuration_request_builder;
+      typedef typename messages_type::get_configuration_response_traits_type get_configuration_response_traits;
+      typedef typename builders_type::get_configuration_request_builder_type get_configuration_request_builder;
+      typedef typename messages_type::server_description_traits_type server_description_traits;
+      typedef typename messages_type::simple_configuration_description_traits_type simple_configuration_description_traits;
       typedef raft::asio::serialization<messages_type, _Serialization> serialization_type;
       typedef synchronous_client_session<synchronous_client<_Messages, _Builders, _Serialization>> client_session_type;
     private:
@@ -193,10 +199,94 @@ namespace raft {
         throw std::runtime_error("Could not find cluster leader");
       }
 
+      template<typename _Request, typename _Response>
+      bool send_leader_request(_Request request, _Response response)
+      {
+        if (!client_socket_) {
+          BOOST_LOG_TRIVIAL(info) << "[raft::asio::synchronous_client::send_leader_request] failed could not establish connection to cluster";
+          return false;
+        }
+        for(std::size_t j=0; j<100; ++j) {
+          for(std::size_t i=0; i<servers_.size(); ++i) {
+            if (!leader_confirmed_) {
+              BOOST_LOG_TRIVIAL(info) << "[raft::asio::synchronous_client::send_leader_request] Server(" << leader_id_ << ") is non-confirmed leader is being sent request";
+            }
+            {
+              boost::timer::cpu_timer timer;
+              timer.start();
+              auto result = request();
+              boost::system::error_code ec;
+              auto bytes_transferred = boost::asio::write(*client_socket_, result.first, ec);
+              timer.stop();
+              if (ec) {
+                try_new_leader();
+                continue;
+              }
+              BOOST_ASSERT(bytes_transferred == boost::asio::buffer_size(result.first));
+              BOOST_LOG_TRIVIAL(trace) << "[raft::asio::synchronous_client::send_leader_request] write_request time: " << timer.format();
+            }
+            {
+              boost::timer::cpu_timer timer;
+              raft::asio::rpc_header header;
+              boost::system::error_code ec;
+              timer.start();
+              auto bytes_transferred = boost::asio::read(*client_socket_, boost::asio::buffer(&header, sizeof(raft::asio::rpc_header)), ec);
+              timer.stop();
+              if (ec) {
+                try_new_leader();
+                continue;
+              }
+              BOOST_LOG_TRIVIAL(trace) << "[raft::asio::synchronous_client::send_leader_request] read_response_header time: " << timer.format();
+              BOOST_ASSERT(bytes_transferred == sizeof(raft::asio::rpc_header));
+              BOOST_ASSERT(header.magic == raft::asio::rpc_header::MAGIC());
+              BOOST_ASSERT(header.payload_length > 0);
+              BOOST_ASSERT(header.operation == serialization_type::CLIENT_RESPONSE);
+              uint8_t *  buf = new uint8_t [header.payload_length];
+              raft::util::call_on_delete deleter([ptr = buf](){ delete [] ptr; });    
+              timer.start();
+              bytes_transferred = boost::asio::read(*client_socket_, boost::asio::buffer(&buf[0], header.payload_length), ec);
+              timer.stop();
+              if (ec) {
+                try_new_leader();
+                continue;
+              }
+              BOOST_LOG_TRIVIAL(trace) << "[raft::asio::synchronous_client::send_leader_request] read_response_body time: " << timer.format();
+              BOOST_ASSERT(bytes_transferred == header.payload_length);
+              boost::asio::const_buffer asio_buf(buf, header.payload_length);
+              auto result = response(asio_buf, std::move(deleter));
+              if (messages_type::client_result_success() == result) {
+                if (!leader_confirmed_) {
+                  BOOST_LOG_TRIVIAL(info) << "[raft::asio::synchronous_client::send_leader_request] Server(" << leader_id_ << ") confirmed as leader with successful request";
+                  leader_confirmed_ = true;
+                }
+                return true;
+              } else if (messages_type::client_result_not_leader() == result) {
+                try_new_leader();
+              } else {
+                BOOST_LOG_TRIVIAL(info) << "[raft::asio::synchronous_client::send_leader_request] Server(" << leader_id_ << ") request failed";
+                return false;
+              }
+            }
+          }
+          BOOST_LOG_TRIVIAL(info) << "[raft::asio::synchronous_client::send_leader_request] failed to find new leader.   Waiting and will try again.";
+          std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        BOOST_LOG_TRIVIAL(info) << "[raft::asio::synchronous_client::send_leader_request] linearizable command failed could not determine leader in cluster.";
+        return false;
+      }
+      
     public:
-      synchronous_client(const std::vector<boost::asio::ip::tcp::endpoint> && servers)
+      synchronous_client(std::vector<boost::asio::ip::tcp::endpoint> && servers)
         :
         servers_(std::move(servers)),
+        leader_id_(0)
+      {
+        try_new_leader();
+      }
+
+      synchronous_client(const std::vector<boost::asio::ip::tcp::endpoint> & servers)
+        :
+        servers_(servers),
         leader_id_(0)
       {
         try_new_leader();
@@ -321,6 +411,82 @@ namespace raft {
         }
         BOOST_LOG_TRIVIAL(info) << "[raft::asio::synchronous_client::send_command] linearizable command failed could not determine leader in cluster.";
         return std::make_pair(messages_type::client_result_fail(), std::numeric_limits<uint64_t>::max());
+      }
+
+      bool set_configuration(uint64_t old_id, const std::vector<std::pair<uint64_t, std::string>> & cfg)
+      {
+        auto request = [old_id, cfg]() {
+                      set_configuration_request_builder bld;
+                      {
+                        auto new_config = bld.old_id(old_id).new_configuration();
+                        for(const auto & server : cfg) {
+                          new_config.server().id(server.first).address(server.second.c_str());
+                        }
+                      }
+                      auto msg = bld.finish();
+                      return serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+                    };
+
+        bool ret = false;
+        auto response = [&ret](boost::asio::const_buffer & b, raft::util::call_on_delete && deleter) {
+                       auto resp = serialization_type::deserialize_set_configuration_response(b, std::move(deleter));
+                       auto result = set_configuration_response_traits::result(resp);
+                       if(messages_type::client_result_success() == result) {
+                         ret = true;
+                       } else if (messages_type::client_result_not_leader() == result) {
+                       } else {
+                         const auto & desc = set_configuration_response_traits::bad_servers(resp);
+                         for(std::size_t i=0; i<simple_configuration_description_traits::size(&desc); ++i) {
+                           const auto & server = simple_configuration_description_traits::get(&desc, i);
+                           BOOST_LOG_TRIVIAL(info) << "[raft::asio::synchronous_client::set_configuration] Slow or unresponsive server with id "
+                                                   << server_description_traits::id(&server) << " and address "
+                                                   << server_description_traits::address(&server);
+                         }
+                       }
+                       return result;
+                     };
+        
+        return send_leader_request(request, response) && ret;
+      }
+
+      std::pair<uint64_t, std::vector<std::pair<uint64_t, std::string>>> get_configuration()
+      {
+        // TODO: Implement timeout
+        bool retry = true;
+        auto ret = std::make_pair(std::numeric_limits<uint64_t>::max(), std::vector<std::pair<uint64_t, std::string>>());
+        while(retry) {
+          auto request = []() {
+                           get_configuration_request_builder bld;
+                           auto msg = bld.finish();
+                           return serialization_type::serialize(boost::asio::buffer(new uint8_t [1024], 1024), std::move(msg));
+                         };
+          auto response = [&ret, &retry](boost::asio::const_buffer & b, raft::util::call_on_delete && deleter) {
+                            retry = false;
+                            auto resp = serialization_type::deserialize_get_configuration_response(b, std::move(deleter));
+                            auto result = get_configuration_response_traits::result(resp);
+                            if(messages_type::client_result_success() == result) {
+                              ret.first = get_configuration_response_traits::id(resp);
+                              const auto & desc = get_configuration_response_traits::configuration(resp);
+                              for(std::size_t i=0; i<simple_configuration_description_traits::size(&desc); ++i) {
+                                const auto & server = simple_configuration_description_traits::get(&desc, i);
+                                ret.second.emplace_back(server_description_traits::id(&server),
+                                                        (std::string) server_description_traits::address(&server));
+                              }
+                              return result;
+                            } else if (messages_type::client_result_not_leader() == result) {
+                              return result;
+                            } else if (messages_type::client_result_retry() == result) {
+                              // Return success to send_leader_request to confirm leadership
+                              retry = true;
+                              return messages_type::client_result_success();
+                            } else {
+                              return result;
+                            }
+                          };
+        
+          send_leader_request(request, response);
+        }
+        return ret;
       }
     };
   }

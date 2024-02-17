@@ -153,6 +153,7 @@ namespace raft {
   public:
     uint64_t end_;
     checkpoint_data_ptr file_;
+    std::string leader_address_;
     
     uint64_t end() const {
       return end_;
@@ -174,10 +175,12 @@ namespace raft {
 
     in_progress_checkpoint(checkpoint_data_store_type & store,
 			   const header_type * header,
+                           std::string && leader_address,
 			   raft::util::call_on_delete && deleter)
       :
       end_(0),
-      file_(store.create(header, std::move(deleter)))
+      file_(store.create(header, std::move(deleter))),
+      leader_address_(std::move(leader_address))
     {
     }
   };

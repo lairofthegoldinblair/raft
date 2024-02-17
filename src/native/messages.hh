@@ -185,12 +185,16 @@ namespace raft {
     {
     public:
       typedef set_configuration_response value_type;
-      typedef set_configuration_request arg_type;
+      typedef set_configuration_response arg_type;
       typedef const value_type& const_arg_type;
     
       static client_result result(const_arg_type msg)
       {
 	return msg.result;
+      }
+      static const simple_configuration_description & bad_servers(const_arg_type msg)
+      {
+	return msg.bad_servers;
       }
       static std::size_t bad_servers_size(const_arg_type msg)
       {
@@ -203,6 +207,48 @@ namespace raft {
       static std::string_view bad_servers_address(const_arg_type msg, std::size_t i)
       {
 	return std::string_view(msg.bad_servers.servers[i].address);
+      }
+    };
+
+    class get_configuration_request
+    {
+    public:
+    };
+
+    class get_configuration_request_traits
+    {
+    public:
+      typedef get_configuration_request value_type;
+      typedef get_configuration_request arg_type;
+      typedef const value_type& const_arg_type;
+    };
+
+    class get_configuration_response
+    {
+    public:
+      client_result result;
+      uint64_t id;
+      simple_configuration_description configuration;
+    };
+
+    class get_configuration_response_traits
+    {
+    public:
+      typedef get_configuration_response value_type;
+      typedef get_configuration_response arg_type;
+      typedef const value_type& const_arg_type;
+    
+      static client_result result(const_arg_type msg)
+      {
+	return msg.result;
+      }    
+      static uint64_t id(const_arg_type msg)
+      {
+	return msg.id;
+      }
+      static const simple_configuration_description & configuration(const_arg_type msg)
+      {
+	return msg.configuration;
       }
     };
 
@@ -901,6 +947,10 @@ namespace raft {
       typedef set_configuration_request_traits set_configuration_request_traits_type;
       typedef set_configuration_response set_configuration_response_type;
       typedef set_configuration_response_traits set_configuration_response_traits_type;
+      typedef get_configuration_request get_configuration_request_type;
+      typedef get_configuration_request_traits get_configuration_request_traits_type;
+      typedef get_configuration_response get_configuration_response_type;
+      typedef get_configuration_response_traits get_configuration_response_traits_type;
       typedef configuration_description configuration_description_type;
       typedef configuration_description_type::server_type configuration_description_server_type;
       typedef configuration_description_type::simple_type simple_configuration_description_type;
@@ -1557,6 +1607,67 @@ namespace raft {
       }
     };
 
+    class get_configuration_request_builder
+    {
+    private:
+      std::unique_ptr<get_configuration_request> obj_;
+      get_configuration_request * get_object()
+      {
+	if (nullptr == obj_) {
+	  obj_ = std::make_unique<get_configuration_request>();
+	}
+	return obj_.get();
+      }
+    public:
+      get_configuration_request finish()
+      {
+	auto obj = *get_object();
+	obj_.reset();
+	return obj;
+      }
+    };
+
+    class get_configuration_response_builder
+    {
+    private:
+      std::unique_ptr<get_configuration_response> obj_;
+      get_configuration_response * get_object()
+      {
+	if (nullptr == obj_) {
+	  obj_ = std::make_unique<get_configuration_response>();
+	  obj_->result = FAIL;
+	  obj_->id = 0;
+	}
+	return obj_.get();
+      }
+    public:
+      get_configuration_response_builder & result(client_result val)
+      {
+	get_object()->result = val;
+	return *this;
+      }
+      get_configuration_response_builder & id(uint64_t val)
+      {
+	get_object()->id = val;
+	return *this;
+      }
+      get_configuration_response_builder & configuration(simple_configuration_description && val)
+      {
+	get_object()->configuration = std::move(val);
+	return *this;
+      }
+      simple_configuration_description_builder configuration()
+      {
+	return simple_configuration_description_builder([this](simple_configuration_description && val) { this->configuration(std::move(val)); });
+      }
+      get_configuration_response finish()
+      {
+	auto obj = *get_object();
+	obj_.reset();
+	return obj;
+      }
+    };
+
     class log_entry_builder
     {
     private:
@@ -1777,71 +1888,14 @@ namespace raft {
       typedef append_checkpoint_chunk_response_builder append_checkpoint_chunk_response_builder_type;
       typedef set_configuration_request_builder set_configuration_request_builder_type;
       typedef set_configuration_response_builder set_configuration_response_builder_type;
+      typedef get_configuration_request_builder get_configuration_request_builder_type;
+      typedef get_configuration_response_builder get_configuration_response_builder_type;
       typedef log_entry_builder log_entry_builder_type;
       typedef open_session_request_builder open_session_request_builder_type;
       typedef open_session_response_builder open_session_response_builder_type;
       typedef close_session_request_builder close_session_request_builder_type;
       typedef close_session_response_builder close_session_response_builder_type;
       typedef linearizable_command_request_builder linearizable_command_request_builder_type;
-    };
-
-    // TODO: Develop some usable code for a state_machine
-    // This consumes the Raft log (and applies commands in the log) and also
-    // consumes checkpoint data (though most likely not directly from the protocol
-    // rather though a disk file that the protocol writes).
-    class state_machine
-    {
-    };
-
-    // A test client
-    // TODO: What is the model for how replicated entries get propagated to a client?
-    // For example, when we are a FOLLOWER, entries get committed via append_entries and
-    // then should be applied to client.  Presumably we should support both a push model and
-    // a pull model.  LogCabin uses a pull model.  Note that we should make a distinction between
-    // a client and a state_machine.
-    template<typename _Messages>
-    class client
-    {
-    public:
-      typedef typename _Messages::simple_configuration_description_type simple_configuration_description_type;
-      typedef typename _Messages::client_result_type client_result_type;
-      std::deque<client_response> responses;
-      std::deque<set_configuration_response> configuration_responses;
-
-      static client_result convert(client_result_type result)
-      {
-	if (_Messages::client_result_success() == result) {
-	  return client_result::SUCCESS;
-	} else if (_Messages::client_result_fail() == result) {
-	  return client_result::FAIL;
-	} else if (_Messages::client_result_not_leader() == result) {
-	  return client_result::NOT_LEADER;
-	} else if (_Messages::client_result_session_expired() == result) {
-	  return client_result::SESSION_EXPIRED;
-	} else {
-	  return client_result::RETRY;
-	}
-      }
-      void on_configuration_response(client_result_type result)
-      {
-	set_configuration_response resp;
-	resp.result = convert(result);
-	configuration_responses.push_front(resp);
-      }
-    
-      void on_configuration_response(client_result_type result, const std::vector<std::pair<uint64_t, std::string>> & bad_servers)
-      {
-	set_configuration_response resp;
-	resp.result = convert(result);
-	for(const auto & bs : bad_servers) {
-	  resp.bad_servers.servers.push_back({bs.first, bs.second});
-	}
-	configuration_responses.push_front(resp);
-      }
-    
-      client()
-      {
-      }
     };
   }
 }

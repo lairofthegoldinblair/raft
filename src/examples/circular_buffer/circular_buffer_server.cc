@@ -176,6 +176,7 @@ struct logger
 template<typename _TestType>
 int run_server(int argc, char ** argv)
 {
+  typedef typename _TestType::messages_type::log_entry_type log_entry_type;
   typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
   typedef typename _TestType::builders_type::open_session_request_builder_type open_session_request_builder;
   typedef typename _TestType::messages_type::open_session_response_traits_type open_session_response_traits;
@@ -189,6 +190,7 @@ int run_server(int argc, char ** argv)
 
   uint32_t id=0;
   uint32_t checkpoint_interval;
+  std::string listen;
   std::vector<std::string> servers;
   std::string journal;
   std::string loglev;
@@ -196,6 +198,7 @@ int run_server(int argc, char ** argv)
   desc.add_options()
     ("help", "produce help message")
     ("id", po::value<uint32_t>(&id), "My Id")
+    ("listen", po::value<std::string>(&listen), "listen address for this server")
     ("server", po::value<std::vector<std::string>>(&servers), "server in initial cluster")
     ("checkpoint-interval", po::value<uint32_t>(&checkpoint_interval)->default_value(100000), "checkpoint interaval (measured in number of log records)")
     ("journal", po::value<std::string>(&journal), "journal file")
@@ -206,7 +209,7 @@ int run_server(int argc, char ** argv)
   po::store(po::parse_command_line(argc, argv, desc), vm);
   po::notify(vm);
 
-  if (0 < vm.count("help") || 0 == vm.count("id") || 0 == vm.count("server") || 0 == vm.count("journal")) {
+  if (0 < vm.count("help") || 0 == vm.count("id") || 0 == vm.count("listen") || 0 == vm.count("journal")) {
     std::cerr << desc << "\n";
     return 1;
   }
@@ -226,24 +229,28 @@ int run_server(int argc, char ** argv)
   try {
     boost::asio::io_service ios;
     auto make_config = [&servers]() {
-                         log_entry_builder leb;
-                         {
-                           auto cb = leb.term(0).configuration();
+                         if (servers.size() > 0) {
+                           log_entry_builder leb;
                            {
-                             auto scb = cb.from();
-                             for(std::size_t i=0; i<servers.size(); ++i) {
-                               scb.server().id(i).address((boost::format("%1%:9133") % servers[i]).str().c_str());
+                             auto cb = leb.term(0).configuration();
+                             {
+                               auto scb = cb.from();
+                               for(std::size_t i=0; i<servers.size(); ++i) {
+                                 scb.server().id(i).address((boost::format("%1%:9133") % servers[i]).str().c_str());
+                               }
                              }
+                             cb.to();
                            }
-                           cb.to();
+                           return leb.finish();
+                         } else {
+                           return std::pair<const log_entry_type *, raft::util::call_on_delete>(nullptr, raft::util::call_on_delete());
                          }
-                         return leb.finish();
                        };
 
     // 913x ports are for peers to connect to one another                                                                                                                                                               
     // 813x ports are for clients to connect                                                                                                                                                                            
-    boost::asio::ip::tcp::endpoint ep1(boost::asio::ip::make_address_v4(servers[id]), 9133);
-    boost::asio::ip::tcp::endpoint cep1(boost::asio::ip::make_address_v4(servers[id]), 8133);
+    boost::asio::ip::tcp::endpoint ep1(boost::asio::ip::make_address_v4(listen), 9133);
+    boost::asio::ip::tcp::endpoint cep1(boost::asio::ip::make_address_v4(listen), 8133);
     tcp_server_type s1(ios, id, ep1, cep1, make_config(), journal);
     s1.checkpoint_interval(checkpoint_interval);
 

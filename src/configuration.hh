@@ -491,7 +491,7 @@ namespace raft {
 	new_known_peers.insert(new_peers_.peers_.back()->peer_id);
       }
 
-      for(auto p : cluster_) {
+      for(auto & p : cluster_) {
 	if (!!p && 0 == new_known_peers.count(p->peer_id)) {
 	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") deleting peer with id " << p->peer_id;
 	  p->exit();
@@ -540,7 +540,7 @@ namespace raft {
       return true;
     }
 
-    std::vector<std::pair<uint64_t, std::string>> staging_servers_making_progress() const
+    std::vector<std::pair<uint64_t, std::string>> staging_servers_not_making_progress() const
     {
       std::vector<std::pair<uint64_t, std::string>> ret;
       if (state_ != STAGING) {

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "boost/dynamic_bitset.hpp"
+#include "boost/format.hpp"
 #include "boost/test/test_tools.hpp"
 #include "boost/variant.hpp"
 
@@ -60,15 +61,6 @@ namespace raft {
       };
     };
 
-    struct native_client_metafunction
-    {
-      template <typename _Messages>
-      struct apply
-      {
-        typedef raft::native::client<_Messages> type;
-      };
-    };
-
     struct log_header_write_test : public raft::log_header_write
     {
       uint64_t current_term_ = std::numeric_limits<uint64_t>::max();
@@ -98,11 +90,69 @@ namespace raft {
       std::string_view tmp(raft::slice::buffer_cast<const char *>(sl), raft::slice::buffer_size(sl));
       return str.compare(tmp);
     }
+
+    template<typename _Messages>
+    class client : public raft::client_completion_operation<_Messages>
+    {
+    public:
+      typedef _Messages messages_type;
+      typedef typename messages_type::simple_configuration_description_type simple_configuration_description_type;
+      typedef typename messages_type::client_result_type client_result_type;
+      std::deque<raft::native::client_response> responses;
+      std::deque<raft::native::set_configuration_response> configuration_responses;
+
+      client()
+        :
+        client_completion_operation<_Messages>(&do_client_complete)
+      {
+      }
+      static raft::native::client_result convert(client_result_type result)
+      {
+	if (_Messages::client_result_success() == result) {
+	  return raft::native::client_result::SUCCESS;
+	} else if (_Messages::client_result_fail() == result) {
+	  return raft::native::client_result::FAIL;
+	} else if (_Messages::client_result_not_leader() == result) {
+	  return raft::native::client_result::NOT_LEADER;
+	} else if (_Messages::client_result_session_expired() == result) {
+	  return raft::native::client_result::SESSION_EXPIRED;
+	} else {
+	  return raft::native::client_result::RETRY;
+	}
+      }
+      void on_configuration_response(client_result_type result)
+      {
+	raft::native::set_configuration_response resp;
+	resp.result = convert(result);
+	configuration_responses.push_front(resp);
+      }
     
+      void on_configuration_response(client_result_type result, std::vector<std::pair<uint64_t, std::string>> && bad_servers)
+      {
+	raft::native::set_configuration_response resp;
+	resp.result = convert(result);
+	for(const auto & bs : bad_servers) {
+	  resp.bad_servers.servers.push_back({bs.first, bs.second});
+	}
+	configuration_responses.push_front(resp);
+      }
+      static void do_client_complete(client_completion_operation<_Messages> * base,
+                                     client_result_type result,
+                                     std::vector<std::pair<uint64_t, std::string>> && bad_servers)
+      {
+        client * cli(static_cast<client *>(base));
+        cli->on_configuration_response(result, std::move(bad_servers));
+      }      
+    };
+    
+    enum class TestFixtureInitialization { LOG, CHECKPOINT, EMPTY };
+
     template<typename _TestType>
     class RaftTestFixtureBase
     {
     public:
+      typedef typename _TestType::messages_type messages_type;
+      typedef typename _TestType::messages_type::client_result_type client_result_type;
       typedef typename _TestType::messages_type::vote_request_traits_type::arg_type vote_request_arg_type;
       typedef typename _TestType::messages_type::vote_request_traits_type vote_request_traits;
       typedef typename _TestType::builders_type::vote_request_builder_type vote_request_builder;
@@ -129,14 +179,19 @@ namespace raft {
       typedef typename _TestType::messages_type::configuration_description_traits_type configuration_description_traits;
       typedef typename _TestType::messages_type::set_configuration_request_traits_type set_configuration_request_traits;
       typedef typename _TestType::builders_type::set_configuration_request_builder_type set_configuration_request_builder;
+      typedef typename _TestType::messages_type::get_configuration_request_traits_type get_configuration_request_traits;
+      typedef typename _TestType::builders_type::get_configuration_request_builder_type get_configuration_request_builder;
+      typedef typename _TestType::messages_type::get_configuration_response_traits_type get_configuration_response_traits;
+      typedef typename _TestType::builders_type::get_configuration_response_builder_type get_configuration_response_builder;
       typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
       typedef typename _TestType::builders_type::linearizable_command_request_builder_type linearizable_command_request_builder;
       typedef typename _TestType::builders_type::open_session_request_builder_type open_session_request_builder;
       typedef typename _TestType::serialization_type serialization_type;
-      typedef raft::protocol<generic_communicator_metafunction, native_client_metafunction, typename _TestType::messages_type> raft_type;
+      typedef raft::protocol<generic_communicator_metafunction, typename _TestType::messages_type> raft_type;
+      typedef client<typename _TestType::messages_type> client_type;
       std::size_t cluster_size;
       typename raft_type::communicator_type comm;
-      typename raft_type::client_type c;
+      client_type c;
       typename raft_type::log_type l;
       typename raft_type::checkpoint_data_store_type store;
       std::shared_ptr<typename raft_type::configuration_manager_type> cm;
@@ -169,7 +224,7 @@ namespace raft {
         b.server().id(5).address("192.168.1.6"); 
       }
 
-      RaftTestFixtureBase(bool initializeWithCheckpoint=true)
+      RaftTestFixtureBase(TestFixtureInitialization init=TestFixtureInitialization::CHECKPOINT)
         :
         cluster_size(5),
         cm(new typename raft_type::configuration_manager_type(0)),
@@ -181,7 +236,7 @@ namespace raft {
         // Glue log to log_header_write
         l.set_log_header_writer(&log_header_write_);
     
-        if (initializeWithCheckpoint) {
+        if (init == TestFixtureInitialization::CHECKPOINT) {
           // Builder interface only supports creating a checkpoint header in the context of an append_checkpoint_chunk message
           {
             append_checkpoint_chunk_request_builder accb;
@@ -201,6 +256,7 @@ namespace raft {
             five_servers = accb.finish();
           }
           cm->set_checkpoint(append_checkpoint_chunk_request_traits::last_checkpoint_header(five_servers), now);
+          BOOST_CHECK(cm->configuration().is_valid());
           BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
           BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
           BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
@@ -211,7 +267,7 @@ namespace raft {
           BOOST_CHECK_EQUAL(0U, protocol->commit_index());
           BOOST_CHECK_EQUAL(raft_type::FOLLOWER, protocol->get_state());
           BOOST_CHECK_EQUAL(0U, comm.q.size());
-        } else {
+        } else if (init == TestFixtureInitialization::LOG) {
           initial_cluster_time = 253;
           log_entry_builder leb;
           {	
@@ -222,6 +278,7 @@ namespace raft {
           l.append(leb.finish());
           l.update_header(0, raft_type::INVALID_PEER_ID());
           protocol.reset(new raft_type(comm, l, store, *cm.get(), now));
+          BOOST_CHECK(cm->configuration().is_valid());
           BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
           BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
           BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
@@ -234,6 +291,21 @@ namespace raft {
           BOOST_CHECK_EQUAL(0U, l.index_begin());
           BOOST_CHECK_EQUAL(1U, l.index_end());
           BOOST_CHECK_EQUAL(initial_cluster_time, l.last_entry_cluster_time());
+        } else if (init == TestFixtureInitialization::EMPTY) {
+          l.update_header(0, raft_type::INVALID_PEER_ID());
+          protocol.reset(new raft_type(comm, l, store, *cm.get(), now));
+          BOOST_CHECK(!cm->configuration().is_valid());
+          BOOST_CHECK_EQUAL(std::numeric_limits<uint64_t>::max(), cm->configuration().configuration_id());
+          BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
+          BOOST_CHECK_EQUAL(0U, cm->configuration().num_known_peers());
+          BOOST_CHECK(!cm->configuration().includes_self());
+          BOOST_CHECK_EQUAL(0U, protocol->current_term());
+          BOOST_CHECK_EQUAL(0U, protocol->cluster_time());
+          BOOST_CHECK_EQUAL(0U, protocol->commit_index());
+          BOOST_CHECK_EQUAL(raft_type::FOLLOWER, protocol->get_state());
+          BOOST_CHECK_EQUAL(0U, comm.q.size());
+          BOOST_CHECK_EQUAL(0U, l.index_begin());
+          BOOST_CHECK_EQUAL(0U, l.index_end());
         }
         protocol->set_state_machine_for_checkpoint([this](raft::checkpoint_block b, bool is_final) {
                                                      if (!b.is_null()) {
@@ -264,6 +336,8 @@ namespace raft {
                                const boost::dynamic_bitset<> & send_responses_from);
       std::size_t num_known_peers() { return cm->configuration().num_known_peers(); }
       void stage_new_server(uint64_t term, uint64_t commit_index);
+      void check_configuration_servers(uint64_t term, uint64_t request_id, uint64_t configuration_id, std::size_t num_servers);
+      void check_configuration_retry(uint64_t term, uint64_t request_id);
     };
 
     template<typename _TestType>
@@ -671,6 +745,105 @@ namespace raft {
       }
       BOOST_CHECK(!cm->configuration().staging_servers_caught_up());
       BOOST_CHECK(cm->configuration().is_staging());
+    }
+
+    template<typename _TestType>
+    void RaftTestFixtureBase<_TestType>::check_configuration_servers(uint64_t term, uint64_t request_id, uint64_t configuration_id, std::size_t num_servers)
+    {
+      auto client_index = this->protocol->commit_index();
+      bool called = false;
+      client_result_type cr = messages_type::client_result_fail();
+      uint64_t config_id = std::numeric_limits<uint64_t>::max();
+      std::vector<std::pair<uint64_t, std::string> > servers;
+      auto cb = [&cr, &called, &config_id, &servers](client_result_type result, uint64_t id, std::vector<std::pair<uint64_t, std::string>> && cfg) {
+                  cr = result;
+                  called = true;
+                  config_id = id;
+                  servers = std::move(cfg);
+                };
+      
+      BOOST_TEST(request_id == this->protocol->request_id());
+      get_configuration_request_builder bld;
+      auto req = bld.finish();
+      this->protocol->on_get_configuration(std::move(cb), std::move(req), this->now);
+      BOOST_TEST(request_id+1 == this->protocol->request_id());
+      BOOST_TEST(!called);
+      BOOST_CHECK_EQUAL(this->num_known_peers()-1, this->comm.q.size());
+      std::size_t expected = 1;
+      std::size_t quorum = this->num_known_peers()/2;
+      while(this->comm.q.size() > 0) {
+        auto req_request_id = append_entry_request_traits::request_id(boost::get<append_entry_request_arg_type>(this->comm.q.back()));
+        BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
+        BOOST_CHECK_EQUAL(expected, append_entry_request_traits::recipient_id(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+        BOOST_CHECK_EQUAL(term, append_entry_request_traits::term_number(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+        BOOST_CHECK_EQUAL(0U, append_entry_request_traits::leader_id(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+        BOOST_CHECK_EQUAL(0U, append_entry_request_traits::log_index_begin(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+        BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_term(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+        BOOST_CHECK_EQUAL(0U, append_entry_request_traits::num_entries(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+        auto resp = append_entry_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).index_begin(0).index_end(client_index).success(true).finish();
+        this->protocol->on_append_entry_response(std::move(resp), this->now);
+        if (expected >= quorum) {
+          BOOST_TEST(called);
+          BOOST_TEST(messages_type::client_result_success() == cr);
+          BOOST_TEST(configuration_id == config_id);
+          BOOST_TEST(num_servers == servers.size());
+          for(std::size_t i = 0 ; i<servers.size(); ++i) {
+            BOOST_TEST(servers[i].first == i);
+            BOOST_TEST(servers[i].second == (boost::format("192.168.1.%1%") % (i+1)).str());
+          }
+        } else {
+          BOOST_TEST(!called);
+        }
+        expected += 1;
+        this->comm.q.pop_back();
+      }      
+    }
+
+    template<typename _TestType>
+    void RaftTestFixtureBase<_TestType>::check_configuration_retry(uint64_t term, uint64_t request_id)
+    {
+      auto client_index = this->protocol->commit_index();
+      bool called = false;
+      client_result_type cr = messages_type::client_result_fail();
+      uint64_t config_id = std::numeric_limits<uint64_t>::max();
+      std::vector<std::pair<uint64_t, std::string> > servers;
+      auto cb = [&cr, &called, &config_id, &servers](client_result_type result, uint64_t id, std::vector<std::pair<uint64_t, std::string>> && cfg) {
+                  cr = result;
+                  called = true;
+                  config_id = id;
+                  servers = std::move(cfg);
+                };
+      BOOST_TEST(request_id == this->protocol->request_id());
+      get_configuration_request_builder bld;
+      auto req = bld.finish();
+      this->protocol->on_get_configuration(std::move(cb), std::move(req), this->now);
+      BOOST_TEST(request_id+1 == this->protocol->request_id());
+      BOOST_TEST(!called);
+      BOOST_CHECK_EQUAL(this->num_known_peers()-1, this->comm.q.size());
+      std::size_t expected = 1;
+      std::size_t quorum = this->num_known_peers()/2;
+      while(this->comm.q.size() > 0) {
+        auto req_request_id = append_entry_request_traits::request_id(boost::get<append_entry_request_arg_type>(this->comm.q.back()));
+        BOOST_CHECK_EQUAL(this->protocol->request_id(), req_request_id);
+        BOOST_CHECK_EQUAL(expected, append_entry_request_traits::recipient_id(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+        BOOST_CHECK_EQUAL(term, append_entry_request_traits::term_number(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+        BOOST_CHECK_EQUAL(0U, append_entry_request_traits::leader_id(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+        BOOST_CHECK_EQUAL(0U, append_entry_request_traits::log_index_begin(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+        BOOST_CHECK_EQUAL(0U, append_entry_request_traits::previous_log_term(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+        BOOST_CHECK_EQUAL(0U, append_entry_request_traits::num_entries(boost::get<append_entry_request_arg_type>(this->comm.q.back())));
+        auto resp = append_entry_response_builder().request_id(req_request_id).recipient_id(expected).term_number(term).request_term_number(term).index_begin(0).index_end(client_index).success(true).finish();
+        this->protocol->on_append_entry_response(std::move(resp), this->now);
+        if (expected >= quorum) {
+          BOOST_TEST(called);
+          BOOST_TEST(messages_type::client_result_retry() == cr);
+          BOOST_TEST(0 == config_id);
+          BOOST_TEST(0U == servers.size());
+        } else {
+          BOOST_TEST(!called);
+        }
+        expected += 1;
+        this->comm.q.pop_back();
+      }      
     }
   }
 }
