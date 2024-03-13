@@ -1,6 +1,7 @@
 #ifndef __RAFT_PROTOCOL_HH__
 #define __RAFT_PROTOCOL_HH__
 
+#include <deque>
 #include <functional>
 #include <random>
 #include <tuple>
@@ -9,10 +10,10 @@
 #include <boost/log/trivial.hpp>
 
 #include "configuration.hh"
-#include "checkpoint.hh"
 #include "log.hh"
 #include "peer.hh"
 #include "slice.hh"
+#include "util/call_on_delete.hh"
 #include "util/json.hh"
 
 // General TODO:
@@ -168,7 +169,7 @@ namespace raft {
   // void set_checkpoint(checkpoint_data_ptr);
   // void set_checkpoint_header(checkpoint_header_type &);
   // void send_append_checkpoint_chunk_response(append_checkpoint_chunk_response_continuation);
-  template <typename _Messages, typename _Protocol>
+  template <typename _Messages, typename _Checkpoint, typename _Protocol>
   class server_checkpoint
   {
   public:
@@ -179,10 +180,11 @@ namespace raft {
     typedef typename messages_type::configuration_description_traits_type configuration_description_traits_type;
     typedef typename messages_type::simple_configuration_description_traits_type simple_configuration_description_traits_type;
     typedef typename messages_type::server_description_traits_type server_description_traits_type;
-    typedef checkpoint_data_store<messages_type> checkpoint_data_store_type;
+    typedef typename _Checkpoint::template apply<messages_type>::type checkpoint_data_store_type;
     typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
     typedef typename checkpoint_data_store_type::header_type checkpoint_header_type;
     typedef typename checkpoint_data_store_type::header_traits_type checkpoint_header_traits_type;
+    typedef typename checkpoint_data_store_type::block_type checkpoint_block_type;
     
     // JSON printer
     typedef raft::util::json<messages_type> json_type;
@@ -220,7 +222,7 @@ namespace raft {
     // Checkpoints live here
     checkpoint_data_store_type & store_;
     // Interface to state machine for restoring checkpoint
-    std::function<void(checkpoint_block, bool)> state_machine_;
+    std::function<void(const checkpoint_block_type &, bool)> state_machine_;
   
     server_checkpoint(checkpoint_data_store_type & store)
       :
@@ -228,14 +230,17 @@ namespace raft {
       last_checkpoint_term_(0),
       last_checkpoint_cluster_time_(0),
       store_(store),
-      state_machine_([](checkpoint_block, bool) { })
+      state_machine_([](const checkpoint_block_type &, bool) { })
     {
     }
     friend _Protocol;
 
   protected:
     // Append Checkpoint Chunk processing
-    std::tuple<uint64_t, const std::string &, bool> write_checkpoint_chunk(append_checkpoint_chunk_request_arg_type && req)
+    template<typename _Callback>
+    void write_checkpoint_chunk(std::chrono::time_point<std::chrono::steady_clock> clock_now,
+                                append_checkpoint_chunk_request_arg_type && req,
+                                _Callback && cb)
     {
       static std::string empty;
       typedef append_checkpoint_chunk_request_traits_type acc;
@@ -247,6 +252,7 @@ namespace raft {
       auto req_checkpoint_done = acc::checkpoint_done(req);
       auto req_checkpoint_index_end = acc::checkpoint_index_end(req);
       auto req_leader_id = acc::leader_id(req);
+      auto req_term_number = acc::term_number(req);
       auto req_request_id = acc::request_id(req);
       auto req_data = acc::data(req);
       auto req_checkpoint_begin = acc::checkpoint_begin(req);
@@ -276,7 +282,8 @@ namespace raft {
           BOOST_LOG_TRIVIAL(warning) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
             " received checkpoint chunk from leader " << req_leader_id <<
             " which did not contain the leader in the configuration.";
-          return std::tuple<uint64_t, const std::string &, bool>(current_checkpoint_->end(), empty, false);
+          cb(clock_now, std::tuple<uint64_t, const std::string &, bool>(0U, empty, false));
+          return;
         }
 	current_checkpoint_.reset(new in_progress_checkpoint<checkpoint_data_store_type>(store_, &header, std::move(leader_address), [o = std::move(owned)](){}));
       }
@@ -287,39 +294,97 @@ namespace raft {
 	BOOST_LOG_TRIVIAL(warning) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
 	  " received checkpoint chunk at " << req_checkpoint_begin <<
 	  " expecting at offset " << current_checkpoint_->end() << ".  Ignoring append_checkpoint_chunk_request message.";
-	return { current_checkpoint_->end(), empty, false };
+	cb(clock_now, { current_checkpoint_->end(), empty, false });
+        return;
       }
 
-      current_checkpoint_->write(std::move(req_data));
-      BOOST_LOG_TRIVIAL(info) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
-        " received checkpoint chunk from leader_id=" << req_leader_id << " request_id=" << req_request_id <<
-        " containing byte_range=[" << req_checkpoint_begin << "," << req_checkpoint_end << ")"
-        " for checkpoint at index " << req_checkpoint_index_end <<
-        " with header " << json_type::checkpoint_header(current_checkpoint_->file_->header());
+      auto continuation = [this,
+                           req_checkpoint_done,
+                           req_checkpoint_index_end,
+                           req_leader_id,
+                           req_term_number,
+                           req_request_id,
+                           req_checkpoint_begin,
+                           req_checkpoint_end,
+                           leader_address = current_checkpoint_->leader_address_,
+                           next = std::move(cb)](std::chrono::time_point<std::chrono::steady_clock> clock_now) {
+                            if (!this->current_checkpoint_) {
+                              next(clock_now, { 0U, leader_address, true });
+                              return;
+                            }
+                            BOOST_LOG_TRIVIAL(info) << "Server(" << this->protocol()->my_cluster_id() << ") at term " << this->protocol()->current_term() <<
+                              " received checkpoint chunk from leader_id=" << req_leader_id << " request_id=" << req_request_id <<
+                              " containing byte_range=[" << req_checkpoint_begin << "," << req_checkpoint_end << ")"
+                              " for checkpoint at index " << req_checkpoint_index_end <<
+                              " with header " << json_type::checkpoint_header(this->current_checkpoint_->file_->header());
 
-      if (req_checkpoint_done) {
-	if (req_checkpoint_index_end < last_checkpoint_index_end()) {
-	  BOOST_LOG_TRIVIAL(warning) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
-	    " received completed checkpoint at index " << req_checkpoint_index_end <<
-	    " but already have a checkpoint at " << last_checkpoint_index_end() << ".  Ignoring entire out of date checkpoint.";
-	  abandon_checkpoint();
-	} else {
-          // Don't respond until the checkpoint is sync'd. Make a note to
-          // do so.
-	  append_checkpoint_chunk_response_continuation resp;
-	  resp.leader_id = req_leader_id;
-	  resp.term_number = resp.request_term_number = protocol()->current_term();
-          resp.request_id = req_request_id;
-	  resp.bytes_stored = current_checkpoint_->end();
-	  sync(resp);
-          BOOST_LOG_TRIVIAL(info) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
-            " received final checkpoint chunk, waiting for checkpoint sync.";
-        }
-      }
-      // If checkpoint not done then we can respond immediately.
-      return { current_checkpoint_->end(), current_checkpoint_->leader_address_, !req_checkpoint_done };
+                            if (req_checkpoint_done) {
+                              if (req_checkpoint_index_end < this->last_checkpoint_index_end()) {
+                                BOOST_LOG_TRIVIAL(warning) << "Server(" << this->protocol()->my_cluster_id() << ") at term " << this->protocol()->current_term() <<
+                                  " received completed checkpoint at index " << req_checkpoint_index_end <<
+                                  " but already have a checkpoint at " << this->last_checkpoint_index_end() << ".  Ignoring entire out of date checkpoint.";
+                                this->abandon_checkpoint();
+                              } else {
+                                // Don't respond until the checkpoint is sync'd. Make a note to
+                                // do so.
+                                append_checkpoint_chunk_response_continuation resp;
+                                resp.leader_id = req_leader_id;
+                                resp.term_number = resp.request_term_number = protocol()->current_term();
+                                resp.request_id = req_request_id;
+                                resp.bytes_stored = this->current_checkpoint_->end();
+                                this->sync(resp);
+                                this->current_checkpoint_->file_->sync(clock_now,
+                                                                       [this](std::chrono::time_point<std::chrono::steady_clock> clock_now) {
+                                                                         this->on_checkpoint_sync(clock_now, [] (std::chrono::time_point<std::chrono::steady_clock> clock_now) {});
+                                                                       });
+                                BOOST_LOG_TRIVIAL(info) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
+                                  " received final checkpoint chunk, waiting for checkpoint sync.";
+                              }
+                              // This is a no-op since we don't want to send a response.
+                              // TODO: Refactor so that the append_checkpoint_chunk_response_continuation above
+                              // is reimplemented by passing this call back onto the file sync.
+                              next(clock_now, { 0, empty, false });
+                            } else {
+                              // If checkpoint not done then we can respond immediately.
+                              next(clock_now, { this->current_checkpoint_->end(), this->current_checkpoint_->leader_address_, true });
+                            }
+                          };
+      current_checkpoint_->write(clock_now, std::move(req_data), std::move(continuation));
     }
-    
+
+    template<typename _Callback>
+    void internal_checkpoint_sync_load(std::chrono::time_point<std::chrono::steady_clock> clock_now, _Callback && cb)
+    {
+        // We need to load the checkpoint before sending the response because we may need the configuration
+        // to tell us to whom to send the response...
+        auto cont = std::move(checkpoint_chunk_response_sync_continuations_[0]);
+        checkpoint_chunk_response_sync_continuations_.resize(0);
+        this->load_checkpoint(clock_now, [this, c = std::move(cont), next=std::move(cb)](std::chrono::time_point<std::chrono::steady_clock> clock_now) {
+                                           this->internal_complete_checkpoint_sync(c); next(clock_now);
+                                         });
+    }
+
+    void internal_complete_checkpoint_sync(const append_checkpoint_chunk_response_continuation & cont)
+    {
+      BOOST_ASSERT(current_checkpoint_);
+      protocol()->send_append_checkpoint_chunk_response(cont);
+      current_checkpoint_.reset();
+    }
+
+    template<typename _Callback>
+    void on_next_checkpoint_block(std::chrono::time_point<std::chrono::steady_clock> clock_now, checkpoint_block_type && block, _Callback && cb)
+    {
+      if (!last_checkpoint()->is_final(block)) {
+        state_machine_(block, false);
+        last_checkpoint()->next_block(clock_now, block, [this, cb = std::move(cb)](std::chrono::time_point<std::chrono::steady_clock> clock_now, checkpoint_block_type && block) {
+                                                          this->on_next_checkpoint_block(clock_now, std::move(block), std::move(cb));
+                                                        });
+      } else {
+        state_machine_(std::move(block), true);
+        cb(clock_now);
+      }
+    }
+
   public:
 
     // Attach the state machine
@@ -348,8 +413,16 @@ namespace raft {
       return !checkpoint_chunk_response_sync_continuations_.empty();
     }
 
-    void abandon_checkpoint() {
+    void abandon_checkpoint()
+    {
       if (!!current_checkpoint_) {
+	BOOST_LOG_TRIVIAL(info) << "Server(" << protocol()->my_cluster_id() << ") at term " << protocol()->current_term() <<
+	  " abandoning in progress checkpoint with header " << json_type::checkpoint_header(current_checkpoint_->file_->header());
+        if (checkpoint_chunk_response_sync_continuations_.size()>0) {
+          checkpoint_chunk_response_sync_continuations_[0].bytes_stored = 0;
+          protocol()->send_append_checkpoint_chunk_response(checkpoint_chunk_response_sync_continuations_[0]);
+          checkpoint_chunk_response_sync_continuations_.resize(0);
+        }
 	store_.discard(current_checkpoint_->file_);
 	current_checkpoint_.reset();
       }
@@ -372,7 +445,10 @@ namespace raft {
       }
     }
 
-    bool complete_checkpoint(checkpoint_data_ptr ckpt, std::chrono::time_point<std::chrono::steady_clock> clock_now)
+    template<typename _Callback>
+    bool complete_checkpoint(checkpoint_data_ptr ckpt,
+                             std::chrono::time_point<std::chrono::steady_clock> clock_now,
+                             _Callback && cb)
     {
       auto checkpoint_index_end = checkpoint_header_traits_type::log_entry_index_end(&ckpt->header());
 
@@ -396,16 +472,20 @@ namespace raft {
 
       protocol()->set_checkpoint(ckpt, clock_now);
 
-      store_.commit(ckpt);
+      store_.commit(clock_now, ckpt, [cb = std::move(cb)](std::chrono::time_point<std::chrono::steady_clock> clock_now) {
+                                       cb(clock_now);
+                                     });
     
       return true;
     }
-    
-    void load_checkpoint(std::chrono::time_point<std::chrono::steady_clock> clock_now)
+
+    template<typename _Callback>
+    void load_checkpoint(std::chrono::time_point<std::chrono::steady_clock> clock_now, _Callback && cb)
     {
       checkpoint_data_ptr ckpt = last_checkpoint();
       if (!ckpt) {
 	// TODO: Should be a WARNING or ERROR
+        cb(clock_now);
 	return;
       }
       const checkpoint_header_type & header(ckpt->header());
@@ -430,43 +510,47 @@ namespace raft {
       protocol()->set_checkpoint_header(header, clock_now);
 
       // TODO: Make the state machine restore async
-      checkpoint_block block;
-      do {
-        state_machine_(block, false);
-        block = last_checkpoint()->next_block(block);
-      } while(!last_checkpoint()->is_final(block));
-      state_machine_(block, true);
+      checkpoint_block_type block;
+      state_machine_(block, false);
+      last_checkpoint()->next_block(clock_now, block, [this, cb = std::move(cb)](std::chrono::time_point<std::chrono::steady_clock> clock_now, checkpoint_block_type && block) {
+                                                                           this->on_next_checkpoint_block(clock_now, std::move(block), std::move(cb));
+                                                      });
     }
 
     // Update of checkpoint file is synced to disk
-    void on_checkpoint_sync()
+    // This is a composite asynchronous operation that comprises two async operations:
+    // internal_checkpoint_sync_load
+    // - This syncs the checkpoint to disk
+    // internal_complete_checkpoint_sync
+    // - This loads the checkpoint (reading from disk)
+    // - Calls the sync continuation that was created when sync() was initiated
+    template<typename _Callback>
+    void on_checkpoint_sync(std::chrono::time_point<std::chrono::steady_clock> clock_now, _Callback && cb)
     {
-      on_checkpoint_sync(std::chrono::steady_clock::now());
-    }
-    
-    void on_checkpoint_sync(std::chrono::time_point<std::chrono::steady_clock> clock_now)
-    {
-      BOOST_ASSERT(current_checkpoint_);
+      if(!current_checkpoint_ || 0 == checkpoint_chunk_response_sync_continuations_.size()) {
+        cb(clock_now);
+        return;
+      }
       BOOST_ASSERT(1U == checkpoint_chunk_response_sync_continuations_.size());
       if (protocol()->current_term() == checkpoint_chunk_response_sync_continuations_[0].term_number) {
 	// What happens if the current term has changed while we were waiting for sync?  Right now I am suppressing the
 	// message but perhaps better to let the old leader know things have moved on.
-	// TODO: Interface to load checkpoint state now that it is complete
-	// TODO: Do we want an async interface for loading checkpoint state into memory?
-	store_.commit(current_checkpoint_->file_);
-        // We need to load the checkpoint before sending the response because we may need the configuration
-        // to tell us to whom to send the response...
-        this->load_checkpoint(clock_now);
-        protocol()->send_append_checkpoint_chunk_response(checkpoint_chunk_response_sync_continuations_[0]);
+        // Note that we *should* have already abandoned the checkpoint if the term has advanced and that
+        // *will* have sent a message back to the leader.
+        auto cont = [this, cb = std::move(cb)](std::chrono::time_point<std::chrono::steady_clock> clock_now) {
+                      this->internal_checkpoint_sync_load(clock_now, std::move(cb));
+                    };
+	store_.commit(clock_now, current_checkpoint_->file_, std::move(cont));
+      } else {
+        current_checkpoint_.reset();
+        cb(clock_now);
       }
-      current_checkpoint_.reset();
-      checkpoint_chunk_response_sync_continuations_.resize(0);
     }
   };
 
   // A protocol instance encapsulates what a participant in the Raft consensus protocol knows about itself
-  template<typename _Communicator, typename _Messages>
-  class protocol : public server_checkpoint<_Messages, protocol<_Communicator, _Messages>>
+  template<typename _Communicator, typename _Checkpoint, typename _Messages>
+  class protocol : public server_checkpoint<_Messages, _Checkpoint, protocol<_Communicator, _Checkpoint, _Messages>>
   {
   public:
     // Communicator types
@@ -477,10 +561,11 @@ namespace raft {
     typedef client_completion_operation<_Messages> client_type;
     
     // Checkpoint types
-    typedef checkpoint_data_store<messages_type> checkpoint_data_store_type;
+    typedef typename _Checkpoint::template apply<messages_type>::type checkpoint_data_store_type;
     typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
     typedef typename checkpoint_data_store_type::header_type checkpoint_header_type;
     typedef typename checkpoint_data_store_type::header_traits_type checkpoint_header_traits_type;
+    typedef typename checkpoint_data_store_type::block_type checkpoint_block_type;
     typedef peer_checkpoint<checkpoint_data_store_type> peer_checkpoint_type;
 
     // A peer with this checkpoint data store and whatever the configuration manager brings to the table
@@ -647,7 +732,7 @@ namespace raft {
     std::multimap<uint64_t, append_entry_continuation> append_entry_continuations_;
     // continuations depending on log header sync events
     std::vector<append_entry_request_arg_type> append_entry_header_sync_continuations_;
-    std::vector<append_checkpoint_chunk_request_arg_type> append_checkpoint_chunk_request_header_sync_continuations_;
+    std::deque<append_checkpoint_chunk_request_arg_type> append_checkpoint_chunk_request_header_sync_continuations_;
     std::vector<vote_response_continuation> vote_response_header_sync_continuations_;
     std::map<uint64_t, std::function<void(client_result_type)>> request_id_quorum_continuations_;
     std::map<uint64_t, std::vector<std::function<void(client_result_type)>>> state_machine_applied_continuations_;
@@ -875,20 +960,34 @@ namespace raft {
 	return;
       }
 
-      // Move to next chunk and send
-      p.checkpoint_->last_block_sent_ = p.checkpoint_->data_->block_at_offset(p.checkpoint_->checkpoint_next_byte_);
+      // Move to next chunk and send (no read ahead implemented at this level of abstraction).
+      if (!p.checkpoint_->request_outstanding_) {
+        p.checkpoint_->request_outstanding_ = true;
+        auto cb = [this, peer_id](std::chrono::time_point<std::chrono::steady_clock> clock_now, checkpoint_block_type && block) {
+                    this->internal_send_checkpoint_chunk(clock_now, std::move(block), peer_id);
+                  };
+        p.checkpoint_->data_->block_at_offset(clock_now, p.checkpoint_->checkpoint_next_byte_, std::move(cb));
+      }
+    }
+
+    void internal_send_checkpoint_chunk(std::chrono::time_point<std::chrono::steady_clock> clock_now, checkpoint_block_type && block, uint64_t peer_id)
+    {
+      peer_type & p(peer_from_id(peer_id));
+      BOOST_ASSERT(p.checkpoint_->request_outstanding_);
+      p.checkpoint_->last_block_sent_ = std::move(block);
+      p.checkpoint_->request_outstanding_ = false;
 
       comm_.append_checkpoint_chunk_request(peer_id, p.address,
-				    request_id_,
-				    peer_id,
-				    current_term_,
-				    my_cluster_id(),
-				    p.checkpoint_->checkpoint_last_header_,
-				    p.checkpoint_->data_->block_begin(p.checkpoint_->last_block_sent_),
-				    p.checkpoint_->data_->block_end(p.checkpoint_->last_block_sent_),
-				    p.checkpoint_->data_->is_final(p.checkpoint_->last_block_sent_),
-				    slice(p.checkpoint_->last_block_sent_.block_data_,
-					  p.checkpoint_->last_block_sent_.block_length_));
+                                            request_id_,
+                                            peer_id,
+                                            current_term_,
+                                            my_cluster_id(),
+                                            p.checkpoint_->checkpoint_last_header_,
+                                            p.checkpoint_->data_->block_begin(p.checkpoint_->last_block_sent_),
+                                            p.checkpoint_->data_->block_end(p.checkpoint_->last_block_sent_),
+                                            p.checkpoint_->data_->is_final(p.checkpoint_->last_block_sent_),
+                                            slice(reinterpret_cast<const uint8_t *>(p.checkpoint_->last_block_sent_.data()),
+                                                  p.checkpoint_->last_block_sent_.size()));
       p.checkpoint_->awaiting_ack_ = true;
       p.checkpoint_->last_block_sent_time_ = clock_now;
 
@@ -907,7 +1006,7 @@ namespace raft {
 
       p.requires_heartbeat_ = new_heartbeat_timeout(clock_now);
     }
-
+    
     // Based on log sync and/or append_entry_response try to advance the commit point.
     void try_to_commit(std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
@@ -956,6 +1055,7 @@ namespace raft {
 	  // We've committed a new configuration that doesn't include us anymore so give up
 	  // leadership
 	  if (can_become_follower_at_term(current_term_+1)) {
+    BOOST_ASSERT(!log_header_sync_required_);
 	    BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
 	      " is LEADER and committed log entry with configuration that does not include me.  Becoming FOLLOWER";
 	    become_follower(current_term_+1, clock_now);
@@ -1253,20 +1353,32 @@ namespace raft {
       } else {
 	// TODO: Can I respond to more than what was requested?  Possibly useful idea for pipelined append_entry_request
 	// requests in which we can sync the log once for multiple append_entries.
-	BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
-	  " sending append_entry response:  request_term_number=" << req_term_number <<
-	  " request_id=" << req_id <<
-	  " index_begin=" << entry_log_index <<
-	  " index_end=" << synced_index_end_ <<
-          " success=true";
-	comm_.append_entry_response(req_leader_id, get_peer_from_id(req_leader_id).address,
-				    my_cluster_id(),
-				    current_term_,
-				    req_term_number,
-				    req_id,
-				    entry_log_index,
-				    synced_index_end_,
-				    true);
+        if (configuration().is_valid_peer(req_leader_id)) {
+          BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+            " sending append_entry response:  request_term_number=" << req_term_number <<
+            " request_id=" << req_id <<
+            " index_begin=" << entry_log_index <<
+            " index_end=" << synced_index_end_ <<
+            " success=true";
+          comm_.append_entry_response(req_leader_id, get_peer_from_id(req_leader_id).address,
+                                      my_cluster_id(),
+                                      current_term_,
+                                      req_term_number,
+                                      req_id,
+                                      entry_log_index,
+                                      synced_index_end_,
+                                      true);
+        } else {
+          // Many possible reasons we can get here.  For example, if a leader has sent us a full checkpoint
+          // and we are still loading it, it is totally possible we start getting heartbeats or other log entries
+          BOOST_LOG_TRIVIAL(debug) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+            " not sending append_entry response to currently unknown leader " << req_leader_id <<
+            ":  request_term_number=" << req_term_number <<
+            " request_id=" << req_id <<
+            " index_begin=" << entry_log_index <<
+            " index_end=" << synced_index_end_ <<
+            " success=true";
+        }
       }
 
       // Question: When do we flush the log?  Presumably before we respond since the leader takes our
@@ -1278,7 +1390,30 @@ namespace raft {
     }
 
     // Append Checkpoint Chunk processing
-    void internal_append_checkpoint_chunk_request(append_checkpoint_chunk_request_arg_type && req)
+    void internal_send_append_checkpoint_chunk_response(std::tuple<uint64_t, const std::string &, bool> ret,
+                                                        uint64_t req_leader_id,
+                                                        uint64_t req_term_number,
+                                                        uint64_t req_request_id,
+                                                        bool req_checkpoint_done)
+    {
+      // If checkpoint done then we should not be told to send a response (unless num_bytes==0
+      // in which case there may be an error).
+      BOOST_ASSERT(!(req_checkpoint_done && std::get<2>(ret) && std::get<0>(ret) > 0));
+
+      if (std::get<2>(ret)) {
+        comm_.append_checkpoint_chunk_response(req_leader_id, std::get<1>(ret),
+                                               my_cluster_id(),
+                                               current_term_,
+                                               req_term_number,
+                                               req_request_id,
+                                               std::get<0>(ret));
+      }
+    }
+
+    template<typename _Callback>
+    void internal_append_checkpoint_chunk_request(std::chrono::time_point<std::chrono::steady_clock> clock_now,
+                                                  append_checkpoint_chunk_request_arg_type && req,
+                                                  _Callback && cb)
     {
       typedef append_checkpoint_chunk_request_traits_type acc;
       BOOST_ASSERT(acc::term_number(req) == current_term_ && state_ == FOLLOWER);
@@ -1297,23 +1432,14 @@ namespace raft {
       // details here for processing.
       auto req_checkpoint_done = acc::checkpoint_done(req);
       auto req_leader_id = acc::leader_id(req);
+      auto req_term_number = acc::term_number(req);
       auto req_request_id = acc::request_id(req);
-      
-      auto ret = this->write_checkpoint_chunk(std::move(req));
-
-      // N.B. req might be invalid at this point
-
-      // If checkpoint done then we should not be told to send a response.
-      BOOST_ASSERT(!(req_checkpoint_done && std::get<2>(ret)));
-
-      if (std::get<2>(ret)) {
-        comm_.append_checkpoint_chunk_response(req_leader_id, std::get<1>(ret),
-                                               my_cluster_id(),
-                                               current_term_,
-                                               current_term_,
-                                               req_request_id,
-                                               std::get<0>(ret));
-      }
+      auto continuation = [this, req_leader_id, req_term_number, req_request_id, req_checkpoint_done, cb = std::move(cb)](std::chrono::time_point<std::chrono::steady_clock> clock_now,
+                                                                                                         std::tuple<uint64_t, const std::string &, bool> ret) {
+                            this->internal_send_append_checkpoint_chunk_response(ret, req_leader_id, req_term_number, req_request_id, req_checkpoint_done);
+                            cb(clock_now);
+                };
+      this->write_checkpoint_chunk(clock_now, std::move(req), std::move(continuation));
     }
 
     // This temporary transition to from private to public is a temporary expedient that
@@ -1490,7 +1616,7 @@ namespace raft {
 	  ".  Syncing log header.";
 
 	// Cancel any in-progress checkpoint
-	this->abandon_checkpoint();      
+	this->abandon_checkpoint();
 
         // Clear the read only fence in case we were leader
         leader_read_only_commit_fence_ = std::numeric_limits<uint64_t>::max();
@@ -1661,13 +1787,25 @@ namespace raft {
       }
     }
 
+    void internal_apply_append_checkpoint_chunk_request_header_sync_continuations(std::chrono::time_point<std::chrono::steady_clock> clock_now)
+    {
+      if (!append_checkpoint_chunk_request_header_sync_continuations_.empty()) {
+        auto continuation = [this](std::chrono::time_point<std::chrono::steady_clock> clock_now) {
+                              this->internal_apply_append_checkpoint_chunk_request_header_sync_continuations(clock_now);
+                            };
+        auto tmp = std::move(append_checkpoint_chunk_request_header_sync_continuations_.front());
+        append_checkpoint_chunk_request_header_sync_continuations_.pop_front();
+        internal_append_checkpoint_chunk_request(clock_now, std::move(tmp), std::move(continuation));
+      }      
+    }
+    
   public:
     protocol(communicator_type & comm, log_type & l,
 	     checkpoint_data_store_type & store,
 	     configuration_manager_type & config_manager,
              std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now())
       :
-      server_checkpoint<_Messages, protocol<_Communicator, _Messages>>(store),
+      server_checkpoint<_Messages, _Checkpoint, protocol<_Communicator, _Checkpoint, _Messages>>(store),
       comm_(comm),
       config_change_client_(nullptr),
       state_(FOLLOWER),
@@ -1694,17 +1832,28 @@ namespace raft {
 
       state_change_listener_ = [](state s, uint64_t current_term) { };
 
+      if (!log_.empty()) {
+        cluster_clock_.set(log_.last_entry_cluster_time(), now);
+      }
+    }
+
+    ~protocol()
+    {
+    }
+
+    // Should be in the constructor but we need it to be async
+    template<typename _Callback>
+    void start(std::chrono::time_point<std::chrono::steady_clock> now, _Callback && cb)
+    {
       // TODO: Read the log if non-empty and apply configuration entries as necessary
       // TODO: This should be async.
       for(auto idx = log_.index_begin(); idx < log_.index_end(); ++idx) {
 	const log_entry_type & e(log_.entry(idx));
 	if (log_entry_traits_type::is_configuration(&e)) {
+	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") loading configuration " <<
+            json_type::log_entry(e);
 	  configuration_.add_logged_description(idx, e, now);
 	}
-      }
-
-      if (!log_.empty()) {
-        cluster_clock_.set(log_.last_entry_cluster_time(), now);
       }
 
       // TODO: Must this voted for peer id be in the configurations in the log or might
@@ -1718,11 +1867,7 @@ namespace raft {
       current_term_ = log_.current_term();	
 
       // Read any checkpoint
-      this->load_checkpoint(now);
-    }
-
-    ~protocol()
-    {
+      this->load_checkpoint(now, [cb = std::move(cb)](std::chrono::time_point<std::chrono::steady_clock> now) { cb(now); });
     }
 
     std::size_t my_cluster_id() const
@@ -1858,6 +2003,8 @@ namespace raft {
       }
 
       BOOST_ASSERT(config_change_client_ == nullptr);
+      BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id() << ") at term " << current_term_ <<
+        " set configuration " << json_type::set_configuration_request(req);
       config_change_client_ = &client;
       configuration().set_staging_configuration(scr::new_configuration(req), clock_now);
       BOOST_ASSERT(!configuration().is_stable());
@@ -1900,7 +2047,7 @@ namespace raft {
       // My best theory is that this logic has been hanging around since some time early in development when become_follower
       // issued a log header sync rather than just setting the flag.   The idea MAY have been that we wanted to avoid "double
       // syncing".   However, become_follower changed to not do a sync automatically because it doesn't have all of the info
-      // that it needs regarding voted_for_.   Thus is now changes so simply set the flag and there is no need to suppress a sync
+      // that it needs regarding voted_for_.   Thus is now changed so simply set the flag and there is no need to suppress a sync
       // in this method (indeed it would be bad not to sync if the header is updated in this method).
       bool header_sync_already_outstanding = log_header_sync_required_;
       
@@ -2008,12 +2155,13 @@ namespace raft {
       }
       switch(state_) {
       case CANDIDATE:
-	// Detect if this response if from a vote_request on a previous
+	// Detect if this response is from a vote_request on a previous
 	// term (e.g. we started an election, it timed out we started a new one and then we
 	// got this response from the old one).  If so ignore it.
 	if (current_term_ == vr::request_term_number(resp)) {
 	  if (current_term_ < vr::term_number(resp)) {
 	    if (can_become_follower_at_term(vr::term_number(resp))) {
+	      BOOST_ASSERT(!log_header_sync_required_);
 	      become_follower(vr::term_number(resp), now);
 	      BOOST_ASSERT(log_header_sync_required_);
 	      if (log_header_sync_required_) {
@@ -2143,6 +2291,7 @@ namespace raft {
       if (ae::term_number(resp) > current_term_) {
         // I learning (perhaps from a heartbeat) that I am no longer leader.
 	if (can_become_follower_at_term(ae::term_number(resp))) {
+          BOOST_ASSERT(!log_header_sync_required_);
 	  become_follower(ae::term_number(resp), clock_now);
 	  // TODO: What do I do here????  Is all the processing below still relevant?
           // TODO: If so, would all of the processing below
@@ -2269,6 +2418,8 @@ namespace raft {
 	return;
       }
 
+      bool header_sync_already_outstanding = log_header_sync_required_;
+
       // At this point doesn't really matter what state I'm currently in
       // as I'm going to become a FOLLOWER.
       become_follower(acc::term_number(req), clock_now);
@@ -2281,11 +2432,13 @@ namespace raft {
 	  " waiting for log header sync.  Queuing append_checkpoint_chunk_request message from recipient " <<
 	  acc::recipient_id(req) << " checkpoint_begin " << acc::checkpoint_begin(req) <<
 	  " checkpoint_end " << acc::checkpoint_end(req);
-	log_.sync_header();
+        if (!header_sync_already_outstanding) {
+          log_.sync_header();
+        }
 	append_checkpoint_chunk_request_header_sync_continuations_.push_back(std::move(req));
       } else {
 	election_timeout_ = new_election_timeout(clock_now);
-	internal_append_checkpoint_chunk_request(std::move(req));
+	internal_append_checkpoint_chunk_request(clock_now, std::move(req), [](std::chrono::time_point<std::chrono::steady_clock> ){});
       }
     }
 
@@ -2315,6 +2468,7 @@ namespace raft {
 	  ". Becoming FOLLOWER and abandoning the append_checkpoint process.";
 	BOOST_ASSERT(can_become_follower_at_term(acc::term_number(resp)));
 	if (can_become_follower_at_term(acc::term_number(resp))) {
+	  BOOST_ASSERT(!log_header_sync_required_);
 	  become_follower(acc::term_number(resp), clock_now);
 	  BOOST_ASSERT(log_header_sync_required_);
 	  if (log_header_sync_required_) {
@@ -2421,7 +2575,7 @@ namespace raft {
     {
       on_log_header_sync(std::chrono::steady_clock::now());
     }
-    
+
     void on_log_header_sync(std::chrono::time_point<std::chrono::steady_clock> clock_now)
     {
       if (!log_header_sync_required_) {
@@ -2449,10 +2603,15 @@ namespace raft {
 			    vr.granted);
       }
       vote_response_header_sync_continuations_.clear();
-      for(auto & acc : append_checkpoint_chunk_request_header_sync_continuations_) {
-	internal_append_checkpoint_chunk_request(std::move(acc));
+      // Kick off async application of checkpoint chunks
+      if (!append_checkpoint_chunk_request_header_sync_continuations_.empty()) {
+        auto continuation = [this](std::chrono::time_point<std::chrono::steady_clock> clock_now) {
+                              this->internal_apply_append_checkpoint_chunk_request_header_sync_continuations(clock_now);
+                            };
+        auto tmp = std::move(append_checkpoint_chunk_request_header_sync_continuations_.front());
+        append_checkpoint_chunk_request_header_sync_continuations_.pop_front();
+        internal_append_checkpoint_chunk_request(clock_now, std::move(tmp), std::move(continuation));
       }
-      append_checkpoint_chunk_request_header_sync_continuations_.clear();
       for(auto & ae : append_entry_header_sync_continuations_) {
 	internal_append_entry_request(std::move(ae), clock_now);
       }
@@ -2565,14 +2724,17 @@ namespace raft {
 
     void send_append_checkpoint_chunk_response(const append_checkpoint_chunk_response_continuation & resp)
     {
-      // Checkpoint configuration should have had the leader id in it so we should have a valid peer
-      BOOST_ASSERT(configuration().is_valid_peer(resp.leader_id));
-      comm_.append_checkpoint_chunk_response(resp.leader_id, get_peer_from_id(resp.leader_id).address,
-                                             my_cluster_id(),
-                                             resp.term_number,
-                                             resp.request_term_number,
-                                             resp.request_id,
-                                             resp.bytes_stored);
+      // Checkpoint configuration should have had the leader id in it so we should have a valid peer,
+      // but we can also call this after abandoning a checkpoint in which case we may not have the leader
+      // address
+      if(configuration().is_valid_peer(resp.leader_id)) {
+        comm_.append_checkpoint_chunk_response(resp.leader_id, get_peer_from_id(resp.leader_id).address,
+                                               my_cluster_id(),
+                                               current_term_,
+                                               resp.request_term_number,
+                                               resp.request_id,
+                                               resp.bytes_stored);
+      }
     }
   
     void on_command_applied(uint64_t log_index)

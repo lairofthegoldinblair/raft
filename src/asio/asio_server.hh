@@ -12,6 +12,7 @@
 #include "boost/log/trivial.hpp"
 
 #include "asio/asio_block_device.hh"
+#include "asio/asio_checkpoint.hh"
 #include "asio/asio_messages.hh"
 #include "asio/basic_file_object.hh"
 #include "asio/disk_io_service.hh"
@@ -24,6 +25,234 @@
 
 namespace raft {
   namespace asio {
+
+    class single_thread_checkpoint_policy
+    {
+    public:
+      typedef std::unique_ptr<basic_file_object<disk_io_service>> endpoint_type;
+      class service
+      {
+      private:
+        boost::asio::io_context & io_context_;
+        
+      public:
+        service(boost::asio::io_context & ioc)
+          :
+          io_context_(ioc)
+        {
+        }
+        endpoint_type create()
+        {
+          return endpoint_type();
+        }
+        endpoint_type create(int fd)
+        {
+          return std::make_unique<basic_file_object<disk_io_service>>(io_context_, fd);
+        }
+        uint64_t seek(endpoint_type & ep, uint64_t offset, file_base::seek_type ty)
+        {
+          return ep->seek(offset, ty);
+        }        
+        template<typename MutableBufferSequence, typename _Callback>
+        void async_read(endpoint_type & ep, const MutableBufferSequence & buffers, _Callback && cb)
+        {
+          ep->async_read(buffers, std::move(cb));
+        }
+        template<typename MutableBufferSequence, typename _Callback>
+        void async_read_at(endpoint_type & ep, const MutableBufferSequence & buffers, uint64_t offset, _Callback && cb)
+        {
+          ep->async_read_at(buffers, offset, std::move(cb));
+        }
+        template<typename ConstBufferSequence, typename _Callback>
+        void async_write(endpoint_type & ep, const ConstBufferSequence & buffers, _Callback && cb)
+        {
+          ep->async_write(buffers, std::move(cb));
+        }
+        template<typename _Callback>
+        void async_sync(endpoint_type & ep, _Callback && cb)
+        {
+          ep->async_sync(std::move(cb));
+        }
+      };
+      typedef service service_type;
+    };
+
+    // ASIO is thread safe so we can call directly from the protocol thread
+    // into it, but all callbacks must be queued between the service threads and
+    // the protocol thread.
+    class multi_thread_checkpoint_policy
+    {
+    public:
+      template<typename _Callback>
+      class read_write_operation : public raft::util::protocol_operation
+      {
+      private:
+        boost::system::error_code ec_;
+        std::size_t bytes_transferred_;
+        _Callback cb_;
+      public:
+        read_write_operation(boost::system::error_code ec, size_t bytes_transferred, _Callback && cb)
+          :
+          raft::util::protocol_operation(&do_complete),
+          ec_(ec),
+          bytes_transferred_(bytes_transferred),
+          cb_(std::move(cb))
+        {
+        }
+        static void do_complete(void * owner, raft::util::protocol_operation * base)
+        {
+          read_write_operation * op(static_cast<read_write_operation *>(base));
+          auto ec = std::move(op->ec_);
+          auto bytes_transferred = std::move(op->bytes_transferred_);
+          auto cb = std::move(op->cb_);
+          delete op;
+          if (nullptr != owner) {
+            cb(ec, bytes_transferred);
+          }
+        }
+      };
+
+      template<typename _Callback>
+      class file_operation : public raft::util::protocol_operation
+      {
+      private:
+        boost::system::error_code ec_;
+        _Callback cb_;
+      public:
+        file_operation(boost::system::error_code ec, _Callback && cb)
+          :
+          raft::util::protocol_operation(&do_complete),
+          ec_(ec),
+          cb_(std::move(cb))
+        {
+        }
+        static void do_complete(void * owner, raft::util::protocol_operation * base)
+        {
+          file_operation * op(static_cast<file_operation *>(base));
+          auto ec = std::move(op->ec_);
+          auto cb = std::move(op->cb_);
+          delete op;
+          if (nullptr != owner) {
+            cb(ec);
+          }
+        }
+      };
+
+      typedef std::unique_ptr<basic_file_object<disk_io_service>> endpoint_type;
+      
+      class service
+      {
+      public:
+        typedef typename raft::util::protocol_operation::queue_type protocol_operation_queue_type;        
+      private:
+        boost::asio::io_context & io_context_;
+        std::mutex & mutex_;
+        protocol_operation_queue_type & op_queue_;
+        
+        template <typename _Callback>
+        class read_write_callback_wrapper
+        {
+        private:
+          service * service_;
+          _Callback cb_;
+        public:
+          read_write_callback_wrapper(service * s,
+                                      _Callback && cb)
+            :
+            service_(s),
+            cb_(std::move(cb))
+          {
+          }
+
+          read_write_callback_wrapper(read_write_callback_wrapper && ) = default;
+          read_write_callback_wrapper(const read_write_callback_wrapper & ) = delete;;
+          read_write_callback_wrapper & operator=(read_write_callback_wrapper && ) = default;
+          read_write_callback_wrapper & operator=(const read_write_callback_wrapper & ) = delete;;
+
+          void operator()(boost::system::error_code ec, std::size_t bytes_transferred)
+          {
+            auto op = new read_write_operation<_Callback>(ec, bytes_transferred, std::move(this->cb_));
+            {
+              std::unique_lock<std::mutex> lk(service_->mutex_);
+              service_->op_queue_.push_back(*op);
+            }
+          }
+        };
+
+        template <typename _Callback>
+        class file_callback_wrapper
+        {
+        private:
+          service * service_;
+          _Callback cb_;
+        public:
+          file_callback_wrapper(service * s,
+                                _Callback && cb)
+            :
+            service_(s),
+            cb_(std::move(cb))
+          {
+          }
+
+          file_callback_wrapper(file_callback_wrapper && ) = default;
+          file_callback_wrapper(const file_callback_wrapper & ) = delete;;
+          file_callback_wrapper & operator=(file_callback_wrapper && ) = default;
+          file_callback_wrapper & operator=(const file_callback_wrapper & ) = delete;;
+
+          void operator()(boost::system::error_code ec)
+          {
+            auto op = new file_operation<_Callback>(ec, std::move(this->cb_));
+            {
+              std::unique_lock<std::mutex> lk(service_->mutex_);
+              service_->op_queue_.push_back(*op);
+            }
+          }
+        };
+      public:
+        service(boost::asio::io_context & ioc,
+                std::mutex & mutex,
+                protocol_operation_queue_type & op_queue)
+          :
+          io_context_(ioc),
+          mutex_(mutex),
+          op_queue_(op_queue)
+        {
+        }
+        endpoint_type create()
+        {
+          return endpoint_type();
+        }
+        endpoint_type create(int fd)
+        {
+          return std::make_unique<basic_file_object<disk_io_service>>(io_context_, fd);
+        }
+        uint64_t seek(endpoint_type & ep, uint64_t offset, file_base::seek_type ty)
+        {
+          return ep->seek(offset, ty);
+        }        
+        template<typename MutableBufferSequence, typename _Callback>
+        void async_read(endpoint_type & ep, const MutableBufferSequence & buffers, _Callback && cb)
+        {
+          ep->async_read(buffers, read_write_callback_wrapper<_Callback>(this, std::move(cb)));
+        }
+        template<typename MutableBufferSequence, typename _Callback>
+        void async_read_at(endpoint_type & ep, const MutableBufferSequence & buffers, uint64_t offset, _Callback && cb)
+        {
+          ep->async_read_at(buffers, offset, read_write_callback_wrapper<_Callback>(this, std::move(cb)));
+        }
+        template<typename ConstBufferSequence, typename _Callback>
+        void async_write(endpoint_type & ep, const ConstBufferSequence & buffers, _Callback && cb)
+        {
+          ep->async_write(buffers, read_write_callback_wrapper<_Callback>(this, std::move(cb)));
+        }
+        template<typename _Callback>
+        void async_sync(endpoint_type & ep, _Callback && cb)
+        {
+          ep->async_sync(file_callback_wrapper<_Callback>(this, std::move(cb)));
+        }
+      };
+      typedef service service_type;
+    };
 
     struct communicator_peer
     {
@@ -324,6 +553,16 @@ namespace raft {
       struct apply
       {
         typedef raft::util::builder_communicator<_Messages, _Builders, asio_tcp_base_communicator<_Messages, _Serialization>> type;
+      };
+    };
+
+    template<typename _Serialization>
+    struct checkpoint_metafunction
+    {
+      template <typename _Messages>
+      struct apply
+      {
+        typedef raft::asio::checkpoint_data_store<_Messages, _Serialization, multi_thread_checkpoint_policy> type;
       };
     };
     
@@ -714,13 +953,14 @@ namespace raft {
     template<typename _Messages, typename _Builders, typename _Serialization>
     struct raft_protocol_type_builder
     {
-      typedef raft::protocol<asio_tcp_communicator_metafunction<_Builders, _Serialization>, _Messages> type;
+      typedef raft::protocol<asio_tcp_communicator_metafunction<_Builders, _Serialization>, checkpoint_metafunction<_Serialization>, _Messages> type;
     };
 
     template<typename _Messages, typename _Builders, typename _Serialization, typename _StateMachine, typename _ClientCommunicator, typename _LogWriter>
     class protocol_box
     {
     public:
+      typedef single_thread_checkpoint_policy checkpoint_policy_type;
       typedef protocol_box<_Messages, _Builders, _Serialization, _StateMachine, _ClientCommunicator, _LogWriter> this_type;
       typedef _Messages messages_type;
       typedef typename messages_type::log_entry_type log_entry_type;
@@ -745,9 +985,10 @@ namespace raft {
       typedef ::raft::state_machine::client_session_manager<_Messages, _Builders, _Serialization, raft_protocol_type, client_communicator_type, state_machine_type> session_manager_type;
       typedef _LogWriter log_writer_type;
       typedef typename raft_protocol_type::communicator_type::endpoint endpoint_type;
+      typedef typename raft_protocol_type::checkpoint_data_store_type checkpoint_data_store_type;
     private:
       typename raft_protocol_type::log_type l_;
-      typename raft_protocol_type::checkpoint_data_store_type store_;
+      typename raft_protocol_type::checkpoint_data_store_type & store_;
       typename raft_protocol_type::configuration_manager_type config_manager_;
       std::shared_ptr<raft_protocol_type> protocol_;
       std::shared_ptr<session_manager_type> session_manager_;
@@ -763,8 +1004,10 @@ namespace raft {
                    std::pair<const log_entry_type *, raft::util::call_on_delete> && config,
                    typename raft_protocol_type::communicator_type & protocol_comm,
                    client_communicator_type & client_comm,
-                   log_writer_type & log_writer)
+                   log_writer_type & log_writer,
+                   checkpoint_data_store_type & store)
         :
+        store_(store),
 	config_manager_(server_id),
         log_writer_(log_writer),
         last_log_index_written_(0)
@@ -776,12 +1019,20 @@ namespace raft {
           l_.append(std::move(config));
         }
 	l_.update_header(0, raft_protocol_type::INVALID_PEER_ID());
-	protocol_.reset(new raft_protocol_type(protocol_comm, l_, store_, config_manager_));
-
+        protocol_.reset(new raft_protocol_type(protocol_comm, l_, store_, config_manager_));
         // Create the session manager and connect it up to the protocol box
         session_manager_.reset(new session_manager_type(*protocol_.get(), client_comm, state_machine_));
         protocol_->set_state_machine([this](log_entry_const_arg_type le, uint64_t idx, size_t leader_id) { this->session_manager_->apply(le, idx, leader_id); });
+        protocol_->set_state_machine_for_checkpoint([this](const typename raft_protocol_type::checkpoint_block_type & b, bool is_final) {
+                                                      this->session_manager_->restore_checkpoint_block(raft::slice(reinterpret_cast<const uint8_t *>(b.data()), b.size()), is_final);
+                                                    });
         protocol_->set_state_change_listener([this](typename raft_protocol_type::state s, uint64_t t) { this->session_manager_->on_protocol_state_change(s, t); });
+      }
+
+      template<typename _Callback>
+      void start(_Callback && cb)
+      {
+        protocol_->start(std::chrono::steady_clock::now(), std::move(cb));
       }
 
       void on_vote_request(vote_request_arg_type && req)
@@ -886,12 +1137,6 @@ namespace raft {
             }
           }
 
-          // All of our checkpointing is to in-memory right now so immediately complete any required checkpoint
-          // sync
-          if (protocol_->checkpoint_sync_required()) {
-            protocol_->on_checkpoint_sync();
-          }
-
           // Time to take a periodic checkpoint?
           if (l_.index_begin() + checkpoint_interval_ <= l_.index_end()) {
             BOOST_LOG_TRIVIAL(info) << "[raft::asio::protocol_box::handle_timer] Server(" << config_manager_.configuration().my_cluster_id()
@@ -944,10 +1189,11 @@ namespace raft {
       typedef typename protocol_box_type::session_manager_type session_manager_type;
       typedef typename protocol_box_type::log_writer_type log_writer_type;
       typedef typename protocol_box_type::endpoint_type endpoint_type;
-
+      typedef typename raft_protocol_type::checkpoint_data_store_type checkpoint_data_store_type;
+      
       // Protocol operations
-      typedef raft::util::protocol_operation<protocol_box_type> protocol_operation_type;
-      typedef typename raft::util::protocol_operation<protocol_box_type>::queue_type protocol_operation_queue_type;
+      typedef raft::util::protocol_operation protocol_operation_type;
+      typedef typename raft::util::protocol_operation::queue_type protocol_operation_queue_type;
       typedef raft::util::vote_request_operation<messages_type, protocol_box_type> vote_request_operation_type;
       typedef raft::util::vote_response_operation<messages_type, protocol_box_type> vote_response_operation_type;
       typedef raft::util::append_entry_request_operation<messages_type, protocol_box_type> append_entry_request_operation_type;
@@ -958,14 +1204,18 @@ namespace raft {
       typedef raft::util::log_sync_operation<protocol_box_type> log_sync_operation_type;
       typedef raft::util::log_header_sync_operation<protocol_box_type> log_header_sync_operation_type;
     private:
-      protocol_box_type protocol_box_;
       protocol_operation_queue_type op_queue_;
       std::mutex op_queue_mutex_;
       std::condition_variable condvar_;
+      // Checkpoint store
+      multi_thread_checkpoint_policy::service_type checkpoint_service_;
+      checkpoint_data_store_type store_;
+      protocol_box_type protocol_box_;
       std::atomic<bool> shutdown_;
       std::unique_ptr<std::thread> protocol_thread_;
       std::chrono::time_point<std::chrono::steady_clock> timer_;
       uint64_t my_cluster_id_;
+
 
       void enqueue(protocol_operation_type * op)
       {
@@ -979,10 +1229,12 @@ namespace raft {
                                  << ") op_queue_.size()=" << sz;
       }
 
-      void thread_proc()
+      template<typename _Callback>
+      void thread_proc(_Callback && cb)
       {
         BOOST_LOG_TRIVIAL(info) << "[raft::asio::protocol_box_thread::thread_proc] Server(" << my_cluster_id_
                                 << ") protocol thread proc starting";
+        this->protocol_box_.start(std::move(cb));
         while(!this->shutdown_.load()) {
           protocol_operation_queue_type tmp;
           {
@@ -1020,18 +1272,21 @@ namespace raft {
       }
 
     public:
-      protocol_box_thread(uint64_t server_id,
+      protocol_box_thread(boost::asio::io_context & ioc,
+                          uint64_t server_id,
                           std::pair<const log_entry_type *, raft::util::call_on_delete> && config,
                           communicator_type & protocol_comm,
                           client_communicator_type & client_comm,
-                          log_writer_type & log_writer)
+                          log_writer_type & log_writer,
+                          const std::string & checkpoint_dir)
         :
-        protocol_box_(server_id, std::move(config), protocol_comm, client_comm, log_writer),
+        checkpoint_service_(ioc, op_queue_mutex_, op_queue_),
+        store_(checkpoint_service_, checkpoint_dir),
+        protocol_box_(server_id, std::move(config), protocol_comm, client_comm, log_writer, store_),
         shutdown_(false),
         timer_(std::chrono::steady_clock::now() + std::chrono::milliseconds(server_id*100)),
         my_cluster_id_(server_id)
       {
-        protocol_thread_.reset(new std::thread([this]() { this->thread_proc(); }));
       }
 
       ~protocol_box_thread()
@@ -1045,6 +1300,12 @@ namespace raft {
         }
       }
 
+      template<typename _Callback>
+      void start(_Callback && cb)
+      {
+        protocol_thread_.reset(new std::thread([this, cb = std::move(cb)]() { this->thread_proc(std::move(cb)); }));
+      }
+      
       void shutdown()
       {
         if (!!protocol_thread_) {
@@ -1057,53 +1318,53 @@ namespace raft {
 
       void on_vote_request(vote_request_arg_type && req)
       {
-        enqueue(new vote_request_operation_type(std::move(req)));
+        enqueue(new vote_request_operation_type(&protocol_box_, std::move(req)));
       }
 
       void on_vote_response(vote_response_arg_type && resp)
       {
-        enqueue(new vote_response_operation_type(std::move(resp)));
+        enqueue(new vote_response_operation_type(&protocol_box_, std::move(resp)));
       }
       void on_append_entry_request(append_entry_request_arg_type && req)
       {
-        enqueue(new append_entry_request_operation_type(std::move(req)));
+        enqueue(new append_entry_request_operation_type(&protocol_box_, std::move(req)));
       }
       void on_append_entry_response(append_entry_response_arg_type && resp)
       {
-        enqueue(new append_entry_response_operation_type(std::move(resp)));
+        enqueue(new append_entry_response_operation_type(&protocol_box_, std::move(resp)));
       }
     
       void on_append_checkpoint_chunk_request(append_checkpoint_chunk_request_arg_type && req)
       {
-        enqueue(new append_checkpoint_chunk_request_operation_type(std::move(req)));
+        enqueue(new append_checkpoint_chunk_request_operation_type(&protocol_box_, std::move(req)));
       }
       void on_append_checkpoint_chunk_response(append_checkpoint_chunk_response_arg_type && resp)
       {
-        enqueue(new append_checkpoint_chunk_response_operation_type(std::move(resp)));
+        enqueue(new append_checkpoint_chunk_response_operation_type(&protocol_box_, std::move(resp)));
       }
     
       template<typename _Client>
       void on_set_configuration(_Client & client, set_configuration_request_arg_type && req, std::chrono::time_point<std::chrono::steady_clock> clock_now)
       {
         typedef raft::util::set_configuration_request_operation<messages_type, protocol_box_type, _Client> set_configuration_request_operation_type;
-        enqueue(new set_configuration_request_operation_type(client, std::move(req), clock_now));
+        enqueue(new set_configuration_request_operation_type(&protocol_box_, client, std::move(req), clock_now));
       }
       
       template<typename _Client>
       void on_get_configuration(_Client && client, get_configuration_request_arg_type && req, std::chrono::time_point<std::chrono::steady_clock> clock_now)
       {
         typedef raft::util::get_configuration_request_operation<messages_type, protocol_box_type, _Client> get_configuration_request_operation_type;
-        enqueue(new get_configuration_request_operation_type(std::move(client), std::move(req), clock_now));
+        enqueue(new get_configuration_request_operation_type(&protocol_box_, std::move(client), std::move(req), clock_now));
       }
       
       void on_log_sync(uint64_t index)
       {
-        enqueue(new log_sync_operation_type(index, std::chrono::steady_clock::now()));
+        enqueue(new log_sync_operation_type(&protocol_box_, index, std::chrono::steady_clock::now()));
       }
       
       void on_log_header_sync()
       {
-        enqueue(new log_header_sync_operation_type(std::chrono::steady_clock::now()));
+        enqueue(new log_header_sync_operation_type(&protocol_box_, std::chrono::steady_clock::now()));
       }
 
       template<typename _ClientEndpoint>
@@ -1112,7 +1373,7 @@ namespace raft {
                            std::chrono::time_point<std::chrono::steady_clock> clock_now)
       {
         typedef raft::util::open_session_request_operation<messages_type, protocol_box_type, _ClientEndpoint> open_session_request_operation_type;
-        enqueue(new open_session_request_operation_type(ep, std::move(req), clock_now));
+        enqueue(new open_session_request_operation_type(&protocol_box_, ep, std::move(req), clock_now));
       }
       template<typename _ClientEndpoint>
       void on_close_session(const _ClientEndpoint & ep,
@@ -1120,7 +1381,7 @@ namespace raft {
                             std::chrono::time_point<std::chrono::steady_clock> clock_now)
       {
         typedef raft::util::close_session_request_operation<messages_type, protocol_box_type, _ClientEndpoint> close_session_request_operation_type;
-        enqueue(new close_session_request_operation_type(ep, std::move(req), clock_now));
+        enqueue(new close_session_request_operation_type(&protocol_box_, ep, std::move(req), clock_now));
       }
       template<typename _ClientEndpoint>
       void on_linearizable_command(const _ClientEndpoint & ep,
@@ -1128,7 +1389,7 @@ namespace raft {
                                    std::chrono::time_point<std::chrono::steady_clock> clock_now)
       {
         typedef raft::util::linearizable_command_request_operation<messages_type, protocol_box_type, _ClientEndpoint> linearizable_command_request_operation_type;
-        enqueue(new linearizable_command_request_operation_type(ep, std::move(req), clock_now));
+        enqueue(new linearizable_command_request_operation_type(&protocol_box_, ep, std::move(req), clock_now));
       }
     
       void handle_timer()
@@ -1478,6 +1739,22 @@ namespace raft {
 			       std::bind(&tcp_server::client_handle_accept, this, std::placeholders::_1));
       }
 
+      void post_checkpoint_init()
+      {
+	// Setup listener for interprocess communication
+	// if (protocol_->includes_self()) {
+	  // TODO: Handle v6
+	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id_ << ") raft::asio::tcp_server listening for peers on " << peer_listener_.local_endpoint();
+	  peer_listener_.async_accept(peer_listen_socket_, peer_listen_endpoint_,
+				  std::bind(&tcp_server::peer_handle_accept, this, std::placeholders::_1));
+	  // TODO: Handle v6
+	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id_ << ") raft::asio::tcp_server listening for clients on " << client_listener_.local_endpoint();
+	  client_listener_.async_accept(client_listen_socket_, client_listen_endpoint_,
+				  std::bind(&tcp_server::client_handle_accept, this, std::placeholders::_1));
+	// }
+        
+      }
+
     public:
       tcp_server(boost::asio::io_service & ios,
 		 uint64_t server_id,
@@ -1496,25 +1773,13 @@ namespace raft {
         my_cluster_id_(server_id)
       {
         log_files_.reset(new log_files_type(ios, server_id, log_directory));
-        protocol_.reset(new raft_protocol_type(server_id, std::move(config), comm_, *this, *this));
-
+        protocol_.reset(new raft_protocol_type(ios, server_id, std::move(config), comm_, *this, *this, log_directory));
         log_files_->set_protocol(*protocol_);
-
-	// Setup listener for interprocess communication
-	// if (protocol_->includes_self()) {
-	  // TODO: Handle v6
-	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id_ << ") raft::asio::tcp_server listening for peers on " << peer_listener_.local_endpoint();
-	  peer_listener_.async_accept(peer_listen_socket_, peer_listen_endpoint_,
-				  std::bind(&tcp_server::peer_handle_accept, this, std::placeholders::_1));
-	  // TODO: Handle v6
-	  BOOST_LOG_TRIVIAL(info) << "Server(" << my_cluster_id_ << ") raft::asio::tcp_server listening for clients on " << client_listener_.local_endpoint();
-	  client_listener_.async_accept(client_listen_socket_, client_listen_endpoint_,
-				  std::bind(&tcp_server::client_handle_accept, this, std::placeholders::_1));
-	// }
-        
-	// Setup periodic timer callbacks from ASIO
-	timer_.expires_from_now(boost::posix_time::milliseconds(server_id*100));
+	// Setup periodic timer callbacks from ASIO (we need timers to process reading log and checkpoint as part of
+        // starting up the protocol).
+	timer_.expires_from_now(boost::posix_time::milliseconds(my_cluster_id_*100));
 	timer_.async_wait(std::bind(&tcp_server::handle_timer, this, std::placeholders::_1));
+        protocol_->start([this](std::chrono::time_point<std::chrono::steady_clock> clock_now) { this->post_checkpoint_init(); });
       }
 
       ~tcp_server()

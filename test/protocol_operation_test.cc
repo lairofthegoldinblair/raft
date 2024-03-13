@@ -146,8 +146,8 @@ struct RaftProtocolOperationTestFixture
     }
   };
   
-  typedef raft::util::protocol_operation<test_protocol> protocol_operation_type;
-  typedef typename raft::util::protocol_operation<test_protocol>::queue_type protocol_operation_queue_type;
+  typedef raft::util::protocol_operation protocol_operation_type;
+  typedef raft::util::protocol_operation::queue_type protocol_operation_queue_type;
   typedef raft::util::vote_request_operation<typename _TestType::messages_type, test_protocol> vote_request_operation_type;
   typedef raft::util::vote_response_operation<typename _TestType::messages_type, test_protocol> vote_response_operation_type;
   typedef raft::util::append_entry_request_operation<typename _TestType::messages_type, test_protocol> append_entry_request_operation_type;
@@ -162,15 +162,15 @@ struct RaftProtocolOperationTestFixture
   typedef raft::util::log_sync_operation<test_protocol> log_sync_operation_type;
   typedef raft::util::log_header_sync_operation<test_protocol> log_header_sync_operation_type;
 
-  vote_request_operation_type * create_vote_request_operation(uint64_t request_id)
+  vote_request_operation_type * create_vote_request_operation(test_protocol * proto, uint64_t request_id)
   {
-    return new vote_request_operation_type(vote_request_builder().recipient_id(99).term_number(1).candidate_id(887).request_id(request_id).log_index_end(888542).last_log_term(16).finish());
+    return new vote_request_operation_type(proto, vote_request_builder().recipient_id(99).term_number(1).candidate_id(887).request_id(request_id).log_index_end(888542).last_log_term(16).finish());
   }
-  vote_response_operation_type * create_vote_response_operation(uint64_t request_id)
+  vote_response_operation_type * create_vote_response_operation(test_protocol * proto, uint64_t request_id)
   {
-    return new vote_response_operation_type(vote_response_builder().peer_id(1).term_number(1).request_term_number(1).request_id(request_id).granted(false).finish());
+    return new vote_response_operation_type(proto, vote_response_builder().peer_id(1).term_number(1).request_term_number(1).request_id(request_id).granted(false).finish());
   }
-  append_entry_request_operation_type * create_append_entry_request_operation(uint64_t request_id)
+  append_entry_request_operation_type * create_append_entry_request_operation(test_protocol * proto, uint64_t request_id)
   {
     log_entry_builder leb1;
     {	
@@ -183,59 +183,59 @@ struct RaftProtocolOperationTestFixture
 
     uint64_t recipient_id = 9032345;
     auto msg = append_entry_request_builder().request_id(request_id).recipient_id(recipient_id).term_number(99234).leader_id(23445234).log_index_begin(734725345).previous_log_term(3492385345).leader_commit_index_end(3483458).entry(le1).entry(le2).finish();
-    return new append_entry_request_operation_type(std::move(msg));
+    return new append_entry_request_operation_type(proto, std::move(msg));
   }
-  append_entry_response_operation_type * create_append_entry_response_operation(uint64_t request_id)
+  append_entry_response_operation_type * create_append_entry_response_operation(test_protocol * proto, uint64_t request_id)
   {
     auto msg = append_entry_response_builder().recipient_id(222).term_number(10).request_term_number(1).request_id(request_id).index_begin(236).index_end(851).success(false).finish();
-    return new append_entry_response_operation_type(std::move(msg));    
+    return new append_entry_response_operation_type(proto, std::move(msg));    
   }
-  append_checkpoint_chunk_request_operation_type * create_append_checkpoint_chunk_request_operation(uint64_t request_id, const std::string & data_str)
+  append_checkpoint_chunk_request_operation_type * create_append_checkpoint_chunk_request_operation(test_protocol * proto, uint64_t request_id, const std::string & data_str)
   {
     auto msg = append_checkpoint_chunk_request_builder().recipient_id(222).term_number(10).leader_id(1).request_id(request_id).checkpoint_begin(236).checkpoint_end(8643).data(raft::slice::create(data_str)).checkpoint_done(false).finish();
-    return new append_checkpoint_chunk_request_operation_type(std::move(msg));    
+    return new append_checkpoint_chunk_request_operation_type(proto, std::move(msg));    
   }  
-  append_checkpoint_chunk_response_operation_type * create_append_checkpoint_chunk_response_operation(uint64_t request_id)
+  append_checkpoint_chunk_response_operation_type * create_append_checkpoint_chunk_response_operation(test_protocol * proto, uint64_t request_id)
   {
     auto msg = append_checkpoint_chunk_response_builder().recipient_id(222).term_number(10).request_term_number(1).request_id(request_id).bytes_stored(236).finish();
-    return new append_checkpoint_chunk_response_operation_type(std::move(msg));    
+    return new append_checkpoint_chunk_response_operation_type(proto, std::move(msg));    
   }
 
-  open_session_request_operation_type * create_open_session_request_operation(const std::size_t & ep, std::chrono::time_point<std::chrono::steady_clock> clock_now)
+  open_session_request_operation_type * create_open_session_request_operation(test_protocol * proto, const std::size_t & ep, std::chrono::time_point<std::chrono::steady_clock> clock_now)
   {
     auto msg = open_session_request_builder().finish();
-    return new open_session_request_operation_type(ep, std::move(msg), clock_now);
+    return new open_session_request_operation_type(proto, ep, std::move(msg), clock_now);
   }
-  close_session_request_operation_type * create_close_session_request_operation(const std::size_t & ep, uint64_t session_id, std::chrono::time_point<std::chrono::steady_clock> clock_now)
+  close_session_request_operation_type * create_close_session_request_operation(test_protocol * proto, const std::size_t & ep, uint64_t session_id, std::chrono::time_point<std::chrono::steady_clock> clock_now)
   {
     auto msg = close_session_request_builder().session_id(session_id).finish();
-    return new close_session_request_operation_type(ep, std::move(msg), clock_now);
+    return new close_session_request_operation_type(proto, ep, std::move(msg), clock_now);
   }
-  linearizable_command_request_operation_type * create_linearizable_command_request_operation(const std::size_t & ep, uint64_t session_id, const std::string & command_str, std::chrono::time_point<std::chrono::steady_clock> clock_now)
+  linearizable_command_request_operation_type * create_linearizable_command_request_operation(test_protocol * proto, const std::size_t & ep, uint64_t session_id, const std::string & command_str, std::chrono::time_point<std::chrono::steady_clock> clock_now)
   {
     auto msg = linearizable_command_request_builder().session_id(session_id).first_unacknowledged_sequence_number(62355342).sequence_number(823545).command(raft::slice::create(command_str)).finish();
-    return new linearizable_command_request_operation_type(ep, std::move(msg), clock_now);
+    return new linearizable_command_request_operation_type(proto, ep, std::move(msg), clock_now);
   }
   
-  log_sync_operation_type * create_log_sync_operation(uint64_t index, std::chrono::time_point<std::chrono::steady_clock> clock_now)
+  log_sync_operation_type * create_log_sync_operation(test_protocol * proto, uint64_t index, std::chrono::time_point<std::chrono::steady_clock> clock_now)
   {
-    return new log_sync_operation_type(index, clock_now);
+    return new log_sync_operation_type(proto, index, clock_now);
   }
-  log_header_sync_operation_type * create_log_header_sync_operation(std::chrono::time_point<std::chrono::steady_clock> clock_now)
+  log_header_sync_operation_type * create_log_header_sync_operation(test_protocol * proto, std::chrono::time_point<std::chrono::steady_clock> clock_now)
   {
-    return new log_header_sync_operation_type(clock_now);
+    return new log_header_sync_operation_type(proto, clock_now);
   }
 
   void RequestVoteOperationTest()
   {
+    test_protocol proto;
     uint64_t request_id = 192345;
     {  
-      protocol_operation_type * op = create_vote_request_operation(request_id);
+      protocol_operation_type * op = create_vote_request_operation(&proto, request_id);
       op->destroy();
     }
     {  
-      test_protocol proto;
-      protocol_operation_type * op = create_vote_request_operation(request_id);
+      protocol_operation_type * op = create_vote_request_operation(&proto, request_id);
       op->complete(&proto);
       BOOST_CHECK_EQUAL(99U, vote_request_traits::recipient_id(proto.vote_request_message));
       BOOST_CHECK_EQUAL(1U, vote_request_traits::term_number(proto.vote_request_message));
@@ -247,12 +247,11 @@ struct RaftProtocolOperationTestFixture
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_vote_request_operation(request_id + i);
+        protocol_operation_type * op = create_vote_request_operation(&proto, request_id + i);
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
       for(std::size_t i=0; i<10; ++i) {
-        test_protocol proto;
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
@@ -268,14 +267,14 @@ struct RaftProtocolOperationTestFixture
   }
   void VoteResponseOperationTest()
   {
+    test_protocol proto;
     uint64_t request_id = 192345;
     {  
-      protocol_operation_type * op = create_vote_response_operation(request_id);
+      protocol_operation_type * op = create_vote_response_operation(&proto, request_id);
       op->destroy();
     }
     {  
-      test_protocol proto;
-      protocol_operation_type * op = create_vote_response_operation(request_id);
+      protocol_operation_type * op = create_vote_response_operation(&proto, request_id);
       op->complete(&proto);
       BOOST_CHECK_EQUAL(1U, vote_response_traits::peer_id(proto.vote_response_message));
       BOOST_CHECK_EQUAL(1U, vote_response_traits::term_number(proto.vote_response_message));
@@ -286,12 +285,11 @@ struct RaftProtocolOperationTestFixture
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_vote_response_operation(request_id + i);
+        protocol_operation_type * op = create_vote_response_operation(&proto, request_id + i);
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
       for(std::size_t i=0; i<10; ++i) {
-        test_protocol proto;
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
@@ -306,14 +304,14 @@ struct RaftProtocolOperationTestFixture
   }
   void AppendEntryOperationTest()
   {
+    test_protocol proto;
     uint64_t request_id = 192345;
     {  
-      protocol_operation_type * op = create_append_entry_request_operation(request_id);
+      protocol_operation_type * op = create_append_entry_request_operation(&proto, request_id);
       op->destroy();
     }
     {  
-      test_protocol proto;
-      protocol_operation_type * op = create_append_entry_request_operation(request_id);
+      protocol_operation_type * op = create_append_entry_request_operation(&proto, request_id);
       op->complete(&proto);
       BOOST_CHECK_EQUAL(request_id, append_entry_request_traits::request_id(proto.append_entry_request_message));
       BOOST_CHECK_EQUAL(9032345U, append_entry_request_traits::recipient_id(proto.append_entry_request_message));
@@ -322,12 +320,11 @@ struct RaftProtocolOperationTestFixture
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_append_entry_request_operation(request_id + i);
+        protocol_operation_type * op = create_append_entry_request_operation(&proto, request_id + i);
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
       for(std::size_t i=0; i<10; ++i) {
-        test_protocol proto;
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
@@ -340,14 +337,14 @@ struct RaftProtocolOperationTestFixture
   }
   void AppendEntryResponseOperationTest()
   {
+    test_protocol proto;
     uint64_t request_id = 192345;
     {  
-      protocol_operation_type * op = create_append_entry_response_operation(request_id);
+      protocol_operation_type * op = create_append_entry_response_operation(&proto, request_id);
       op->destroy();
     }
     {  
-      test_protocol proto;
-      protocol_operation_type * op = create_append_entry_response_operation(request_id);
+      protocol_operation_type * op = create_append_entry_response_operation(&proto, request_id);
       op->complete(&proto);
       BOOST_CHECK_EQUAL(222U, append_entry_response_traits::recipient_id(proto.append_entry_response_message));
       BOOST_CHECK_EQUAL(10U, append_entry_response_traits::term_number(proto.append_entry_response_message));
@@ -360,12 +357,11 @@ struct RaftProtocolOperationTestFixture
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_append_entry_response_operation(request_id + i);
+        protocol_operation_type * op = create_append_entry_response_operation(&proto, request_id + i);
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
       for(std::size_t i=0; i<10; ++i) {
-        test_protocol proto;
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
@@ -382,15 +378,15 @@ struct RaftProtocolOperationTestFixture
   }
   void AppendCheckpointChunkOperationTest()
   {
+    test_protocol proto;
     uint64_t request_id = 192345;
     std::string data_str("This is some checkpoint chunk data");
     {  
-      protocol_operation_type * op = create_append_checkpoint_chunk_request_operation(request_id, data_str);
+      protocol_operation_type * op = create_append_checkpoint_chunk_request_operation(&proto, request_id, data_str);
       op->destroy();
     }
     {  
-      test_protocol proto;
-      protocol_operation_type * op = create_append_checkpoint_chunk_request_operation(request_id, data_str);
+      protocol_operation_type * op = create_append_checkpoint_chunk_request_operation(&proto, request_id, data_str);
       op->complete(&proto);
       BOOST_CHECK_EQUAL(222U, append_checkpoint_chunk_request_traits::recipient_id(proto.append_checkpoint_chunk_request_message));
       BOOST_CHECK_EQUAL(10U, append_checkpoint_chunk_request_traits::term_number(proto.append_checkpoint_chunk_request_message));
@@ -404,12 +400,11 @@ struct RaftProtocolOperationTestFixture
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_append_checkpoint_chunk_request_operation(request_id + i, data_str);
+        protocol_operation_type * op = create_append_checkpoint_chunk_request_operation(&proto, request_id + i, data_str);
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
       for(std::size_t i=0; i<10; ++i) {
-        test_protocol proto;
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
@@ -427,14 +422,14 @@ struct RaftProtocolOperationTestFixture
   }
   void AppendCheckpointChunkResponseOperationTest()
   {
+    test_protocol proto;
     uint64_t request_id = 192345;
     {  
-      protocol_operation_type * op = create_append_checkpoint_chunk_response_operation(request_id);
+      protocol_operation_type * op = create_append_checkpoint_chunk_response_operation(&proto, request_id);
       op->destroy();
     }
     {  
-      test_protocol proto;
-      protocol_operation_type * op = create_append_checkpoint_chunk_response_operation(request_id);
+      protocol_operation_type * op = create_append_checkpoint_chunk_response_operation(&proto, request_id);
       op->complete(&proto);
       BOOST_CHECK_EQUAL(222U, append_checkpoint_chunk_response_traits::recipient_id(proto.append_checkpoint_chunk_response_message));
       BOOST_CHECK_EQUAL(10U, append_checkpoint_chunk_response_traits::term_number(proto.append_checkpoint_chunk_response_message));
@@ -445,12 +440,11 @@ struct RaftProtocolOperationTestFixture
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_append_checkpoint_chunk_response_operation(request_id + i);
+        protocol_operation_type * op = create_append_checkpoint_chunk_response_operation(&proto, request_id + i);
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
       for(std::size_t i=0; i<10; ++i) {
-        test_protocol proto;
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
@@ -465,6 +459,7 @@ struct RaftProtocolOperationTestFixture
   }
   void OpenSessionRequestOperationTest()
   {
+    test_protocol proto;
     // Client endpoints are passed by reference so we must allocate them
     std::vector<std::size_t> endpoints;
     for(std::size_t i=0; i<10; ++i) {
@@ -472,12 +467,11 @@ struct RaftProtocolOperationTestFixture
     }
     auto now = std::chrono::steady_clock::now();
     {  
-      protocol_operation_type * op = create_open_session_request_operation(endpoints[0], now);
+      protocol_operation_type * op = create_open_session_request_operation(&proto, endpoints[0], now);
       op->destroy();
     }
     {  
-      test_protocol proto;
-      protocol_operation_type * op = create_open_session_request_operation(endpoints[0], now);
+      protocol_operation_type * op = create_open_session_request_operation(&proto, endpoints[0], now);
       op->complete(&proto);
       BOOST_CHECK_EQUAL(1U, proto.open_session_request_messages.size());
       BOOST_REQUIRE(proto.open_session_request_messages.end() != proto.open_session_request_messages.find(0));
@@ -486,24 +480,25 @@ struct RaftProtocolOperationTestFixture
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_open_session_request_operation(endpoints[i], now + std::chrono::seconds(i));
+        protocol_operation_type * op = create_open_session_request_operation(&proto, endpoints[i], now + std::chrono::seconds(i));
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
       for(std::size_t i=0; i<10; ++i) {
-        test_protocol proto;
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
         BOOST_CHECK_EQUAL(1U, proto.open_session_request_messages.size());
         BOOST_REQUIRE(proto.open_session_request_messages.end() != proto.open_session_request_messages.find(i));
         BOOST_CHECK(now+std::chrono::seconds(i) == proto.open_session_request_messages.at(i));
+        proto.open_session_request_messages.clear();
       }
       BOOST_CHECK(op_queue.empty());
     }
   }
   void CloseSessionRequestOperationTest()
   {
+    test_protocol proto;
     // Client endpoints are passed by reference so we must allocate them
     std::vector<std::size_t> endpoints;
     for(std::size_t i=0; i<10; ++i) {
@@ -512,12 +507,11 @@ struct RaftProtocolOperationTestFixture
     auto now = std::chrono::steady_clock::now();
     uint64_t session_id = 723545234U;
     {  
-      protocol_operation_type * op = create_close_session_request_operation(endpoints[0], session_id, now);
+      protocol_operation_type * op = create_close_session_request_operation(&proto, endpoints[0], session_id, now);
       op->destroy();
     }
     {  
-      test_protocol proto;
-      protocol_operation_type * op = create_close_session_request_operation(endpoints[0], session_id, now);
+      protocol_operation_type * op = create_close_session_request_operation(&proto, endpoints[0], session_id, now);
       op->complete(&proto);
       BOOST_CHECK_EQUAL(1U, proto.close_session_request_messages.size());
       BOOST_REQUIRE(proto.close_session_request_messages.end() != proto.close_session_request_messages.find(0));
@@ -527,12 +521,11 @@ struct RaftProtocolOperationTestFixture
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_close_session_request_operation(endpoints[i], session_id+i, now + std::chrono::seconds(i));
+        protocol_operation_type * op = create_close_session_request_operation(&proto, endpoints[i], session_id+i, now + std::chrono::seconds(i));
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
       for(std::size_t i=0; i<10; ++i) {
-        test_protocol proto;
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
@@ -540,12 +533,14 @@ struct RaftProtocolOperationTestFixture
         BOOST_REQUIRE(proto.close_session_request_messages.end() != proto.close_session_request_messages.find(i));
         BOOST_CHECK_EQUAL(session_id+i, close_session_request_traits::session_id(proto.close_session_request_messages.at(i).first));
         BOOST_CHECK(now+std::chrono::seconds(i) == proto.close_session_request_messages.at(i).second);
+        proto.close_session_request_messages.clear();
       }
       BOOST_CHECK(op_queue.empty());
     }
   }
   void LinearizableCommandOperationTest()
   {
+    test_protocol proto;
     // Client endpoints are passed by reference so we must allocate them
     std::vector<std::size_t> endpoints;
     for(std::size_t i=0; i<10; ++i) {
@@ -555,12 +550,11 @@ struct RaftProtocolOperationTestFixture
     uint64_t session_id = 723545234U;
     std::string command_str("This is a command string");
     {  
-      protocol_operation_type * op = create_linearizable_command_request_operation(endpoints[0], session_id, command_str, now);
+      protocol_operation_type * op = create_linearizable_command_request_operation(&proto, endpoints[0], session_id, command_str, now);
       op->destroy();
     }
     {  
-      test_protocol proto;
-      protocol_operation_type * op = create_linearizable_command_request_operation(endpoints[0], session_id, command_str, now);
+      protocol_operation_type * op = create_linearizable_command_request_operation(&proto, endpoints[0], session_id, command_str, now);
       op->complete(&proto);
       BOOST_CHECK_EQUAL(1U, proto.linearizable_command_request_messages.size());
       BOOST_REQUIRE(proto.linearizable_command_request_messages.end() != proto.linearizable_command_request_messages.find(0));
@@ -573,12 +567,11 @@ struct RaftProtocolOperationTestFixture
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_linearizable_command_request_operation(endpoints[i], session_id, command_str, now + std::chrono::seconds(i));
+        protocol_operation_type * op = create_linearizable_command_request_operation(&proto, endpoints[i], session_id, command_str, now + std::chrono::seconds(i));
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
       for(std::size_t i=0; i<10; ++i) {
-        test_protocol proto;
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
@@ -589,21 +582,22 @@ struct RaftProtocolOperationTestFixture
         BOOST_CHECK_EQUAL(823545U, linearizable_command_request_traits::sequence_number(proto.linearizable_command_request_messages.at(i).first));
         BOOST_CHECK_EQUAL(0, string_slice_compare(command_str, linearizable_command_request_traits::command(proto.linearizable_command_request_messages.at(i).first)));
         BOOST_CHECK(now+std::chrono::seconds(i) == proto.linearizable_command_request_messages.at(i).second);
+        proto.linearizable_command_request_messages.clear();
       }
       BOOST_CHECK(op_queue.empty());
     }
   }
   void LogSyncOperationTest()
   {
+    test_protocol proto;
     auto now = std::chrono::steady_clock::now();
     uint64_t index = 723545234U;
     {  
-      protocol_operation_type * op = create_log_sync_operation(index, now);
+      protocol_operation_type * op = create_log_sync_operation(&proto, index, now);
       op->destroy();
     }
     {  
-      test_protocol proto;
-      protocol_operation_type * op = create_log_sync_operation(index, now);
+      protocol_operation_type * op = create_log_sync_operation(&proto, index, now);
       op->complete(&proto);
       BOOST_CHECK_EQUAL(1U, proto.log_sync_messages.size());
       BOOST_REQUIRE(proto.log_sync_messages.end() != proto.log_sync_messages.find(index));
@@ -612,32 +606,32 @@ struct RaftProtocolOperationTestFixture
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_log_sync_operation(index+i, now + std::chrono::seconds(i));
+        protocol_operation_type * op = create_log_sync_operation(&proto, index+i, now + std::chrono::seconds(i));
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
       for(std::size_t i=0; i<10; ++i) {
-        test_protocol proto;
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
         BOOST_CHECK_EQUAL(1U, proto.log_sync_messages.size());
         BOOST_REQUIRE(proto.log_sync_messages.end() != proto.log_sync_messages.find(index+i));
         BOOST_CHECK(now + std::chrono::seconds(i) == proto.log_sync_messages.at(index+i));
+        proto.log_sync_messages.clear();
       }
       BOOST_CHECK(op_queue.empty());
     }
   }
   void LogHeaderSyncOperationTest()
   {
+    test_protocol proto;
     auto now = std::chrono::steady_clock::now();
     {  
-      protocol_operation_type * op = create_log_header_sync_operation(now);
+      protocol_operation_type * op = create_log_header_sync_operation(&proto, now);
       op->destroy();
     }
     {  
-      test_protocol proto;
-      protocol_operation_type * op = create_log_header_sync_operation(now);
+      protocol_operation_type * op = create_log_header_sync_operation(&proto, now);
       op->complete(&proto);
       BOOST_REQUIRE_EQUAL(1U, proto.log_header_sync_messages.size());
       BOOST_CHECK(now == *proto.log_header_sync_messages.begin());
@@ -645,35 +639,35 @@ struct RaftProtocolOperationTestFixture
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
-        protocol_operation_type * op = create_log_header_sync_operation(now + std::chrono::seconds(i));
+        protocol_operation_type * op = create_log_header_sync_operation(&proto, now + std::chrono::seconds(i));
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
       for(std::size_t i=0; i<10; ++i) {
-        test_protocol proto;
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);
         BOOST_REQUIRE_EQUAL(1U, proto.log_header_sync_messages.size());
         BOOST_CHECK(now + std::chrono::seconds(i) == *proto.log_header_sync_messages.begin());
+        proto.log_header_sync_messages.clear();
       }
       BOOST_CHECK(op_queue.empty());
     }
   }
   void HeterogeneousQueueTest()
   {
+    test_protocol proto;
     uint64_t request_id = 192345;
     {  
       protocol_operation_queue_type op_queue;
       for(std::size_t i=0; i<10; ++i) {
         protocol_operation_type * op = (0 == i%2) ?
-          static_cast<protocol_operation_type *>(create_vote_request_operation(request_id + i)) :
-          static_cast<protocol_operation_type *>(create_vote_response_operation(request_id + i));
+          static_cast<protocol_operation_type *>(create_vote_request_operation(&proto, request_id + i)) :
+          static_cast<protocol_operation_type *>(create_vote_response_operation(&proto, request_id + i));
         op_queue.push_back(*op);
       }
       BOOST_REQUIRE_EQUAL(10U, op_queue.size());
       for(std::size_t i=0; i<10; ++i) {
-        test_protocol proto;
         auto & front = op_queue.front();
         op_queue.pop_front();
         front.complete(&proto);

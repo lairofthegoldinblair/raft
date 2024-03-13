@@ -34,13 +34,16 @@ namespace raft {
     std::chrono::steady_clock::time_point last_block_sent_time_;
     // Has the last block been acked?  TODO: Generalize to a window/credit system?
     bool awaiting_ack_;
+    // Has the peer requested the next block from data_
+    bool request_outstanding_;
 
     peer_checkpoint(const header_type & header, checkpoint_data_ptr data)
       :
       checkpoint_next_byte_(0),
       checkpoint_last_header_(header),
       data_(data),
-      awaiting_ack_(false)
+      awaiting_ack_(false),
+      request_outstanding_(false)
     {
     }
   };
@@ -159,18 +162,12 @@ namespace raft {
       return end_;
     }
 
-    void write(const std::vector<uint8_t> & data)
+    template<typename _Callback>
+    void write(std::chrono::time_point<std::chrono::steady_clock> clock_now, slice && data, _Callback && cb)
     {
-      // TODO: Support async here
-      file_->write(&data[0], data.size());
-      end_ += data.size();
-    }
-
-    void write(slice && data)
-    {
-      // TODO: Support async here
-      file_->write(slice::buffer_cast<const uint8_t *>(data), slice::buffer_size(data));
-      end_ += slice::buffer_size(data);
+      auto sz = slice::buffer_size(data);
+      end_ += sz;
+      file_->write(clock_now, slice::buffer_cast<const uint8_t *>(data), slice::buffer_size(data), std::move(cb));
     }
 
     in_progress_checkpoint(checkpoint_data_store_type & store,

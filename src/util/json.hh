@@ -1,6 +1,7 @@
 #ifndef __RAFT_JSON_HH__
 #define __RAFT_JSON_HH__
 
+#include <iomanip>
 #include <sstream>
 #include <string>
 
@@ -98,11 +99,75 @@ namespace raft {
             << ", \"last_checkpoint_cluster_time\": " << append_checkpoint_chunk_request_traits_type::last_checkpoint_cluster_time(msg)
             << ", \"checkpoint_begin\": " << append_checkpoint_chunk_request_traits_type::checkpoint_begin(msg)
             << ", \"checkpoint_end\": " << append_checkpoint_chunk_request_traits_type::checkpoint_end(msg)
-            << ", \"last_checkpoint_header\": " << checkpoint_header(append_checkpoint_chunk_request_traits_type::last_checkpoint_header(msg))
+            << ", \"last_checkpoint_header\": " << checkpoint_header(append_checkpoint_chunk_request_traits_type::last_checkpoint_header(msg));
+        
+        auto s = append_checkpoint_chunk_request_traits_type::data(msg);
+        str << std::hex << std::setfill('0') << std::setw(2);
+        auto sz = 16;
+        const uint8_t * buf = reinterpret_cast<const uint8_t *>(s.data());
+        if (s.size() <= 16) {
+          str << ", \"data\": ";
+          sz = s.size();
+        } else {
+          str << ", \"data_prefix\": ";
+        }
+        str << "\"";
+        if (sz > 0) {
+          str << "0x";
+          for(std::size_t i=0; i<sz; ++i) {
+            str << (uint32_t) buf[i];
+          }
+        }
+        str << "\"";
+        str << " }";
+
+        return str.str();
+      }
+
+      static std::string set_configuration_request(const set_configuration_request_arg_type & msg)
+      {
+        std::stringstream str;
+        str << "{ "
+            << "\"old_id\": " << set_configuration_request_traits_type::old_id(msg)
+            << ", \"new_configuration\": " << simple_configuration_description(set_configuration_request_traits_type::new_configuration(msg))
             << " }";
 
         return str.str();
       }
+
+      static std::string log_entry(const log_entry_type & entry)
+      {
+        std::stringstream str;
+        str << "{ "
+            << "\"term\": " << log_entry_traits_type::term(&entry)
+            << ", \"cluster_time\": " << log_entry_traits_type::cluster_time(&entry)
+          ;
+        if (log_entry_traits_type::is_configuration(&entry)) {
+          str << ", \"configuration\": " << configuration_description(log_entry_traits_type::configuration(&entry));
+        } else if (log_entry_traits_type::is_command(&entry)) {
+          auto s = log_entry_traits_type::data(&entry);
+          str << std::hex << std::setfill('0') << std::setw(2);
+          auto sz = 16;
+          const uint8_t * buf = reinterpret_cast<const uint8_t *>(s.data());
+          if (s.size() <= 16) {
+            str << ", \"command\": ";
+            sz = s.size();
+          } else {
+            str << ", \"command_prefix\": ";
+          }
+          str << "\"";
+          if (sz > 0) {
+            str << "0x";
+            for(std::size_t i=0; i<sz; ++i) {
+              str << (uint32_t) buf[i];
+            }
+          }
+          str << "\"";
+        }
+        str << " }";
+
+        return str.str();
+      }    
     };
   }
 }

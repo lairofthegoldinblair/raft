@@ -185,6 +185,7 @@ namespace raft {
       typedef typename messages_type::close_session_request_traits_type::arg_type close_session_request_arg_type;
       typedef typename builders_type::close_session_response_builder_type close_session_response_builder;
       typedef client_session_state<messages_type> client_session_type;
+      typedef typename protocol_type::checkpoint_data_ptr checkpoint_data_ptr;
     private:
       protocol_type & protocol_;
       communicator_type & comm_;
@@ -249,7 +250,28 @@ namespace raft {
       };
       command_application_state command_application_;
       std::vector<uint8_t> checkpoint_buffer_;
-      bool checkpoint_in_progress_ = false;
+      boost::endian::little_uint64_t checkpoint_size_;
+      enum class checkpoint_state { START, WRITE_SESSION_SIZE, WRITE_SESSION, WRITE_STATE_MACHINE, COMPLETE_CHECKPOINT };
+      checkpoint_state checkpoint_state_;
+      checkpoint_data_ptr checkpoint_;
+
+      const char * checkpoint_state_string() const
+      {
+        switch(checkpoint_state_) {
+        case checkpoint_state::START:
+          return "START";
+        case checkpoint_state::WRITE_SESSION_SIZE:
+          return "WRITE_SESSION_SIZE";
+        case checkpoint_state::WRITE_SESSION:
+          return "WRITE_SESSION";
+        case checkpoint_state::WRITE_STATE_MACHINE:
+          return "WRITE_STATE_MACHINE";
+        case checkpoint_state::COMPLETE_CHECKPOINT:
+          return "COMPLETE_CHECKPOINT";
+        default:
+          return "UNKNOWN";
+        }
+      }
 
       void expire_sessions(uint64_t cluster_time)
       {
@@ -331,7 +353,7 @@ namespace raft {
           BOOST_LOG_TRIVIAL(debug) << "[session_manager::apply] Log entry at " << idx << " cannot be applied because command is oustanding.";
           return;
         }
-        if (checkpoint_in_progress_) {
+        if (!!checkpoint_) {
           BOOST_LOG_TRIVIAL(debug) << "[session_manager::apply] Log entry at " << idx << " cannot be applied because checkpoint is in progress.";
           return;
         }
@@ -502,26 +524,83 @@ namespace raft {
           }
         }
       }
+
+      // Coroutine implmenting checkpoint
+      void on_checkpoint_event(std::chrono::time_point<std::chrono::steady_clock> clock_now, bool complete)
+      {
+        switch(checkpoint_state_) {
+        case checkpoint_state::START:
+          BOOST_ASSERT(!checkpoint_);
+          // TODO: We need to wait for any state machine applications to complete.
+          // Block processing of any state machine commands
+          checkpoint_ = protocol_.begin_checkpoint(protocol_.applied_index());
+          {
+            // TODO: Externalize the serialization of session checkpoint state.
+            auto sz = serialize_helper(*this);
+            checkpoint_buffer_.resize(sz);
+            // Make it easier to deserialize safely by writing the size
+            checkpoint_size_ = sz;
+            auto cb = [this](std::chrono::time_point<std::chrono::steady_clock> clock_now) {
+                        this->on_checkpoint_event(clock_now, false);
+                      };
+            checkpoint_state_ = checkpoint_state::WRITE_SESSION_SIZE;
+            checkpoint_->write(clock_now, reinterpret_cast<const uint8_t *>(&checkpoint_size_), sizeof(boost::endian::little_uint64_t), std::move(cb));
+          }
+          return;
+        case checkpoint_state::WRITE_SESSION_SIZE:
+          {
+            auto cb = [this](std::chrono::time_point<std::chrono::steady_clock> clock_now) {
+                        this->on_checkpoint_event(clock_now, false);
+                      };
+            serialize_helper(raft::mutable_slice(&checkpoint_buffer_[0], checkpoint_buffer_.size()), *this);
+            checkpoint_state_ = checkpoint_state::WRITE_SESSION;
+            checkpoint_->write(clock_now, &checkpoint_buffer_[0], checkpoint_buffer_.size(), std::move(cb));
+          }
+          return;
+          checkpoint_buffer_.resize(0);
+        case checkpoint_state::WRITE_SESSION:
+          state_machine_.start_checkpoint();
+          // Synchronous call to state machine to checkpoint.
+          while(true) {
+            checkpoint_state_ = checkpoint_state::WRITE_STATE_MACHINE;
+            if(state_machine_.checkpoint(clock_now,
+                                         checkpoint_,
+                                         [this](std::chrono::time_point<std::chrono::steady_clock> clock_now, bool complete) {
+                                           this->on_checkpoint_event(clock_now, complete);
+                                         })
+               ) {
+              break;
+            } else {
+              return;
+              case checkpoint_state::WRITE_STATE_MACHINE:
+                ;
+            }
+          }
+          state_machine_.complete_checkpoint(clock_now);
+          checkpoint_state_ = checkpoint_state::COMPLETE_CHECKPOINT;
+          protocol_.complete_checkpoint(checkpoint_,
+                                        clock_now,
+                                        [this](std::chrono::time_point<std::chrono::steady_clock> clock_now) {
+                                          this->on_checkpoint_event(clock_now, true);
+                                        });
+          return;
+        case checkpoint_state::COMPLETE_CHECKPOINT:
+          checkpoint_.reset();
+          // Since we were blocking application of log entries while taking the
+          // checkpoint, let the protocol know to try again.
+          protocol_.on_command_applied(0U);
+        }
+      }
       
       // This is a blocking implementation of checkpointing
       void on_checkpoint_request(std::chrono::time_point<std::chrono::steady_clock> clock_now)
       {
-        // TODO: We need to wait for any state machine applications to complete.
-        // Block processing of any state machine commands
-        checkpoint_in_progress_ = true;
-        auto ckpt = protocol_.begin_checkpoint(protocol_.applied_index());
-        // TODO: Externalize the serialization of session checkpoint state.
-        auto sz = serialize_helper(*this);
-        // Make it easier to deserialize safely by writing the size
-        boost::endian::little_uint64_t little_sz = sz;
-        ckpt->write(reinterpret_cast<const uint8_t *>(&little_sz), sizeof(boost::endian::little_uint64_t));
-        std::vector<uint8_t> tmp(sz);
-        serialize_helper(raft::mutable_slice(&tmp[0], sz), *this);
-        ckpt->write(&tmp[0], sz);
-        // Synchronous call to state machine to checkpoint.
-        state_machine_.checkpoint(ckpt);
-        protocol_.complete_checkpoint(ckpt, clock_now);
-        checkpoint_in_progress_ = false;
+        if (!checkpoint_) {
+          checkpoint_state_ = checkpoint_state::START;
+          on_checkpoint_event(clock_now, false);
+        } else {
+          BOOST_LOG_TRIVIAL(info) << "[session_manager::on_checkpoint_request] Checkpoint already in progress in state : " << checkpoint_state_string();
+        }
       }
 
       std::size_t checkpoint_session_buffer_size() const

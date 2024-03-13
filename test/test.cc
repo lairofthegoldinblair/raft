@@ -409,7 +409,7 @@ struct communicator_metafunction
   };
 };
 
-typedef raft::protocol<communicator_metafunction, raft::native::messages> test_raft_type;
+typedef raft::protocol<communicator_metafunction, raft::test::in_memory_checkpoint_metafunction, raft::native::messages> test_raft_type;
 
 struct init_logging
 {
@@ -654,7 +654,7 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(BasicTemplatedStateMachineTests, _TestType, test_t
   typedef typename _TestType::messages_type::append_checkpoint_chunk_request_traits_type append_checkpoint_chunk_request_traits;
   typedef typename _TestType::builders_type::append_checkpoint_chunk_request_builder_type append_checkpoint_chunk_request_builder;
   typedef typename _TestType::messages_type::log_entry_traits_type log_entry_traits;
-  typedef raft::protocol<raft::test::generic_communicator_metafunction, typename _TestType::messages_type> raft_type;
+  typedef raft::protocol<raft::test::generic_communicator_metafunction, raft::test::in_memory_checkpoint_metafunction, typename _TestType::messages_type> raft_type;
   typedef raft::test::client<typename _TestType::messages_type> client_type;
 
   auto time_base = std::chrono::steady_clock::now();
@@ -694,8 +694,11 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(BasicTemplatedStateMachineTests, _TestType, test_t
   client_type c;  
   typename raft_type::log_type l;
   typename raft_type::checkpoint_data_store_type store;
- 
+
   raft_type s(comm, l, store, cm, now);
+  bool restored=false;
+  s.start(now, [&restored](std::chrono::time_point<std::chrono::steady_clock> clock_now){ BOOST_TEST(!restored); restored = true; });
+  BOOST_CHECK(restored);
   BOOST_CHECK_EQUAL(0U, s.current_term());
   BOOST_CHECK_EQUAL(get_cluster_time(time_base, cluster_now), s.cluster_time());
   BOOST_CHECK_EQUAL(raft_type::FOLLOWER, s.get_state());
@@ -1019,6 +1022,9 @@ BOOST_AUTO_TEST_CASE(InitializeFromNonEmptyLog)
 
   test_raft_type::configuration_manager_type cm(2);
   test_raft_type s(comm, l, store, cm, now);
+  bool restored = false;
+  s.start(now, [&restored](std::chrono::time_point<std::chrono::steady_clock> clock_now){ BOOST_TEST(!restored); restored = true; });
+  BOOST_CHECK(restored);
   BOOST_CHECK_EQUAL(term, s.current_term());
   BOOST_CHECK_EQUAL(cluster_time, s.cluster_time());
   BOOST_CHECK_EQUAL(test_raft_type::FOLLOWER, s.get_state());
@@ -1100,7 +1106,8 @@ public:
   typedef typename _TestType::messages_type::set_configuration_request_traits_type set_configuration_request_traits;
   typedef typename _TestType::builders_type::set_configuration_request_builder_type set_configuration_request_builder;
   typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
-  typedef raft::protocol<raft::test::generic_communicator_metafunction, messages_type> raft_type;
+  typedef raft::protocol<raft::test::generic_communicator_metafunction, raft::test::in_memory_checkpoint_metafunction, messages_type> raft_type;
+  typedef typename raft_type::checkpoint_block_type checkpoint_block_type;
 
   RaftTestBase(raft::test::TestFixtureInitialization init = raft::test::TestFixtureInitialization::CHECKPOINT)
     :
@@ -1896,8 +1903,9 @@ public:
     this->comm.q.pop_back();
   }
   
-  void AppendCheckpointChunk()
+  void AppendCheckpointChunk(bool async)
   {
+    this->store.asynchronous(async);
     {
       uint8_t data=0;
       append_checkpoint_chunk_request_builder bld;
@@ -1922,15 +1930,37 @@ public:
     BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
     BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, this->store.completion_queue().size());
 
     this->protocol->on_log_header_sync(this->now);
     BOOST_CHECK(!this->protocol->log_header_sync_required());
     BOOST_CHECK_EQUAL(1U, this->protocol->current_term());
     BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
-    BOOST_REQUIRE_EQUAL(0U, this->comm.q.size());
+    if (this->store.asynchronous()) {
+      BOOST_REQUIRE_EQUAL(0U, this->comm.q.size());
+      // This is to write the one byte checkpoint chunk which is final
+      // so must be synced before responding
+      BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_REQUIRE_EQUAL(0U, this->comm.q.size());
+      this->store.completion_queue().pop_front();
+      // The sync request is queued up
+      BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_REQUIRE_EQUAL(0U, this->comm.q.size());
+      this->store.completion_queue().pop_front();
+      // Now loading the one byte checkpoint in one read
+      BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+      this->store.completion_queue().pop_front();
+      BOOST_REQUIRE_EQUAL(0U, this->store.completion_queue().size());
+    } else {
+      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+      BOOST_CHECK_EQUAL(0U, this->store.completion_queue().size());
+    }
 
-    this->protocol->on_checkpoint_sync(this->now);
     BOOST_TEST(1 == this->checkpoint_load_state.size());
     BOOST_TEST_REQUIRE(0 < this->checkpoint_load_state.size());
     BOOST_TEST(0U == this->checkpoint_load_state[0]);
@@ -1970,8 +2000,9 @@ public:
     this->comm.q.pop_back();
   }
 
-  void AppendCheckpointChunkSlowHeaderSync()
+  void AppendCheckpointChunkSlowHeaderSync(bool async)
   {
+    this->store.asynchronous(async);
     {
       uint8_t data=0;
       append_checkpoint_chunk_request_builder bld;
@@ -2035,6 +2066,10 @@ public:
 
     {
       // This one doesn't require a new term so it gets queued awaiting the log header sync
+      // however, we want to validate that a new (double) sync request isn't made
+      BOOST_CHECK(!this->log_header_write_.empty());
+      this->log_header_write_.reset();
+      BOOST_CHECK(this->log_header_write_.empty());
       uint8_t data=2;
       append_checkpoint_chunk_request_builder bld;
       bld.recipient_id(0).term_number(1).leader_id(1).checkpoint_begin(1).checkpoint_end(2).checkpoint_done(true).data(raft::slice(&data, 1));
@@ -2053,26 +2088,58 @@ public:
       auto msg = bld.finish();
       this->protocol->on_append_checkpoint_chunk_request(std::move(msg), this->now);
     }
+    BOOST_CHECK(this->log_header_write_.empty());
     BOOST_CHECK(this->protocol->log_header_sync_required());
     BOOST_TEST(0 == this->checkpoint_load_state.size());
     BOOST_CHECK_EQUAL(1U, this->protocol->current_term());
     BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
     BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    BOOST_TEST(0 == this->checkpoint_load_state.size());    
     this->protocol->on_log_header_sync(this->now);
     BOOST_CHECK(!this->protocol->log_header_sync_required());
-    BOOST_TEST(0 == this->checkpoint_load_state.size());
     BOOST_CHECK_EQUAL(1U, this->protocol->current_term());
     BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
     BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
-    BOOST_CHECK_EQUAL(1U, this->comm.q.size());
+    if (this->store.asynchronous()) {
+      BOOST_TEST(0 == this->checkpoint_load_state.size());    
+      BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+      // Writing of checkpoint chunk #1 (one byte), this will
+      // generate a response since it is not final
+      BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_CHECK_EQUAL(1U, this->comm.q.size());
+      this->store.completion_queue().pop_front();
+      // Writing of checkpoint chunk #2 (one byte), this will
+      // not generate a response until synced
+      BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_CHECK_EQUAL(1U, this->comm.q.size());
+      this->store.completion_queue().pop_front();
+      // Will be waiting on checkpoint file to be synced now
+      BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+    } else {
+      // If synchronous then the both chunks will have been written, synced
+      // and committed (including loading the chckpoint).
+      BOOST_TEST(2 == this->checkpoint_load_state.size());    
+      BOOST_CHECK_EQUAL(2U, this->comm.q.size());
+    }
     BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_response_traits::recipient_id(boost::get<append_checkpoint_chunk_response_arg_type>(this->comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_response_traits::term_number(boost::get<append_checkpoint_chunk_response_arg_type>(this->comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_response_traits::request_term_number(boost::get<append_checkpoint_chunk_response_arg_type>(this->comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_response_traits::bytes_stored(boost::get<append_checkpoint_chunk_response_arg_type>(this->comm.q.back())));
     this->comm.q.pop_back();
 
-    this->protocol->on_checkpoint_sync(this->now);
+    if (this->store.asynchronous()) {
+      // One operation to sync then loading checkpoint of size 2 is done in 1 async read
+      BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      this->store.completion_queue().pop_front();
+      BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      this->store.completion_queue().pop_front();
+      BOOST_REQUIRE_EQUAL(0U, this->store.completion_queue().size());
+    }
     BOOST_TEST(2 == this->checkpoint_load_state.size());
     BOOST_TEST_REQUIRE(0 < this->checkpoint_load_state.size());
     BOOST_TEST(0U == this->checkpoint_load_state[0]);
@@ -2091,8 +2158,248 @@ public:
     // couldn't be queued right?
   }
 
-  void ClientCheckpointTest()
+  void AppendCheckpointChunkTermAdvanceWaitingForSync()
   {
+    // Verify assumed initial state
+    BOOST_CHECK(this->l.empty());
+    BOOST_CHECK_EQUAL(0U, this->l.index_begin());
+    BOOST_CHECK_EQUAL(0U, this->l.index_end());
+    this->store.asynchronous(true);
+    uint64_t term = 1;
+    {
+      uint8_t data=0;
+      append_checkpoint_chunk_request_builder bld;
+      bld.recipient_id(0).term_number(term).leader_id(1).checkpoint_begin(0).checkpoint_end(1).checkpoint_done(true).data(raft::slice(&data, 1));
+      {
+	auto chb = bld.last_checkpoint_header();
+	{
+	  auto cdb = chb.index(0).log_entry_index_end(2).last_log_entry_term(term).last_log_entry_cluster_time(0).configuration();
+	  {
+            this->add_five_servers(cdb.from());
+	  }
+	  {
+	    auto fsb = cdb.to();
+	  }
+	}
+      }
+      auto msg = bld.finish();
+      this->protocol->on_append_checkpoint_chunk_request(std::move(msg), this->now);
+    }
+    BOOST_CHECK(this->protocol->log_header_sync_required());
+    BOOST_CHECK_EQUAL(term, this->protocol->current_term());
+    BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, this->store.completion_queue().size());
+
+    this->protocol->on_log_header_sync(this->now);
+    BOOST_CHECK(!this->protocol->log_header_sync_required());
+    BOOST_CHECK_EQUAL(term, this->protocol->current_term());
+    BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
+    BOOST_REQUIRE_EQUAL(0U, this->comm.q.size());
+    // Write the checkpoint chunk
+    BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+    this->store.completion_queue().front()();
+    this->store.completion_queue().pop_front();
+    // It's final so we need to sync
+    BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+
+    // Bump the term with a vote request
+    term += 1;
+    auto expected_vote = term < this->protocol->current_term() || !this->protocol->candidate_log_more_complete(0, 0) ?
+      raft_type::INVALID_PEER_ID() : 1U;
+    auto msg = vote_request_builder().recipient_id(0).term_number(term).candidate_id(1).log_index_end(0).last_log_term(0).finish();
+    this->protocol->on_vote_request(std::move(msg), this->now);
+    BOOST_CHECK(this->protocol->log_header_sync_required());
+    BOOST_CHECK_EQUAL(term, this->protocol->current_term());
+    BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
+    BOOST_CHECK_EQUAL(term, this->log_header_write_.current_term_);
+    BOOST_CHECK_EQUAL(expected_vote, this->log_header_write_.voted_for_);
+
+    // Checkpoint should be abandoned.
+    BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_response_traits::recipient_id(boost::get<append_checkpoint_chunk_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_checkpoint_chunk_response_traits::term_number(boost::get<append_checkpoint_chunk_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term-1, append_checkpoint_chunk_response_traits::request_term_number(boost::get<append_checkpoint_chunk_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_response_traits::bytes_stored(boost::get<append_checkpoint_chunk_response_arg_type>(this->comm.q.back())));
+    this->comm.q.pop_back();
+    BOOST_CHECK_EQUAL(0U, this->protocol->last_checkpoint_index_end());
+    BOOST_CHECK_EQUAL(0U, this->protocol->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, this->protocol->last_checkpoint_cluster_time());
+    BOOST_CHECK(nullptr == this->protocol->last_checkpoint().get());
+
+    // Finish up with the vote response
+    this->log_header_write_.reset();
+    this->protocol->on_log_header_sync(this->now);
+    BOOST_CHECK(!this->protocol->log_header_sync_required());
+    BOOST_CHECK_EQUAL(term, this->protocol->current_term());
+    BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
+    BOOST_CHECK_EQUAL(1U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, vote_response_traits::peer_id(boost::get<vote_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, vote_response_traits::term_number(boost::get<vote_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, vote_response_traits::request_term_number(boost::get<vote_response_arg_type>(this->comm.q.back())));
+    //BOOST_CHECK(vote_response_traits::granted(boost::get<vote_response_arg_type>(comm.q.back())));
+    this->comm.q.pop_back();
+    BOOST_CHECK(this->log_header_write_.empty());
+    
+    BOOST_TEST(0 == this->checkpoint_load_state.size());
+    BOOST_CHECK(!this->protocol->log_header_sync_required());
+    BOOST_CHECK_EQUAL(term, this->protocol->current_term());
+    BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
+    BOOST_REQUIRE_EQUAL(0U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, this->protocol->last_checkpoint_index_end());
+    BOOST_CHECK_EQUAL(0U, this->protocol->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, this->protocol->last_checkpoint_cluster_time());
+    BOOST_CHECK(nullptr == this->protocol->last_checkpoint().get());
+
+    BOOST_CHECK(this->l.empty());
+    BOOST_CHECK_EQUAL(0U, this->l.index_begin());
+    BOOST_CHECK_EQUAL(0U, this->l.index_end());
+
+    // Make sure we can append an next entry at the new term
+    {
+      auto le = log_entry_builder().term(term).cluster_time(this->initial_cluster_time).data("4").finish();
+      auto msg = append_entry_request_builder().recipient_id(0).term_number(term).leader_id(1).log_index_begin(0).previous_log_term(0).leader_commit_index_end(0).entry(le).finish();
+      this->protocol->on_append_entry_request(std::move(msg), this->now);
+    }
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    this->protocol->on_log_sync(1, this->now);
+    BOOST_CHECK_EQUAL(term, this->protocol->current_term());
+    BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
+    BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, append_entry_response_traits::recipient_id(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_entry_response_traits::term_number(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_entry_response_traits::request_term_number(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(0, append_entry_response_traits::index_begin(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(1, append_entry_response_traits::index_end(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK(append_entry_response_traits::success(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    this->comm.q.pop_back();
+  }
+
+  void AppendCheckpointChunkTermAdvanceWaitingForWrite()
+  {
+    // Verify assumed initial state
+    BOOST_CHECK(this->l.empty());
+    BOOST_CHECK_EQUAL(0U, this->l.index_begin());
+    BOOST_CHECK_EQUAL(0U, this->l.index_end());
+    this->store.asynchronous(true);
+    uint64_t term = 1;
+    {
+      uint8_t data=0;
+      append_checkpoint_chunk_request_builder bld;
+      bld.recipient_id(0).term_number(term).leader_id(1).checkpoint_begin(0).checkpoint_end(1).checkpoint_done(true).data(raft::slice(&data, 1));
+      {
+	auto chb = bld.last_checkpoint_header();
+	{
+	  auto cdb = chb.index(0).log_entry_index_end(2).last_log_entry_term(term).last_log_entry_cluster_time(0).configuration();
+	  {
+            this->add_five_servers(cdb.from());
+	  }
+	  {
+	    auto fsb = cdb.to();
+	  }
+	}
+      }
+      auto msg = bld.finish();
+      this->protocol->on_append_checkpoint_chunk_request(std::move(msg), this->now);
+    }
+    BOOST_CHECK(this->protocol->log_header_sync_required());
+    BOOST_CHECK_EQUAL(term, this->protocol->current_term());
+    BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, this->store.completion_queue().size());
+
+    // Log header sync initiates write of checkpoint chunk
+    this->protocol->on_log_header_sync(this->now);
+    BOOST_CHECK(!this->protocol->log_header_sync_required());
+    BOOST_CHECK_EQUAL(term, this->protocol->current_term());
+    BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
+    BOOST_REQUIRE_EQUAL(0U, this->comm.q.size());
+    BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+
+    // While the write is pending bump the term with a vote request
+    term += 1;
+    auto expected_vote = term < this->protocol->current_term() || !this->protocol->candidate_log_more_complete(0, 0) ?
+      raft_type::INVALID_PEER_ID() : 1U;
+    auto msg = vote_request_builder().recipient_id(0).term_number(term).candidate_id(1).log_index_end(0).last_log_term(0).finish();
+    this->protocol->on_vote_request(std::move(msg), this->now);
+    BOOST_CHECK(this->protocol->log_header_sync_required());
+    BOOST_CHECK_EQUAL(term, this->protocol->current_term());
+    BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
+    BOOST_CHECK_EQUAL(term, this->log_header_write_.current_term_);
+    BOOST_CHECK_EQUAL(expected_vote, this->log_header_write_.voted_for_);
+
+    // Checkpoint abandoned but the request isn't sent at this point (perhaps we should?)
+    BOOST_REQUIRE_EQUAL(0U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, this->protocol->last_checkpoint_index_end());
+    BOOST_CHECK_EQUAL(0U, this->protocol->last_checkpoint_term());
+    BOOST_CHECK_EQUAL(0U, this->protocol->last_checkpoint_cluster_time());
+    BOOST_CHECK(nullptr == this->protocol->last_checkpoint().get());
+
+    // Finish up with the vote response
+    this->log_header_write_.reset();
+    this->protocol->on_log_header_sync(this->now);
+    BOOST_CHECK(!this->protocol->log_header_sync_required());
+    BOOST_CHECK_EQUAL(term, this->protocol->current_term());
+    BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
+    BOOST_CHECK_EQUAL(1U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, vote_response_traits::peer_id(boost::get<vote_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, vote_response_traits::term_number(boost::get<vote_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, vote_response_traits::request_term_number(boost::get<vote_response_arg_type>(this->comm.q.back())));
+    //BOOST_CHECK(vote_response_traits::granted(boost::get<vote_response_arg_type>(comm.q.back())));
+    this->comm.q.pop_back();
+    BOOST_CHECK(this->log_header_write_.empty());
+    
+    // Complete the checkpoint write
+    this->store.completion_queue().front()();
+    this->store.completion_queue().pop_front();
+    BOOST_REQUIRE_EQUAL(0U, this->store.completion_queue().size());
+    // Now the checkpoint response shows up
+    BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_response_traits::recipient_id(boost::get<append_checkpoint_chunk_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_checkpoint_chunk_response_traits::term_number(boost::get<append_checkpoint_chunk_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term-1, append_checkpoint_chunk_response_traits::request_term_number(boost::get<append_checkpoint_chunk_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_response_traits::bytes_stored(boost::get<append_checkpoint_chunk_response_arg_type>(this->comm.q.back())));
+    this->comm.q.pop_back();
+
+
+    BOOST_CHECK(this->l.empty());
+    BOOST_CHECK_EQUAL(0U, this->l.index_begin());
+    BOOST_CHECK_EQUAL(0U, this->l.index_end());
+
+    // Make sure we can append an next entry at the new term
+    {
+      auto le = log_entry_builder().term(term).cluster_time(this->initial_cluster_time).data("4").finish();
+      auto msg = append_entry_request_builder().recipient_id(0).term_number(term).leader_id(1).log_index_begin(0).previous_log_term(0).leader_commit_index_end(0).entry(le).finish();
+      this->protocol->on_append_entry_request(std::move(msg), this->now);
+    }
+    BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+    this->protocol->on_log_sync(1, this->now);
+    BOOST_CHECK_EQUAL(term, this->protocol->current_term());
+    BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
+    BOOST_CHECK_EQUAL(raft_type::FOLLOWER, this->protocol->get_state());
+    BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    BOOST_CHECK_EQUAL(0U, append_entry_response_traits::recipient_id(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_entry_response_traits::term_number(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(term, append_entry_response_traits::request_term_number(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(0, append_entry_response_traits::index_begin(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK_EQUAL(1, append_entry_response_traits::index_end(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    BOOST_CHECK(append_entry_response_traits::success(boost::get<append_entry_response_arg_type>(this->comm.q.back())));
+    this->comm.q.pop_back();
+  }
+
+  void ClientCheckpointTest(bool async)
+  {
+    this->store.asynchronous(async);
     uint64_t term = 1;
     this->make_leader(term);
 
@@ -2104,28 +2411,53 @@ public:
     BOOST_CHECK_EQUAL(0U, this->protocol->last_checkpoint_cluster_time());
     BOOST_CHECK(nullptr == this->protocol->last_checkpoint().get());
   
-    auto ckpt = this->protocol->begin_checkpoint(2U);
+    auto ckpt = this->protocol->begin_checkpoint(client_index);
     BOOST_CHECK_EQUAL(0U, this->protocol->last_checkpoint_index_end());
     BOOST_CHECK_EQUAL(0U, this->protocol->last_checkpoint_term());
     BOOST_CHECK_EQUAL(0U, this->protocol->last_checkpoint_cluster_time());
     BOOST_REQUIRE(nullptr != ckpt.get());
-    BOOST_CHECK_EQUAL(2U, checkpoint_header_traits::log_entry_index_end(&ckpt->header()));
+    BOOST_CHECK_EQUAL(client_index, checkpoint_header_traits::log_entry_index_end(&ckpt->header()));
     BOOST_CHECK_EQUAL(1U, checkpoint_header_traits::last_log_entry_term(&ckpt->header()));
     BOOST_CHECK_EQUAL(this->initial_cluster_time, checkpoint_header_traits::last_log_entry_cluster_time(&ckpt->header()));
     BOOST_CHECK(nullptr == this->protocol->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
-    ckpt->write(&data[0], 5U);
-    this->protocol->complete_checkpoint(ckpt, this->now);
-    BOOST_CHECK_EQUAL(2U, this->protocol->last_checkpoint_index_end());
+    bool wrote=false;
+    BOOST_CHECK_EQUAL(0U, this->store.completion_queue().size());
+    ckpt->write(this->now, &data[0], 5U, [&wrote](std::chrono::time_point<std::chrono::steady_clock> clock_now) { wrote = true; });
+    if (this->store.asynchronous()) {
+      BOOST_CHECK(!wrote);
+      BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_CHECK(wrote);
+      this->store.completion_queue().pop_front();
+    } else {
+      BOOST_CHECK(wrote);
+    }
+    this->complete_checkpoint(ckpt);
+    BOOST_CHECK_EQUAL(client_index, this->protocol->last_checkpoint_index_end());
     BOOST_CHECK_EQUAL(1U, this->protocol->last_checkpoint_term());
     BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->last_checkpoint_cluster_time());
     BOOST_CHECK(ckpt == this->protocol->last_checkpoint());
     BOOST_REQUIRE(nullptr != this->protocol->last_checkpoint());
     std::size_t offset=0;
-    raft::checkpoint_block block;
+    checkpoint_block_type block;
     BOOST_CHECK(block.is_null());
     while(!this->protocol->last_checkpoint()->is_final(block)) {
-      block = this->protocol->last_checkpoint()->next_block(block);
+      bool block_read = false;
+      this->protocol->last_checkpoint()->next_block(this->now, std::move(block), [&block, &block_read](std::chrono::time_point<std::chrono::steady_clock> clock_now,
+                                                                                                       checkpoint_block_type && blk) {
+                                                      block_read = true;
+                                                      block = std::move(blk);
+                                                    });
+      if (this->store.asynchronous()) {
+        BOOST_CHECK(!block_read);
+        BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+        this->store.completion_queue().front()();
+        BOOST_CHECK(block_read);
+        this->store.completion_queue().pop_front();
+      } else {
+        BOOST_TEST(block_read);
+      }    
       BOOST_CHECK(!block.is_null());
       if (!this->protocol->last_checkpoint()->is_final(block)) {
         BOOST_TEST(offset + block.size() < 5U);
@@ -2138,17 +2470,53 @@ public:
         BOOST_CHECK_EQUAL(0, ::memcmp(block.data(), &data[offset], block.size()));
       }
     }
-    block = this->protocol->last_checkpoint()->next_block(block);
+    bool block_read = false;
+    this->protocol->last_checkpoint()->next_block(this->now, std::move(block), [&block, &block_read](std::chrono::time_point<std::chrono::steady_clock> clock_now,
+                                                                                                     checkpoint_block_type && blk) {
+                                                    block_read = true;
+                                                    block = std::move(blk);
+                                                  });
+    // Call next_block on a final block always returns synchronously
     BOOST_CHECK(block.is_null());
 
     BOOST_TEST(0U == this->checkpoint_load_state.size());
-    this->protocol->load_checkpoint(this->now);
+    bool loaded = false;
+    this->protocol->load_checkpoint(this->now, [&loaded](std::chrono::time_point<std::chrono::steady_clock> clock_now){ BOOST_TEST(!loaded); loaded = true; });
+    if (this->store.asynchronous()) {
+      // Takes 3 async reads to load 5 bytes with block size of 2
+      BOOST_CHECK(!loaded);
+      BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_CHECK(!loaded);
+      this->store.completion_queue().pop_front();
+      BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_CHECK(!loaded);
+      this->store.completion_queue().pop_front();
+      BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_CHECK(loaded);
+      this->store.completion_queue().pop_front();
+      BOOST_CHECK_EQUAL(0U, this->store.completion_queue().size());
+    } else {
+      BOOST_TEST(loaded);
+    }    
     BOOST_TEST_REQUIRE(5U == this->checkpoint_load_state.size());
     BOOST_TEST(0 == ::memcmp(&this->checkpoint_load_state[0], &data[0], 5));
+
+    // Lastly the configuration should be pointing to the checkpoint header now
+    // and the log entry containing the configuration should have been truncated.
+    BOOST_CHECK_EQUAL(0U, simple_configuration_description_traits::size(&configuration_description_traits::to(this->cm->configuration().description())));
+    BOOST_REQUIRE_EQUAL(5U, simple_configuration_description_traits::size(&configuration_description_traits::from(this->cm->configuration().description())));
+    for(std::size_t i=0; i<5; ++i) {
+      BOOST_CHECK_EQUAL(i, server_description_traits::id(&simple_configuration_description_traits::get(&configuration_description_traits::from(this->cm->configuration().description()), i)));
+      BOOST_CHECK_EQUAL(0, server_description_traits::address(&simple_configuration_description_traits::get(&configuration_description_traits::from(this->cm->configuration().description()), i)).compare((boost::format("192.168.1.%1%") % (i+1)).str()));
+    }
   }
 
-  void ClientPartialCheckpointTest()
+  void ClientPartialCheckpointTest(bool async)
   {
+    this->store.asynchronous(async);
     uint64_t term = 1;
     this->make_leader(term);
 
@@ -2176,16 +2544,28 @@ public:
     BOOST_CHECK(nullptr == this->protocol->last_checkpoint().get());
 
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
-    ckpt->write(&data[0], 5U);
-    this->protocol->complete_checkpoint(ckpt, this->now);
+    bool wrote=false;
+    BOOST_CHECK_EQUAL(0U, this->store.completion_queue().size());
+    ckpt->write(this->now, &data[0], 5U, [&wrote](std::chrono::time_point<std::chrono::steady_clock> clock_now) { wrote = true; });
+    if (this->store.asynchronous()) {
+      BOOST_CHECK(!wrote);
+      BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_CHECK(wrote);
+      this->store.completion_queue().pop_front();
+    } else {
+      BOOST_CHECK(wrote);
+    }
+    this->complete_checkpoint(ckpt);
     BOOST_CHECK_EQUAL(2U, this->protocol->last_checkpoint_index_end());
     BOOST_CHECK_EQUAL(1U, this->protocol->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, this->protocol->last_checkpoint_cluster_time());
     BOOST_CHECK(ckpt == this->protocol->last_checkpoint());
   }
 
-  void ClientCheckpointOldTermTest()
+  void ClientCheckpointOldTermTest(bool async)
   {
+    this->store.asynchronous(async);
     uint64_t term = 1;
     this->make_leader(term);
 
@@ -2219,8 +2599,19 @@ public:
     BOOST_CHECK(nullptr == this->protocol->last_checkpoint().get());
 
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
-    ckpt->write(&data[0], 5U);
-    this->protocol->complete_checkpoint(ckpt, this->now);
+    bool wrote=false;
+    BOOST_CHECK_EQUAL(0U, this->store.completion_queue().size());
+    ckpt->write(this->now, &data[0], 5U, [&wrote](std::chrono::time_point<std::chrono::steady_clock> clock_now) { wrote = true; });
+    if (this->store.asynchronous()) {
+      BOOST_CHECK(!wrote);
+      BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_CHECK(wrote);
+      this->store.completion_queue().pop_front();
+    } else {
+      BOOST_CHECK(wrote);
+    }
+    this->complete_checkpoint(ckpt);
     BOOST_CHECK_EQUAL(2U, this->protocol->last_checkpoint_index_end());
     BOOST_CHECK_EQUAL(1U, this->protocol->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, this->protocol->last_checkpoint_cluster_time());
@@ -2244,8 +2635,9 @@ public:
 
   // Test that append_entries will send a checkpoint that needs log entries the leader has discarded
   // post checkpoint
-  void AppendEntriesCheckpoint()
+  void AppendEntriesCheckpoint(bool async)
   {
+    this->store.asynchronous(async);
     uint64_t term = 1;
     this->make_leader(term);
 
@@ -2274,8 +2666,19 @@ public:
     BOOST_CHECK_EQUAL(expected_cluster_time, checkpoint_header_traits::last_log_entry_cluster_time(&ckpt->header()));
     BOOST_CHECK(nullptr == this->protocol->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
-    ckpt->write(&data[0], 5U);
-    this->protocol->complete_checkpoint(ckpt, this->now);
+    bool wrote=false;
+    BOOST_CHECK_EQUAL(0U, this->store.completion_queue().size());
+    ckpt->write(this->now, &data[0], 5U, [&wrote](std::chrono::time_point<std::chrono::steady_clock> clock_now) { wrote = true; });
+    if (this->store.asynchronous()) {
+      BOOST_CHECK(!wrote);
+      BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_CHECK(wrote);
+      this->store.completion_queue().pop_front();
+    } else {
+      BOOST_CHECK(wrote);
+    }
+    this->complete_checkpoint(ckpt);
     BOOST_CHECK_EQUAL(2U, this->protocol->last_checkpoint_index_end());
     BOOST_CHECK_EQUAL(1U, this->protocol->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, this->protocol->last_checkpoint_cluster_time());
@@ -2284,7 +2687,16 @@ public:
     // Fire timer.  Peer 1 still doesn't have first log entry but since that entry is
     // discarded, a checkpoint will need to be sent to 1.
     this->protocol->on_timer(this->now);
-    BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    if (this->store.asynchronous()) {
+      // Must read the checkpoint from the store in order to send it
+      BOOST_REQUIRE_EQUAL(0U, this->comm.q.size());
+      BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+      this->store.completion_queue().pop_front();
+    } else {
+      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    }
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
     BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_request_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
@@ -2309,8 +2721,18 @@ public:
     // Ack with bytes_stored=2 twice to validate the checkpoint protocol will resend data if requested
     for(int i=0; i<2; ++i) {
       auto resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(1U).request_term_number(1U).bytes_stored(2U).finish();
-      this->protocol->on_append_checkpoint_chunk_response(std::move(resp), this->now);  
-      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+      this->protocol->on_append_checkpoint_chunk_response(std::move(resp), this->now);
+      if (this->store.asynchronous()) {
+        BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+        BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+        this->store.completion_queue().front()();
+        BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+        this->store.completion_queue().pop_front();
+        BOOST_REQUIRE_EQUAL(0U, this->store.completion_queue().size());
+        BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+      } else {
+        BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+      }
       BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
       BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
       BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_request_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
@@ -2325,7 +2747,17 @@ public:
 
     auto resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(1U).request_term_number(1U).bytes_stored(4U).finish();
     this->protocol->on_append_checkpoint_chunk_response(std::move(resp), this->now);  
-    BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    if (this->store.asynchronous()) {
+      BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+      BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+      this->store.completion_queue().pop_front();
+      BOOST_REQUIRE_EQUAL(0U, this->store.completion_queue().size());
+      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    } else {
+      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    }
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
     BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_request_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
@@ -2345,8 +2777,9 @@ public:
     this->send_client_request_and_commit(term, cmd, client_index++);
   }
 
-  void AppendEntriesCheckpointAllInOneChunk()
+  void AppendEntriesCheckpointAllInOneChunk(bool async)
   {
+    this->store.asynchronous(async);
     // Set so that the entire checkpoint fits in one chunk
     this->store.block_size(1024);
     uint64_t term = 1;
@@ -2377,8 +2810,19 @@ public:
     BOOST_CHECK_EQUAL(expected_cluster_time, checkpoint_header_traits::last_log_entry_cluster_time(&ckpt->header()));
     BOOST_CHECK(nullptr == this->protocol->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
-    ckpt->write(&data[0], 5U);
-    this->protocol->complete_checkpoint(ckpt, this->now);
+    bool wrote=false;
+    BOOST_CHECK_EQUAL(0U, this->store.completion_queue().size());
+    ckpt->write(this->now, &data[0], 5U, [&wrote](std::chrono::time_point<std::chrono::steady_clock> clock_now) { wrote = true; });
+    if (this->store.asynchronous()) {
+      BOOST_CHECK(!wrote);
+      BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_CHECK(wrote);
+      this->store.completion_queue().pop_front();
+    } else {
+      BOOST_CHECK(wrote);
+    }
+    this->complete_checkpoint(ckpt);
     BOOST_CHECK_EQUAL(2U, this->protocol->last_checkpoint_index_end());
     BOOST_CHECK_EQUAL(1U, this->protocol->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, this->protocol->last_checkpoint_cluster_time());
@@ -2387,7 +2831,16 @@ public:
     // Fire timer.  Peer 1 still doesn't have first log entry but since that entry is
     // discarded, a checkpoint will need to be sent to 1.
     this->protocol->on_timer(this->now);
-    BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    if (this->store.asynchronous()) {
+      // Must read the checkpoint from the store in order to send it
+      BOOST_REQUIRE_EQUAL(0U, this->comm.q.size());
+      BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+      this->store.completion_queue().pop_front();
+    } else {
+      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    }
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
     BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_request_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
@@ -2418,8 +2871,9 @@ public:
   }
 
   // Test that a checkpoint transfer is properly cancelled by a term update
-  void AppendEntriesCheckpointAbandon()
+  void AppendEntriesCheckpointAbandon(bool async)
   {
+    this->store.asynchronous(async);
     uint64_t term = 1;
     this->make_leader(term);
     BOOST_CHECK_EQUAL(this->initial_cluster_time, this->protocol->cluster_time());
@@ -2448,8 +2902,19 @@ public:
     BOOST_CHECK_EQUAL(expected_cluster_time, checkpoint_header_traits::last_log_entry_cluster_time(&ckpt->header()));
     BOOST_CHECK(nullptr == this->protocol->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
-    ckpt->write(&data[0], 5U);
-    this->protocol->complete_checkpoint(ckpt, this->now);
+    bool wrote=false;
+    BOOST_CHECK_EQUAL(0U, this->store.completion_queue().size());
+    ckpt->write(this->now, &data[0], 5U, [&wrote](std::chrono::time_point<std::chrono::steady_clock> clock_now) { wrote = true; });
+    if (this->store.asynchronous()) {
+      BOOST_CHECK(!wrote);
+      BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_CHECK(wrote);
+      this->store.completion_queue().pop_front();
+    } else {
+      BOOST_CHECK(wrote);
+    }
+    this->complete_checkpoint(ckpt);
     BOOST_CHECK_EQUAL(1U, this->protocol->last_checkpoint_index_end());
     BOOST_CHECK_EQUAL(1U, this->protocol->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, this->protocol->last_checkpoint_cluster_time());
@@ -2458,7 +2923,16 @@ public:
     // Fire timer.  Peer 1 still doesn't have first log entry but since that entry is
     // discarded, a checkpoint will need to be sent to 1.
     this->protocol->on_timer(this->now);
-    BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    if (this->store.asynchronous()) {
+      // Must read the checkpoint from the store in order to send it
+      BOOST_REQUIRE_EQUAL(0U, this->comm.q.size());
+      BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+      this->store.completion_queue().pop_front();
+    } else {
+      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    }
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
     BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_request_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
@@ -2486,8 +2960,9 @@ public:
 
   // Test that we can continue to send log entries to other peers while
   // sending a checkpoint to one
-  void AppendEntriesCheckpointAppendWhileSendingCheckpoint()
+  void AppendEntriesCheckpointAppendWhileSendingCheckpoint(bool async)
   {
+    this->store.asynchronous(async);
     uint64_t term = 1;
     this->make_leader(term);
 
@@ -2517,18 +2992,39 @@ public:
     BOOST_CHECK(nullptr == this->protocol->last_checkpoint().get());
     BOOST_CHECK_EQUAL(client_index, this->l.index_end());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
-    ckpt->write(&data[0], 5U);
-    this->protocol->complete_checkpoint(ckpt, this->now);
+    bool wrote=false;
+    BOOST_CHECK_EQUAL(0U, this->store.completion_queue().size());
+    ckpt->write(this->now, &data[0], 5U, [&wrote](std::chrono::time_point<std::chrono::steady_clock> clock_now) { wrote = true; });
+    if (this->store.asynchronous()) {
+      BOOST_CHECK(!wrote);
+      BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_CHECK(wrote);
+      this->store.completion_queue().pop_front();
+    } else {
+      BOOST_CHECK(wrote);
+    }
+    this->complete_checkpoint(ckpt);
     BOOST_CHECK_EQUAL(1U, this->protocol->last_checkpoint_index_end());
     BOOST_CHECK_EQUAL(1U, this->protocol->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, this->protocol->last_checkpoint_cluster_time());
     BOOST_CHECK(ckpt == this->protocol->last_checkpoint());
     BOOST_CHECK_EQUAL(client_index, this->l.index_end());
+    BOOST_REQUIRE_EQUAL(0U, this->store.completion_queue().size());
 
     // Fire timer.  Peer 1 still doesn't have first log entry but since that entry is
     // discarded, a checkpoint will need to be sent to 1.
     this->protocol->on_timer(this->now);
-    BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    if (this->store.asynchronous()) {
+      // Must read the checkpoint from the store in order to send it
+      BOOST_REQUIRE_EQUAL(0U, this->comm.q.size());
+      BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+      this->store.completion_queue().pop_front();
+    } else {
+      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+    }
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
     BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
     BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_request_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
@@ -2556,8 +3052,9 @@ public:
   
   // Test that append_entries will send a checkpoint that needs log entries the leader has discarded
   // post checkpoint
-  void AppendEntriesCheckpointResend()
-  {    
+  void AppendEntriesCheckpointResend(bool async)
+  {
+    this->store.asynchronous(async);
     uint64_t term = 1;
     this->make_leader(term);
 
@@ -2585,8 +3082,19 @@ public:
     BOOST_CHECK_EQUAL(expected_cluster_time, checkpoint_header_traits::last_log_entry_cluster_time(&ckpt->header()));
     BOOST_CHECK(nullptr == this->protocol->last_checkpoint().get());
     uint8_t data [] = { 0U, 1U, 2U, 3U, 4U };
-    ckpt->write(&data[0], 5U);
-    this->protocol->complete_checkpoint(ckpt, this->now);
+    bool wrote=false;
+    BOOST_CHECK_EQUAL(0U, this->store.completion_queue().size());
+    ckpt->write(this->now, &data[0], 5U, [&wrote](std::chrono::time_point<std::chrono::steady_clock> clock_now) { wrote = true; });
+    if (this->store.asynchronous()) {
+      BOOST_CHECK(!wrote);
+      BOOST_CHECK_EQUAL(1U, this->store.completion_queue().size());
+      this->store.completion_queue().front()();
+      BOOST_CHECK(wrote);
+      this->store.completion_queue().pop_front();
+    } else {
+      BOOST_CHECK(wrote);
+    }
+    this->complete_checkpoint(ckpt);
     BOOST_CHECK_EQUAL(1U, this->protocol->last_checkpoint_index_end());
     BOOST_CHECK_EQUAL(1U, this->protocol->last_checkpoint_term());
     BOOST_CHECK_EQUAL(expected_cluster_time, this->protocol->last_checkpoint_cluster_time());
@@ -2598,20 +3106,35 @@ public:
     // Note that we'll get heartbeats for the other peers as well
     for(std::size_t j=0; j<3; ++j) {
       this->protocol->on_timer(this->now);
-      BOOST_REQUIRE(1 <= this->comm.q.size());
       if (j == 0 || j == 2) {
-        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_request_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_request_traits::checkpoint_begin(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(2U, append_checkpoint_chunk_request_traits::checkpoint_end(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK(!append_checkpoint_chunk_request_traits::checkpoint_done(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::checkpoint_index_end(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::last_checkpoint_term(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(expected_cluster_time, append_checkpoint_chunk_request_traits::last_checkpoint_cluster_time(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(0U, checkpoint_header_traits::index(&append_checkpoint_chunk_request_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back()))));
+        if (this->store.asynchronous()) {
+          // Must read the checkpoint from the store in order to send it
+          BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+          this->store.completion_queue().front()();
+          BOOST_REQUIRE(1U <= this->comm.q.size());
+          this->store.completion_queue().pop_front();
+          BOOST_REQUIRE_EQUAL(0U, this->store.completion_queue().size());
+        }
+      }
+      BOOST_REQUIRE(1U <= this->comm.q.size());
+      if (j == 0 || j == 2) {
+        // With asynchronous reads, the checkpoint request doesn't go out until after the read from the store
+        // completes (hence not until after any heartbeats).   That means it's at the front of the queue.
+        // In the synchronous read case the checkpoint request goes out before the heartbeats so is at the back (see below for other
+        // consequences of that behavior).
+        auto & msg(this->store.asynchronous() ? this->comm.q.front() : this->comm.q.back());
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_request_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_request_traits::checkpoint_begin(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(2U, append_checkpoint_chunk_request_traits::checkpoint_end(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK(!append_checkpoint_chunk_request_traits::checkpoint_done(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::checkpoint_index_end(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::last_checkpoint_term(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(expected_cluster_time, append_checkpoint_chunk_request_traits::last_checkpoint_cluster_time(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(0U, checkpoint_header_traits::index(&append_checkpoint_chunk_request_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(msg))));
         {
-          const auto & cfg(checkpoint_header_traits::configuration(&append_checkpoint_chunk_request_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back()))));
+          const auto & cfg(checkpoint_header_traits::configuration(&append_checkpoint_chunk_request_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(msg))));
           BOOST_CHECK_EQUAL(0U, simple_configuration_description_traits::size(&configuration_description_traits::to(&cfg)));
           BOOST_REQUIRE_EQUAL(5U, simple_configuration_description_traits::size(&configuration_description_traits::from(&cfg)));
           for(std::size_t i=0; i<5; ++i) {
@@ -2619,10 +3142,22 @@ public:
             BOOST_CHECK_EQUAL(0, server_description_traits::address(&simple_configuration_description_traits::get(&configuration_description_traits::from(&cfg), i)).compare((boost::format("192.168.1.%1%") % (i+1)).str()));
           }
         }
+        if (this->store.asynchronous()) {
+          this->comm.q.pop_front();
+          if (j==2) {
+            // This is ridiculously subtle.   When reads are async, the append_checkpoint_chunk_request to peer 1
+            // won't yet be sent in on_timer, so a heartbeat is also sent to peer 1.   In the synchrnous read case
+            // on_timer knows that the append checkpoint has gone out so the heartbeat doesn't.
+            check_heartbeat(1);
+            this->comm.q.pop_back();
+          }
+        } else {
+          this->comm.q.pop_back();
+        }
       } else {
         check_heartbeat(1);
+        this->comm.q.pop_back();
       }
-      this->comm.q.pop_back();
       if (j == 0) {
         BOOST_REQUIRE_EQUAL(0U, this->comm.q.size());
       } else {
@@ -2638,8 +3173,18 @@ public:
     // Ack with bytes_stored=2 twice to validate the checkpoint protocol will resend data if requested
     for(int i=0; i<2; ++i) {
       auto resp = append_checkpoint_chunk_response_builder().recipient_id(1).term_number(1U).request_term_number(1U).bytes_stored(2U).finish();
-      this->protocol->on_append_checkpoint_chunk_response(std::move(resp), this->now);  
-      BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+      this->protocol->on_append_checkpoint_chunk_response(std::move(resp), this->now);
+      if (this->store.asynchronous()) {
+        BOOST_CHECK_EQUAL(0U, this->comm.q.size());
+        BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+        this->store.completion_queue().front()();
+        BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+        this->store.completion_queue().pop_front();
+        BOOST_REQUIRE_EQUAL(0U, this->store.completion_queue().size());
+        BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+      } else {
+        BOOST_REQUIRE_EQUAL(1U, this->comm.q.size());
+      }
       BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
       BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
       BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_request_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
@@ -2660,22 +3205,45 @@ public:
       if (j>0) {
         this->protocol->on_timer(this->now);
       }
+      if (j == 0 || j == 2) {
+        if (this->store.asynchronous()) {
+          // Must read the checkpoint from the store in order to send it
+          BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+          this->store.completion_queue().front()();
+          BOOST_REQUIRE(1U <= this->comm.q.size());
+          this->store.completion_queue().pop_front();
+          BOOST_REQUIRE_EQUAL(0U, this->store.completion_queue().size());
+        }
+      }
       BOOST_REQUIRE(1 <= this->comm.q.size());
       if (j == 0 || j == 2) {
-        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_request_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(4U, append_checkpoint_chunk_request_traits::checkpoint_begin(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(5U, append_checkpoint_chunk_request_traits::checkpoint_end(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK(append_checkpoint_chunk_request_traits::checkpoint_done(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::checkpoint_index_end(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::last_checkpoint_term(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(expected_cluster_time, append_checkpoint_chunk_request_traits::last_checkpoint_cluster_time(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back())));
-        BOOST_CHECK_EQUAL(0U, checkpoint_header_traits::index(&append_checkpoint_chunk_request_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(this->comm.q.back()))));
+        auto & msg(this->store.asynchronous() ? this->comm.q.front() : this->comm.q.back());
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::recipient_id(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::term_number(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(0U, append_checkpoint_chunk_request_traits::leader_id(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(4U, append_checkpoint_chunk_request_traits::checkpoint_begin(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(5U, append_checkpoint_chunk_request_traits::checkpoint_end(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK(append_checkpoint_chunk_request_traits::checkpoint_done(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::checkpoint_index_end(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(1U, append_checkpoint_chunk_request_traits::last_checkpoint_term(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(expected_cluster_time, append_checkpoint_chunk_request_traits::last_checkpoint_cluster_time(boost::get<append_checkpoint_chunk_arg_type>(msg)));
+        BOOST_CHECK_EQUAL(0U, checkpoint_header_traits::index(&append_checkpoint_chunk_request_traits::last_checkpoint_header(boost::get<append_checkpoint_chunk_arg_type>(msg))));
+        if (this->store.asynchronous()) {
+          this->comm.q.pop_front();
+          if (j==2) {
+            // This is ridiculously subtle.   When reads are async, the append_checkpoint_chunk_request to peer 1
+            // won't yet be sent in on_timer, so a heartbeat is also sent to peer 1.   In the synchrnous read case
+            // on_timer knows that the append checkpoint has gone out so the heartbeat doesn't.
+            check_heartbeat(1);
+            this->comm.q.pop_back();
+          }
+        } else {
+          this->comm.q.pop_back();
+        }
       } else {
         check_heartbeat(1);
+        this->comm.q.pop_back();
       }
-      this->comm.q.pop_back();
       if (j == 0) {
         BOOST_REQUIRE_EQUAL(0U, this->comm.q.size());
       } else {
@@ -3133,43 +3701,97 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedFollowerToFollower, _TestType, test_types
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendCheckpointChunk, _TestType, test_types)
 {
   RaftTestBase<_TestType> t;
-  t.AppendCheckpointChunk();
+  t.AppendCheckpointChunk(false);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendCheckpointChunkAsynchronous, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.AppendCheckpointChunk(true);
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendCheckpointChunkEmptyLog, _TestType, test_types)
 {
   RaftTestBase<_TestType> t(raft::test::TestFixtureInitialization::EMPTY);
-  t.AppendCheckpointChunk();
+  t.AppendCheckpointChunk(true);
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendCheckpointChunkSlowHeaderSync, _TestType, test_types)
 {
   RaftTestBase<_TestType> t;
-  t.AppendCheckpointChunkSlowHeaderSync();
+  t.AppendCheckpointChunkSlowHeaderSync(false);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendCheckpointChunkSlowHeaderSyncAsynchronous, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.AppendCheckpointChunkSlowHeaderSync(true);
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendCheckpointChunkSlowHeaderSyncEmptyLog, _TestType, test_types)
 {
   RaftTestBase<_TestType> t(raft::test::TestFixtureInitialization::EMPTY);
-  t.AppendCheckpointChunkSlowHeaderSync();
+  t.AppendCheckpointChunkSlowHeaderSync(true);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendCheckpointChunkTermAdvanceWaitingForSync, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.AppendCheckpointChunkTermAdvanceWaitingForSync();
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendCheckpointChunkTermAdvanceWaitingForWrite, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.AppendCheckpointChunkTermAdvanceWaitingForWrite();
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedClientCheckpointTest, _TestType, test_types)
 {
   RaftTestBase<_TestType> t;
-  t.ClientCheckpointTest();
+  t.ClientCheckpointTest(false);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedClientCheckpointTestAsynchronous, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.ClientCheckpointTest(true);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedClientCheckpointLogInitializationTest, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t(raft::test::TestFixtureInitialization::LOG);
+  t.ClientCheckpointTest(false);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedClientCheckpointLogInitializationTestAsynchronous, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t(raft::test::TestFixtureInitialization::LOG);
+  t.ClientCheckpointTest(true);
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedPartialClientCheckpointTest, _TestType, test_types)
 {
   RaftTestBase<_TestType> t;
-  t.ClientPartialCheckpointTest();
+  t.ClientPartialCheckpointTest(false);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedPartialClientCheckpointTestAsynchronous, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.ClientPartialCheckpointTest(true);
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedClientCheckpointOldTermTest, _TestType, test_types)
 {
   RaftTestBase<_TestType> t;
-  t.ClientCheckpointOldTermTest();
+  t.ClientCheckpointOldTermTest(false);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedClientCheckpointOldTermTestAsynchronous, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.ClientCheckpointOldTermTest(true);
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedClientCheckpointNegativeTest, _TestType, test_types)
@@ -3181,31 +3803,61 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedClientCheckpointNegativeTest, _TestType, 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesCheckpoint, _TestType, test_types)
 {
   RaftTestBase<_TestType> t;
-  t.AppendEntriesCheckpoint();
+  t.AppendEntriesCheckpoint(false);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesCheckpointAsynchronous, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.AppendEntriesCheckpoint(true);
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesCheckpointAllInOneChunk, _TestType, test_types)
 {
   RaftTestBase<_TestType> t;
-  t.AppendEntriesCheckpointAllInOneChunk();
+  t.AppendEntriesCheckpointAllInOneChunk(false);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesCheckpointAllInOneChunkAsynchronous, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.AppendEntriesCheckpointAllInOneChunk(true);
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesCheckpointAbandon, _TestType, test_types)
 {
   RaftTestBase<_TestType> t;
-  t.AppendEntriesCheckpointAbandon();
+  t.AppendEntriesCheckpointAbandon(false);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesCheckpointAbandonAsynchronous, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.AppendEntriesCheckpointAbandon(true);
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesCheckpointAppendWhileSendingCheckpoint, _TestType, test_types)
 {
   RaftTestBase<_TestType> t;
-  t.AppendEntriesCheckpointAppendWhileSendingCheckpoint();
+  t.AppendEntriesCheckpointAppendWhileSendingCheckpoint(false);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesCheckpointAppendWhileSendingCheckpointAsynchronous, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.AppendEntriesCheckpointAppendWhileSendingCheckpoint(true);
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesCheckpointResend, _TestType, test_types)
 {
   RaftTestBase<_TestType> t;
-  t.AppendEntriesCheckpointResend();
+  t.AppendEntriesCheckpointResend(false);
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedAppendEntriesCheckpointResendAsynchronous, _TestType, test_types)
+{
+  RaftTestBase<_TestType> t;
+  t.AppendEntriesCheckpointResend(true);
 }
 
 BOOST_AUTO_TEST_CASE_TEMPLATE(TemplatedJointConsensusAddServer, _TestType, test_types)

@@ -28,7 +28,7 @@ set(Boost_USE_MULTITHREADED ON)
 #
 # Boost
 #
-find_package( Boost 1.55 COMPONENTS log program_options system thread timer unit_test_framework REQUIRED )
+find_package( Boost 1.55 COMPONENTS filesystem log program_options system thread timer unit_test_framework REQUIRED )
 include_directories ( ${Boost_INCLUDE_DIR} )
 
 #
@@ -69,4 +69,5 @@ add_test(raft-unit-test ${CMAKE_CURRENT_BINARY_DIR}/test/raft-unit-test)
 add_test(raft-protocol-operation-test ${CMAKE_CURRENT_BINARY_DIR}/test/raft-protocol-operation-test)
 add_test(raft-asio-unit-test ${CMAKE_CURRENT_BINARY_DIR}/test/raft-asio-unit-test)
 add_test(raft-linearizability-unit-test ${CMAKE_CURRENT_BINARY_DIR}/test/raft-linearizability-unit-test)
+add_test(raft-circular-buffer-unit-test ${CMAKE_CURRENT_BINARY_DIR}/test/raft-circular-buffer-unit-test)
 

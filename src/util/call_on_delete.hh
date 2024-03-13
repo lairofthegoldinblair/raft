@@ -16,7 +16,7 @@ namespace raft {
       {
       public:
 	virtual ~impl() {}
-	virtual void operator()() const = 0;
+	virtual void operator()() = 0;
       };
 
       template <typename _Function>
@@ -30,7 +30,7 @@ namespace raft {
 	  fun_(std::move(f))
 	{
 	}
-	void operator()() const
+	void operator()() override
 	{
 	  fun_();
 	}
@@ -64,7 +64,7 @@ namespace raft {
 
       move_only_nullary_function & operator=(const move_only_nullary_function & ) = delete;
 
-      void operator()() const
+      void operator()()
       {
 	pimpl_->operator()();
       }

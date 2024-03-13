@@ -655,7 +655,11 @@ namespace raft {
 	configuration_.reset();
       } else {
 	auto it = logged_descriptions_.rbegin();
-	if (configuration_.configuration_id() != it->first) {
+        // Check to see if the pointer needs updating even if the log index is the same
+        // as what is already recorded.   We could be storing a configuration was in a
+        // just truncated log entry and we could updating it to point to configuration header
+        // at the same index!
+	if (configuration_.description() != it->second) {
 	  configuration_.set_configuration(it->first, *it->second, clock_now);
 	}
       }

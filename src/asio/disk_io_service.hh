@@ -10,6 +10,8 @@
 #include <boost/asio/detail/handler_invoke_helpers.hpp>
 #include <boost/asio/detail/operation.hpp>
 
+#include "asio/file_base.hh"
+
 // This is an implementation of a thread (pool) based async disk service.   It is modelled on the
 // thread based resolver service in ASIO.
 // TODO: Should we add a strand here to prevent out of order IO ops on a file?
@@ -25,6 +27,11 @@ struct file_ops
     ::close(f);
   }
   
+  static uint64_t seek(file_type f, uint64_t offset, file_base::seek_type whence)
+  {
+    return ::lseek(f, offset, whence);
+  }
+  
   static std::size_t read(file_type f, iovec * buf, std::size_t count,
 			  boost::system::error_code & ec)
   {
@@ -34,6 +41,29 @@ struct file_ops
     }
 
     ssize_t bytes = ::readv(f, buf, count);
+    if (bytes > 0) {
+      ec = boost::system::error_code();
+      return bytes;
+    }
+
+    if (0 == bytes) {
+      ec = boost::asio::error::eof;
+      return 0;
+    }
+
+    ec = boost::system::error_code(errno, boost::system::generic_category());
+    return 0;
+  }
+
+  static std::size_t read_at(file_type f, iovec * buf, std::size_t count, uint64_t offset,
+                             boost::system::error_code & ec)
+  {
+    if (f == invalid_file) {
+      ec = boost::asio::error::bad_descriptor;
+      return 0;
+    }
+
+    ssize_t bytes = ::preadv(f, buf, count, offset);
     if (bytes > 0) {
       ec = boost::system::error_code();
       return bytes;
@@ -95,15 +125,15 @@ private:
   std::size_t bytes_transferred_;
 public:
   disk_read_operation(file_ops::file_type f,
-		      const MutableBufferSequence & buffers,
-		      boost::asio::detail::io_context_impl & io_context_impl,
-		      Handler handler)
+                         const MutableBufferSequence & buffers,
+                         boost::asio::detail::io_context_impl & io_context_impl,
+                         Handler & handler)
     :
     boost::asio::detail::operation(&disk_read_operation::do_complete),
     file_(f),
     buffers_(buffers),
     io_context_impl_(io_context_impl),
-    handler_(handler)
+    handler_(BOOST_ASIO_MOVE_CAST(Handler)(handler))
   {
   }
 
@@ -147,6 +177,73 @@ public:
   BOOST_ASIO_DEFINE_HANDLER_PTR(disk_read_operation);
 };
 
+template<typename MutableBufferSequence, typename Handler>
+class disk_read_at_operation : public boost::asio::detail::operation
+{
+private:
+  file_ops::file_type file_;
+  boost::asio::detail::io_context_impl & io_context_impl_;
+  MutableBufferSequence buffers_;
+  uint64_t offset_;
+  Handler handler_;
+  boost::system::error_code ec_;
+  std::size_t bytes_transferred_;
+public:
+  disk_read_at_operation(file_ops::file_type f,
+                         const MutableBufferSequence & buffers,
+                         uint64_t offset,
+                         boost::asio::detail::io_context_impl & io_context_impl,
+                         Handler & handler)
+    :
+    boost::asio::detail::operation(&disk_read_at_operation::do_complete),
+    file_(f),
+    buffers_(buffers),
+    offset_(offset),
+    io_context_impl_(io_context_impl),
+    handler_(BOOST_ASIO_MOVE_CAST(Handler)(handler))
+  {
+  }
+
+  static void do_complete(void * owner,
+  			  boost::asio::detail::operation * base,
+  			  const boost::system::error_code& /*ec*/,
+  			  std::size_t /*bytes_transferred*/)
+  {
+    disk_read_at_operation * op (static_cast<disk_read_at_operation *>(base));
+    if (owner && owner != &op->io_context_impl_) {
+      // In the worker io_context, so do the work and then signal main io_context
+      // that we are done
+      boost::asio::detail::buffer_sequence_adapter<boost::asio::mutable_buffer,
+						   MutableBufferSequence> bufs(op->buffers_);
+      op->bytes_transferred_ = file_ops::read_at(op->file_, bufs.buffers(), bufs.count(), op->offset_, op->ec_);
+      // The point of post_deferred_completion instead of post_immediate_completion
+      // is that this operation already is accounted for as a work item on the main service
+      // via an direct call to work_started() in start_operation so we don't want to double count it.
+      op->io_context_impl_.post_deferred_completion(op);
+    } else {
+      // Make a copy of the handler so that the memory can be deallocated before                                                                                        
+      // the upcall is made. Even if we're not about to make an upcall, a                                                                                               
+      // sub-object of the handler may be the true owner of the memory associated                                                                                       
+      // with the handler. Consequently, a local copy of the handler is required                                                                                        
+      // to ensure that any owning sub-object remains valid until after we have                                                                                         
+      // deallocated the memory here.
+      boost::asio::detail::binder2<Handler, boost::system::error_code, std::size_t>
+	handler(op->handler_, op->ec_, op->bytes_transferred_);
+      ptr p = { boost::asio::detail::addressof(handler.handler_), op, op };
+      p.reset();
+      
+      // Make the upcall if required.                                                                                                                                   
+      if (owner) {
+	boost::asio::detail::fenced_block b(boost::asio::detail::fenced_block::half);
+	// TODO: Shoud this be boost_asio_handler_invoke_helpers::invoke(handler, handler);
+	boost_asio_handler_invoke_helpers::invoke(handler, handler.handler_);
+      }
+    }
+  }
+
+  BOOST_ASIO_DEFINE_HANDLER_PTR(disk_read_at_operation);
+};
+
 template<typename ConstBufferSequence, typename Handler>
 class disk_write_operation : public boost::asio::detail::operation
 {
@@ -161,13 +258,13 @@ public:
   disk_write_operation(file_ops::file_type f,
 		      const ConstBufferSequence & buffers,
 		      boost::asio::detail::io_context_impl & io_context_impl,
-		      Handler handler)
+		      Handler & handler)
     :
     boost::asio::detail::operation(&disk_write_operation::do_complete),
     file_(f),
     buffers_(buffers),
     io_context_impl_(io_context_impl),
-    handler_(handler)
+    handler_(BOOST_ASIO_MOVE_CAST(Handler)(handler))
   {
   }
 
@@ -219,12 +316,12 @@ private:
 public:
   disk_sync_operation(file_ops::file_type f,
 		      boost::asio::detail::io_context_impl & io_context_impl,
-		      Handler handler)
+		      Handler & handler)
     :
     boost::asio::detail::operation(&disk_sync_operation::do_complete),
     file_(f),
     io_context_impl_(io_context_impl),
-    handler_(handler)
+    handler_(BOOST_ASIO_MOVE_CAST(Handler)(handler))
   {
   }
 
@@ -366,6 +463,11 @@ namespace detail {
       return impl.file_ != file_ops::invalid_file;
     }
 
+    uint64_t seek(implementation_type & impl, uint64_t offset, file_base::seek_type whence) const
+    {
+      return file_ops::seek(impl.file_, offset, whence);
+    }
+
     boost::system::error_code assign(implementation_type & impl, native_handle_type fd,
 				     boost::system::error_code & ec) const
     {
@@ -391,6 +493,26 @@ namespace detail {
 				  nullptr };
 
       p.p = new (p.v) op_type(impl.file_, buffers, main_service_impl_, handler);
+      
+      start_operation(p.p);
+
+      // Clear pointers so that d'tor doesn't free them
+      p.v = p.p = nullptr;
+    }
+  
+    template<typename MutableBufferSequence, typename ReadHandler>
+    void async_read_at(implementation_type & impl,
+                       const MutableBufferSequence & buffers,
+                       uint64_t offset, 
+                       ReadHandler & handler)
+    {
+      // Allocate an operation and start it.
+      typedef disk_read_at_operation<MutableBufferSequence, ReadHandler> op_type;
+      typename op_type::ptr p = { boost::asio::detail::addressof(handler),
+				  op_type::ptr::allocate(handler),
+				  nullptr };
+
+      p.p = new (p.v) op_type(impl.file_, buffers, offset, main_service_impl_, handler);
       
       start_operation(p.p);
 
@@ -446,7 +568,12 @@ private:
   service_impl_type service_impl_;
 public:
   typedef typename service_impl_type::implementation_type implementation_type;
-  typedef typename service_impl_type::native_handle_type native_handle_type;  
+  typedef typename service_impl_type::native_handle_type native_handle_type;
+
+  service_impl_type & impl()
+  {
+    return service_impl_;
+  }
   
   explicit disk_io_service(boost::asio::io_context & ios)
     :
@@ -485,57 +612,14 @@ public:
     return service_impl_.is_open(impl);
   }
 
+  uint64_t seek(implementation_type & impl, uint64_t offset, file_base::seek_type whence) const
+  {
+    return service_impl_.seek(impl, offset, whence);
+  }
+
   boost::system::error_code assign(implementation_type & impl, native_handle_type fd, boost::system::error_code & ec) const
   {
     return service_impl_.assign(impl, fd, ec);
-  }
-
-  template<typename MutableBufferSequence, typename ReadHandler>
-  BOOST_ASIO_INITFN_RESULT_TYPE(ReadHandler, void (boost::system::error_code, std::size_t))
-    async_read(implementation_type & impl,
-	       const MutableBufferSequence & buffers,
-	       BOOST_ASIO_MOVE_ARG(ReadHandler) handler)
-  {
-    // boost::asio::detail::async_result_init<ReadHandler, void (boost::system::error_code, std::size_t)> init(BOOST_ASIO_MOVE_CAST(ReadHandler)(handler));
-    // service_impl_.async_read(impl, buffers, init.handler);
-    // return init.result.get();													  
-    BOOST_ASIO_READ_HANDLER_CHECK(ReadHandler, handler) type_check;
-    
-    boost::asio::async_completion<ReadHandler,
-				  void (boost::system::error_code, std::size_t)> init(handler);
-    service_impl_.async_read(impl, buffers, init.completion_handler);
-    return init.result.get();
-  }
-
-  template<typename ConstBufferSequence, typename WriteHandler>
-  BOOST_ASIO_INITFN_RESULT_TYPE(WriteHandler, void (boost::system::error_code, std::size_t))
-    async_write(implementation_type & impl,
-		const ConstBufferSequence & buffers,
-		BOOST_ASIO_MOVE_ARG(WriteHandler) handler)
-  {
-    // boost::asio::detail::async_result_init<WriteHandler, void (boost::system::error_code, std::size_t)> init(BOOST_ASIO_MOVE_CAST(WriteHandler)(handler));
-    // service_impl_.async_write(impl, buffers, init.handler);
-    // return init.result.get();													  
-    BOOST_ASIO_WRITE_HANDLER_CHECK(WriteHandler, handler) type_check;
-    
-    boost::asio::async_completion<WriteHandler,
-				  void (boost::system::error_code, std::size_t)> init(handler);
-    service_impl_.async_write(impl, buffers, init.completion_handler);
-    return init.result.get();
-  }
-
-  template<typename FileOpHandler>
-  BOOST_ASIO_INITFN_RESULT_TYPE(FileOpHandler, void (boost::system::error_code))
-    async_sync(implementation_type & impl,
-	       BOOST_ASIO_MOVE_ARG(FileOpHandler) handler)
-  {
-    // boost::asio::detail::async_result_init<FileOpHandler, void (boost::system::error_code)> init(BOOST_ASIO_MOVE_CAST(FileOpHandler)(handler));
-    // service_impl_.async_sync(impl, init.handler);
-    // return init.result.get();													  
-    boost::asio::async_completion<FileOpHandler,
-				  void (boost::system::error_code, std::size_t)> init(handler);
-    service_impl_.async_sync(impl, init.completion_handler);
-    return init.result.get();
   }
 };
 

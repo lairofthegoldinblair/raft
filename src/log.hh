@@ -4,6 +4,7 @@
 #include <deque>
 
 #include "slice.hh"
+#include "util/call_on_delete.hh"
 
 namespace raft {
 

@@ -143,6 +143,23 @@ namespace raft {
       {
 	return deserialize_log_entry_command(std::move(b));
       }
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize_checkpoint_header(const raft::fbs::checkpoint_header & header)
+      {
+        auto tmp = checkpoint_header_traits::build(header.log_entry_index_end(),
+                                                   header.last_log_entry_term(),
+                                                   header.last_log_entry_cluster_time(),
+                                                   header.configuration()->index(),
+                                                   header.configuration()->configuration()->Data());
+	auto buf = ::flatbuffers::GetBufferStartFromRootPointer(tmp.first);
+	buf -= sizeof(::flatbuffers::uoffset_t);
+	return std::make_pair(raft::slice(buf, ::flatbuffers::GetPrefixedSize(buf)+sizeof(::flatbuffers::uoffset_t)), std::move(tmp.second));
+      }
+      static std::pair<const raft::fbs::checkpoint_header * , raft::util::call_on_delete> deserialize_checkpoint_header(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+	auto obj = ::flatbuffers::GetSizePrefixedRoot<raft::fbs::checkpoint_header>(b.first.data());
+	BOOST_ASSERT(b.first.size() >= ::flatbuffers::GetPrefixedSize(reinterpret_cast<const uint8_t *>(obj))+sizeof(::flatbuffers::uoffset_t));
+	return std::pair<const raft::fbs::checkpoint_header * , raft::util::call_on_delete>(obj, [s = std::move(b)]() {});
+      }
     };
   }
 }

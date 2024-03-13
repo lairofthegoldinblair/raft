@@ -151,6 +151,10 @@ namespace raft {
     class little_checkpoint_header
     {
     public:
+      boost::endian::little_uint64_t log_entry_index_end;
+      boost::endian::little_uint64_t last_log_entry_term;
+      boost::endian::little_uint64_t last_log_entry_cluster_time;
+      boost::endian::little_uint64_t configuration_index;
     };
 
     class little_log_entry
@@ -902,6 +906,35 @@ namespace raft {
         sz += serialize_helper(b+sz, msg);
 	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
 	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
+      }
+
+      static std::pair<raft::slice, raft::util::call_on_delete> serialize_checkpoint_header(const raft::native::checkpoint_header & header)
+      {
+        auto to_alloc = sizeof(little_checkpoint_header) + serialize_helper(header.configuration.description);
+	raft::mutable_slice b(new uint8_t [to_alloc], to_alloc);
+	auto * buf = reinterpret_cast<little_checkpoint_header*>(b.data());
+	buf->log_entry_index_end = header.log_entry_index_end;
+	buf->last_log_entry_term = header.last_log_entry_term;
+	buf->last_log_entry_cluster_time = header.last_log_entry_cluster_time;
+	buf->configuration_index = header.configuration.index;
+	std::size_t sz = sizeof(little_checkpoint_header);
+	sz += serialize_helper(b+sz, header.configuration.description);
+	auto ptr = reinterpret_cast<const uint8_t *>(b.data());
+	return std::pair<raft::slice, raft::util::call_on_delete>(raft::slice(ptr, sz), [ptr]() { delete [] ptr; });
+      }
+
+      static raft::native::checkpoint_header deserialize_checkpoint_header(std::pair<raft::slice, raft::util::call_on_delete> && b)
+      {
+        raft::native::checkpoint_header header;
+	BOOST_ASSERT(b.first.size() >= sizeof(little_checkpoint_header));
+	auto buf = reinterpret_cast<const little_checkpoint_header *>(b.first.data());
+	header.log_entry_index_end = buf->log_entry_index_end;
+	header.last_log_entry_term = buf->last_log_entry_term;
+	header.last_log_entry_cluster_time = buf->last_log_entry_cluster_time;
+	header.configuration.index = buf->configuration_index;
+	std::size_t sz = sizeof(little_checkpoint_header);
+	sz += deserialize_helper(b.first+sz, header.configuration.description);
+        return header;
       }
     };
     

@@ -187,6 +187,10 @@ namespace raft {
 
     struct checkpoint_header_traits
     {
+      // This is a little annoying, sometimes checkpoint headers are nested
+      // object (e.g. append_checkpoint_chunk_request message) and sometimes
+      // are root objects (e.g. when reading a checkpoint file or creating a new
+      // checkpoint).   We have to be able to access them both ways.
       typedef const raft::fbs::checkpoint_header * const_arg_type;
       static uint64_t log_entry_index_end(const_arg_type msg)
       {
@@ -208,11 +212,31 @@ namespace raft {
       {
 	return *msg->configuration()->configuration()->Data();
       }
+      static uint64_t log_entry_index_end(const std::pair<const_arg_type, raft::util::call_on_delete> * msg)
+      {
+	return msg->first->log_entry_index_end();
+      }
+      static uint64_t last_log_entry_term(const std::pair<const_arg_type, raft::util::call_on_delete> * msg)
+      {
+	return msg->first->last_log_entry_term();
+      }
+      static uint64_t last_log_entry_cluster_time(const std::pair<const_arg_type, raft::util::call_on_delete> * msg)
+      {
+	return msg->first->last_log_entry_cluster_time();
+      }
+      static uint64_t index(const std::pair<const_arg_type, raft::util::call_on_delete> * msg)
+      {
+	return msg->first->configuration()->index();
+      }
+      static const uint8_t & configuration(const std::pair<const_arg_type, raft::util::call_on_delete> * msg)
+      {
+	return *msg->first->configuration()->configuration()->Data();
+      }
       static std::pair<const_arg_type, raft::util::call_on_delete> build(uint64_t log_entry_index_end,
-									 uint64_t last_log_entry_term,
-									 uint64_t last_log_entry_cluster_time,
-									 uint64_t configuration_index,
-									 const uint8_t * configuration_description);
+        								 uint64_t last_log_entry_term,
+        								 uint64_t last_log_entry_cluster_time,
+        								 uint64_t configuration_index,
+        								 const uint8_t * configuration_description);
     };
 
 
@@ -1260,14 +1284,16 @@ simple_configuration_description_builder to()
     };
 
     std::pair<checkpoint_header_traits::const_arg_type, raft::util::call_on_delete> checkpoint_header_traits::build(uint64_t log_entry_index_end,
-														    uint64_t last_log_entry_term,
-														    uint64_t last_log_entry_cluster_time,
-														    uint64_t configuration_index,
-														    const uint8_t * configuration_description)
+        													    uint64_t last_log_entry_term,
+        													    uint64_t last_log_entry_cluster_time,
+        													    uint64_t configuration_index,
+        													    const uint8_t * configuration_description)
     {
       auto fbb = std::make_unique<::flatbuffers::FlatBufferBuilder>();
-      fbb->Finish(checkpoint_header_builder(*fbb).log_entry_index_end(log_entry_index_end).last_log_entry_term(last_log_entry_term).last_log_entry_cluster_time(last_log_entry_cluster_time).index(configuration_index).configuration(*configuration_description).finish());
-      auto ptr = ::flatbuffers::GetRoot<raft::fbs::checkpoint_header>(fbb->GetBufferPointer());
+      fbb->FinishSizePrefixed(checkpoint_header_builder(*fbb).log_entry_index_end(log_entry_index_end).last_log_entry_term(last_log_entry_term).last_log_entry_cluster_time(last_log_entry_cluster_time).index(configuration_index).configuration(*configuration_description).finish());
+      auto ptr = ::flatbuffers::GetSizePrefixedRoot<raft::fbs::checkpoint_header>(fbb->GetBufferPointer());
+      // fbb->Finish(checkpoint_header_builder(*fbb).log_entry_index_end(log_entry_index_end).last_log_entry_term(last_log_entry_term).last_log_entry_cluster_time(last_log_entry_cluster_time).index(configuration_index).configuration(*configuration_description).finish());
+      // auto ptr = ::flatbuffers::GetRoot<raft::fbs::checkpoint_header>(fbb->GetBufferPointer());
       return std::pair<checkpoint_header_traits::const_arg_type, raft::util::call_on_delete>(ptr, [f = std::move(fbb)](){});
     }
     

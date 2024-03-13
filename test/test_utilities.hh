@@ -19,6 +19,282 @@
 
 namespace raft {
   namespace test {
+    class in_memory_checkpoint_block
+    {
+    public:
+      const uint8_t * block_data_;
+      std::size_t block_length_;
+
+      in_memory_checkpoint_block()
+        :
+        block_data_(nullptr),
+        block_length_(0)
+      {
+      }
+
+      in_memory_checkpoint_block(const in_memory_checkpoint_block & ) = delete;
+      
+      in_memory_checkpoint_block(in_memory_checkpoint_block && rhs)
+        :
+        block_data_(rhs.block_data_),
+        block_length_(rhs.block_length_)
+      {
+        rhs.block_data_ = nullptr;
+        rhs.block_length_ = 0;
+      }
+
+      in_memory_checkpoint_block(const uint8_t * block_data, std::size_t block_length)
+        :
+        block_data_(block_data),
+        block_length_(block_length)
+      {
+      }
+
+      in_memory_checkpoint_block & operator=(const in_memory_checkpoint_block & ) = delete;
+      
+      in_memory_checkpoint_block & operator=(in_memory_checkpoint_block && rhs)
+      {
+        if (this != &rhs) {
+          block_data_ = rhs.block_data_;
+          block_length_ = rhs.block_length_;
+          rhs.block_data_ = nullptr;
+          rhs.block_length_ = 0;
+        }
+        return *this;
+      }
+      
+      const void * data() const
+      {
+        return block_data_;
+      }
+
+      size_t size() const
+      {
+        return block_length_;
+      }
+
+      bool is_null() const {
+        return block_data_ == nullptr;
+      }
+    };
+
+    // TODO: What abstractions are needed for representation of checkpoints.
+    // For example, for a real system this is likely to be on disk (at least somewhere "reliable")
+    // but is it a dedicated file, is it just a bunch of blocks scattered throughout a file or something else entirely?
+    // Right now I'm representing a checkpoint as a list of blocks with an implementation as an
+    // array of data (could be a linked list of stuff as well).
+    // TODO: This block stuff is half baked because it isn't consistent with the ack'ing protocol that is expressed
+    // in terms of byte offsets; it works but it's goofy.
+    template<typename _Messages>
+    class in_memory_checkpoint_data
+    {
+    public:
+      typedef typename _Messages::checkpoint_header_type header_type;
+    private:
+      // We have to use a generic deleter for the header because the header
+      // may or may not be embedded in a larger chunk of memory.
+      // 1) If we initialize the checkpoint then the header is created directly
+      // 2) If the checkpoint is sent to us then it is embedded in an append_checkpoint_chunk message
+      const header_type * header_;
+      raft::util::call_on_delete header_deleter_;
+      std::vector<uint8_t> data_;
+      std::size_t block_size_;
+      std::deque<raft::util::move_only_nullary_function> * completion_queue_;
+    public:
+      in_memory_checkpoint_data(const header_type * header,
+                                raft::util::call_on_delete && deleter,
+                                std::size_t block_size,
+                                std::deque<raft::util::move_only_nullary_function> * completion_queue)
+        :
+        header_(header),
+        header_deleter_(std::move(deleter)),
+        block_size_(block_size),
+        completion_queue_(completion_queue)
+      {
+      }
+
+      std::size_t block_size() const
+      {
+        return block_size_;
+      }
+
+      const header_type & header() const
+      {
+        return *header_;
+      }
+
+      template<typename _Callback>
+      void block_at_offset(std::chrono::time_point<std::chrono::steady_clock> clock_now, uint64_t offset, _Callback && cb) const {
+        if (offset >= data_.size()) {
+          cb(clock_now, in_memory_checkpoint_block());
+          return;	
+        }
+      
+        std::size_t next_block_start = offset;
+        std::size_t next_block_end = (std::min)(next_block_start+block_size_, data_.size());
+        std::size_t next_block_size = next_block_end - next_block_start;
+        in_memory_checkpoint_block block(&data_[next_block_start], next_block_size);
+        if (nullptr != completion_queue_) {
+          completion_queue_->push_back([clock_now, block = std::move(block), cb = std::move(cb)]() mutable {
+                                         cb(clock_now, std::move(block));
+                                       });
+        } else {
+          cb(clock_now, std::move(block));
+        }
+      }
+    
+      template<typename _Callback>
+      void next_block(std::chrono::time_point<std::chrono::steady_clock> clock_now, const in_memory_checkpoint_block & current_block, _Callback && cb) {
+        if (current_block.is_null()) {
+          in_memory_checkpoint_block block(&data_[0], (std::min)(block_size_, data_.size()));
+          if (nullptr != completion_queue_) {
+            completion_queue_->push_back([clock_now, block = std::move(block), cb = std::move(cb)]() mutable {
+                                           cb(clock_now, std::move(block));
+                                         });
+          } else {
+            cb(clock_now, std::move(block));
+          }
+          return;
+        } else if (!is_final(current_block)) {
+          std::size_t next_block_start = (current_block.block_data_ - &data_[0]) + current_block.block_length_;
+          std::size_t next_block_end = (std::min)(next_block_start+block_size_, data_.size());
+          std::size_t next_block_size = next_block_end - next_block_start;
+          in_memory_checkpoint_block block(&data_[next_block_start], next_block_size);
+          if (nullptr != completion_queue_) {
+            completion_queue_->push_back([clock_now, block = std::move(block), cb = std::move(cb)]() mutable {
+                                           cb(clock_now, std::move(block));
+                                         });
+          } else {
+            cb(clock_now, std::move(block));
+          }
+          return;
+        } else {
+          cb(clock_now, in_memory_checkpoint_block());
+          return;
+        }
+      }
+
+      uint64_t block_begin(const in_memory_checkpoint_block & current_block) const {
+        return current_block.block_data_ - &data_[0];
+      }
+
+      uint64_t block_end(const in_memory_checkpoint_block & current_block) const {
+        return current_block.block_length_ + block_begin(current_block);
+      }
+
+      bool is_final(const in_memory_checkpoint_block & current_block) {
+        return !current_block.is_null() &&
+          (current_block.block_data_ + current_block.block_length_) == &data_[data_.size()];
+      }
+
+      template<typename _Callback>
+      void write(std::chrono::time_point<std::chrono::steady_clock> clock_now,
+                 const uint8_t * data, std::size_t len,
+                 _Callback && cb)
+      {
+        for(std::size_t i=0; i<len; ++i) {
+          data_.push_back(data[i]);
+        }
+        if (nullptr != completion_queue_) {
+          completion_queue_->push_back([clock_now, cb = std::move(cb)]() {
+                                         cb(clock_now);
+                                       });
+        } else {
+          cb(clock_now);
+        }
+      }
+
+      template<typename _Callback>
+      void sync(std::chrono::time_point<std::chrono::steady_clock> clock_now,
+                _Callback && cb)
+      {
+        if (nullptr != completion_queue_) {
+          completion_queue_->push_back([clock_now, cb = std::move(cb)]() {
+                                         cb(clock_now);
+                                       });
+        } else {
+          cb(clock_now);
+        }
+      }
+
+      // Just for testing
+      std::size_t size() const
+      {
+        return data_.size();
+      }
+    };
+
+
+    // Checkpoints live here
+    template<typename _Messages>
+    class in_memory_checkpoint_data_store
+    {
+    public:
+      typedef in_memory_checkpoint_data<_Messages> checkpoint_data_type;
+      typedef std::shared_ptr<checkpoint_data_type> checkpoint_data_ptr;
+      typedef typename _Messages::checkpoint_header_type header_type;
+      typedef typename _Messages::checkpoint_header_traits_type header_traits_type;
+      typedef in_memory_checkpoint_block block_type;
+      typedef typename _Messages::configuration_checkpoint_type configuration_type;
+    private:
+      checkpoint_data_ptr last_checkpoint_;
+      std::size_t block_size_ = 1024*1024;
+      mutable std::deque<raft::util::move_only_nullary_function> completion_queue_;
+      bool asynchronous_ = true;
+    public:
+      std::size_t block_size() const
+      {
+        return block_size_;
+      }
+      void block_size(std::size_t val)
+      {
+        block_size_ = val;
+      }
+      bool asynchronous() const
+      {
+        return asynchronous_;
+      }
+      void asynchronous(bool val)
+      {
+        asynchronous_ = val;
+      }
+      checkpoint_data_ptr create(const header_type * header, raft::util::call_on_delete && deleter) const
+      {
+        return checkpoint_data_ptr(new checkpoint_data_type(header, std::move(deleter), block_size_, asynchronous_ ? &completion_queue_ : nullptr));
+      }
+      checkpoint_data_ptr create(std::pair<const header_type *, raft::util::call_on_delete> && header) const
+      {
+        return checkpoint_data_ptr(new checkpoint_data_type(header.first, std::move(header.second), block_size_, asynchronous_ ? &completion_queue_ : nullptr));
+      }
+      template<typename _Callback>
+      void commit(std::chrono::time_point<std::chrono::steady_clock> clock_now,
+                  checkpoint_data_ptr f,
+                  _Callback && cb)
+      {
+        // if (asynchronous_) {
+        //   completion_queue_.push_back([this, clock_now, f, cb = std::move(cb)]() {
+        //                                 last_checkpoint_ = f;
+        //                                 cb(clock_now);
+        //                               });
+        // } else {
+          last_checkpoint_ = f;
+          cb(clock_now);
+        // }
+      }
+      void discard(checkpoint_data_ptr f)
+      {
+        // TODO: Perform any necessary cleanup (e.g. on disk data)
+      }
+      checkpoint_data_ptr last_checkpoint() {
+        return last_checkpoint_;
+      }
+
+      std::deque<raft::util::move_only_nullary_function> & completion_queue()
+      {
+        return completion_queue_;
+      }
+    };
+
     template<typename _Messages>
     class builder_metafunction
     {
@@ -58,6 +334,15 @@ namespace raft {
       struct apply
       {
         typedef raft::util::builder_communicator<_Messages, typename builder_metafunction<_Messages>::type, variant_base_communicator<_Messages>> type;
+      };
+    };
+
+    struct in_memory_checkpoint_metafunction
+    {
+      template <typename _Messages>
+      struct apply
+      {
+        typedef in_memory_checkpoint_data_store<_Messages> type;
       };
     };
 
@@ -191,7 +476,7 @@ namespace raft {
       typedef typename _TestType::builders_type::linearizable_command_request_builder_type linearizable_command_request_builder;
       typedef typename _TestType::builders_type::open_session_request_builder_type open_session_request_builder;
       typedef typename _TestType::serialization_type serialization_type;
-      typedef raft::protocol<generic_communicator_metafunction, typename _TestType::messages_type> raft_type;
+      typedef raft::protocol<generic_communicator_metafunction, in_memory_checkpoint_metafunction, typename _TestType::messages_type> raft_type;
       typedef client<typename _TestType::messages_type> client_type;
       std::size_t cluster_size;
       typename raft_type::communicator_type comm;
@@ -209,7 +494,7 @@ namespace raft {
 
       // append_checkpoint_chunk_request_arg_type six_servers;
       template<typename _Builder>
-      void add_five_servers(_Builder b)
+      static void add_five_servers(_Builder b)
       {
         b.server().id(0).address("192.168.1.1");
         b.server().id(1).address("192.168.1.2");
@@ -218,7 +503,7 @@ namespace raft {
         b.server().id(4).address("192.168.1.5"); 
       }
       template<typename _Builder>
-      void add_six_servers(_Builder b)
+      static void add_six_servers(_Builder b)
       {
         b.server().id(0).address("192.168.1.1");
         b.server().id(1).address("192.168.1.2");
@@ -266,6 +551,9 @@ namespace raft {
           BOOST_CHECK_EQUAL(5U, cm->configuration().num_known_peers());
           BOOST_CHECK(cm->configuration().includes_self());
           protocol.reset(new raft_type(comm, l, store, *cm.get(), now));
+          bool restored = false;
+          protocol->start(now, [&restored](std::chrono::time_point<std::chrono::steady_clock> clock_now){ BOOST_TEST(!restored); restored = true; });
+          BOOST_CHECK(restored);
           BOOST_CHECK_EQUAL(0U, protocol->current_term());
           BOOST_CHECK_EQUAL(0U, protocol->cluster_time());
           BOOST_CHECK_EQUAL(0U, protocol->commit_index());
@@ -282,6 +570,9 @@ namespace raft {
           l.append(leb.finish());
           l.update_header(0, raft_type::INVALID_PEER_ID());
           protocol.reset(new raft_type(comm, l, store, *cm.get(), now));
+          bool restored = false;
+          protocol->start(now, [&restored](std::chrono::time_point<std::chrono::steady_clock> clock_now){ BOOST_TEST(!restored); restored = true; });
+          BOOST_CHECK(restored);
           BOOST_CHECK(cm->configuration().is_valid());
           BOOST_CHECK_EQUAL(0U, cm->configuration().configuration_id());
           BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
@@ -298,6 +589,9 @@ namespace raft {
         } else if (init == TestFixtureInitialization::EMPTY) {
           l.update_header(0, raft_type::INVALID_PEER_ID());
           protocol.reset(new raft_type(comm, l, store, *cm.get(), now));
+          bool restored = false;
+          protocol->start(now, [&restored](std::chrono::time_point<std::chrono::steady_clock> clock_now){ BOOST_TEST(!restored); restored = true; });
+          BOOST_CHECK(restored);
           BOOST_CHECK(!cm->configuration().is_valid());
           BOOST_CHECK_EQUAL(std::numeric_limits<uint64_t>::max(), cm->configuration().configuration_id());
           BOOST_CHECK_EQUAL(0U, cm->configuration().my_cluster_id());
@@ -311,7 +605,7 @@ namespace raft {
           BOOST_CHECK_EQUAL(0U, l.index_begin());
           BOOST_CHECK_EQUAL(0U, l.index_end());
         }
-        protocol->set_state_machine_for_checkpoint([this](raft::checkpoint_block b, bool is_final) {
+        protocol->set_state_machine_for_checkpoint([this](const typename raft_type::checkpoint_block_type & b, bool is_final) {
                                                      if (!b.is_null()) {
                                                        auto buf = reinterpret_cast<const uint8_t *>(b.data());
                                                        this->checkpoint_load_state.insert(this->checkpoint_load_state.end(), buf, buf+b.size());
@@ -342,6 +636,20 @@ namespace raft {
       void stage_new_server(uint64_t term, uint64_t commit_index);
       void check_configuration_servers(uint64_t term, uint64_t request_id, uint64_t configuration_id, std::size_t num_servers);
       void check_configuration_retry(uint64_t term, uint64_t request_id);
+      void complete_checkpoint(typename raft_type::checkpoint_data_ptr ckpt)
+      {
+        bool completed = false;
+        this->protocol->complete_checkpoint(ckpt, this->now, [&completed](std::chrono::time_point<std::chrono::steady_clock> clock_now) { completed = true; });
+        // if (this->store.asynchronous()) {
+        //   BOOST_CHECK(!completed);
+        //   BOOST_REQUIRE_EQUAL(1U, this->store.completion_queue().size());
+        //   this->store.completion_queue().front()();
+        //   BOOST_CHECK(completed);
+        //   this->store.completion_queue().pop_front();
+        // } else {
+          BOOST_CHECK(completed);
+        // }
+      }
     };
 
     template<typename _TestType>
@@ -599,7 +907,9 @@ namespace raft {
       BOOST_REQUIRE_EQUAL(0U, comm.q.size());
       BOOST_CHECK(log_header_write_.empty());
 
-      protocol->on_checkpoint_sync();
+      bool synced = false;
+      protocol->on_checkpoint_sync(now, [&synced]() { BOOST_CHECK(!synced); synced = true; });
+      BOOST_CHECK(synced);
       BOOST_CHECK(!protocol->log_header_sync_required());
       BOOST_CHECK_EQUAL(term, protocol->current_term());
       BOOST_CHECK_EQUAL(initial_cluster_time, protocol->cluster_time());
@@ -847,7 +1157,7 @@ namespace raft {
         }
         expected += 1;
         this->comm.q.pop_back();
-      }      
+      }
     }
   }
 }

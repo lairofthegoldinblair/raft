@@ -1,6 +1,4 @@
-#include <string>
 #include <boost/algorithm/string/predicate.hpp>
-#include <boost/circular_buffer.hpp>
 #include <boost/format.hpp>
 #include <boost/log/core.hpp>
 #include <boost/log/trivial.hpp>
@@ -10,168 +8,9 @@
 #include "flatbuffers/raft_flatbuffer_messages.hh"
 #include "flatbuffers/serialization.hh"
 #include "protocol.hh"
+#include "examples/circular_buffer/circular_buffer.hh"
 
 namespace po = boost::program_options;
-
-// This is the state machine.                                                                                                                                                                                         
-template<typename _Messages, typename _Serialization>
-struct logger
-{
-  typedef _Messages messages_type;
-  typedef _Serialization serialization_type;
-  typedef typename messages_type::linearizable_command_request_traits_type linearizable_command_request_traits_type;
-  typedef typename messages_type::log_entry_command_traits_type log_entry_command_traits_type;
-  typedef typename serialization_type::log_entry_command_view_deserialization_type log_entry_command_view_deserialization_type;
-  typedef raft::checkpoint_data_store<messages_type> checkpoint_data_store_type;
-  typedef typename checkpoint_data_store_type::checkpoint_data_ptr checkpoint_data_ptr;
-  struct continuation
-  {
-    log_entry_command_view_deserialization_type cmd;
-    std::function<void(bool, std::pair<raft::slice, raft::util::call_on_delete> &&)> callback;
-
-    template<typename _Callback>
-    continuation(log_entry_command_view_deserialization_type && _cmd, _Callback && cb)
-      :
-      cmd(std::move(_cmd)),
-      callback(std::move(cb))
-    {
-    }
-  };
-
-  logger()
-    :
-    commands(1000000)
-  {
-  }
-  
-  boost::circular_buffer<std::string> commands;
-  std::unique_ptr<continuation> cont;
-  std::vector<uint8_t> checkpoint_buffer_;
-  enum checkpoint_restore_state { START, READ_COMMANDS_SIZE, READ_COMMAND_SIZE, READ_COMMAND };
-  checkpoint_restore_state state_;
-  raft::slice checkpoint_slice_;
-  std::size_t checkpoint_commands_size_;
-  std::size_t checkpoint_command_size_;
-  bool async = false;
-  void complete()
-  {
-    if (!cont) {
-      return;
-    }
-    ;
-    auto c = linearizable_command_request_traits_type::command(log_entry_command_traits_type::linearizable_command(cont->cmd.view()));
-    commands.push_back(std::string(reinterpret_cast<const char *>(c.data()), c.size()));
-    // Must reset cont before the callback because the callback may add a new async command                                                                                                                           
-    // from the log.   If we reset it after that then we'll lose a async call.                                                                                                                                        
-    auto tmp = std::move(cont);
-    cont.reset();
-    tmp->callback(true, std::make_pair(raft::slice(), raft::util::call_on_delete()));
-  }
-  template<typename _Callback>
-  void on_command(log_entry_command_view_deserialization_type && cmd, _Callback && cb)
-  {
-    cont = std::make_unique<continuation>(std::move(cmd), std::move(cb));
-    if (!async) {
-      complete();
-    }
-  }
-  void checkpoint(checkpoint_data_ptr ckpt)
-  {
-    boost::endian::little_uint32_t sz = commands.size();
-    ckpt->write(reinterpret_cast<const uint8_t *>(&sz), sizeof(boost::endian::little_uint32_t));    
-    for(auto & c : commands) {
-      sz = c.size();
-      ckpt->write(reinterpret_cast<const uint8_t *>(&sz), sizeof(boost::endian::little_uint32_t));
-      ckpt->write(reinterpret_cast<const uint8_t *>(c.c_str()), c.size());
-    }
-  }
-  void restore_checkpoint_block(raft::slice && s, bool is_final)
-  {
-    if (nullptr == s.data()) {
-      state_ = START;
-    }
-    checkpoint_slice_ = std::move(s);
-
-    switch(state_) {
-    case START:
-      commands.resize(0);
-      if (1024 > checkpoint_buffer_.capacity()) {
-        checkpoint_buffer_.reserve(1024);
-      }
-      checkpoint_buffer_.resize(0);
-      while (true) {
-        if (0 == checkpoint_slice_.size()) {
-          state_ = READ_COMMANDS_SIZE;
-          return;
-        case READ_COMMANDS_SIZE:
-          ;
-        }
-        BOOST_ASSERT(0 < checkpoint_slice_.size());
-        if (0 == checkpoint_buffer_.size() && s.size() >= sizeof(boost::endian::little_uint32_t)) {
-          checkpoint_commands_size_ = *reinterpret_cast<const boost::endian::little_uint32_t *>(checkpoint_slice_.data());
-          checkpoint_slice_ += sizeof(boost::endian::little_uint32_t);
-          break;
-        } else {
-          std::size_t to_insert = sizeof(boost::endian::little_uint32_t) > checkpoint_buffer_.size() ? sizeof(boost::endian::little_uint32_t) - checkpoint_buffer_.size() : 0;
-          to_insert = to_insert > checkpoint_slice_.size() ? checkpoint_slice_.size() : to_insert;
-          auto begin = reinterpret_cast<const uint8_t *>(checkpoint_slice_.data());
-          auto end = begin + to_insert;
-          checkpoint_buffer_.insert(checkpoint_buffer_.end(), begin, end);
-          checkpoint_slice_ += to_insert;
-          if (checkpoint_buffer_.size() >= sizeof(boost::endian::little_uint32_t)) {
-            checkpoint_commands_size_ = *reinterpret_cast<const boost::endian::little_uint32_t *>(&checkpoint_buffer_[0]);
-            checkpoint_buffer_.resize(0);
-            break;
-          }
-        }
-      }
-      while(commands.size() < checkpoint_commands_size_) {
-        while (true) {
-          if (0 == checkpoint_slice_.size()) {
-            state_ = READ_COMMAND_SIZE;
-            return;
-          case READ_COMMAND_SIZE:
-            ;
-          }
-          BOOST_ASSERT(0 < checkpoint_slice_.size());
-          if (0 == checkpoint_buffer_.size() && s.size() >= sizeof(boost::endian::little_uint32_t)) {
-            checkpoint_command_size_ = *reinterpret_cast<const boost::endian::little_uint32_t *>(checkpoint_slice_.data());
-            checkpoint_slice_ += sizeof(boost::endian::little_uint32_t);
-            break;
-          } else {
-            std::size_t to_insert = sizeof(boost::endian::little_uint32_t) > checkpoint_buffer_.size() ? sizeof(boost::endian::little_uint32_t) - checkpoint_buffer_.size() : 0;
-            to_insert = to_insert > checkpoint_slice_.size() ? checkpoint_slice_.size() : to_insert;
-            auto begin = reinterpret_cast<const uint8_t *>(checkpoint_slice_.data());
-            auto end = begin + to_insert;
-            checkpoint_buffer_.insert(checkpoint_buffer_.end(), begin, end);
-            checkpoint_slice_ += to_insert;
-            if (checkpoint_buffer_.size() >= sizeof(boost::endian::little_uint32_t)) {
-              checkpoint_command_size_ = *reinterpret_cast<const boost::endian::little_uint32_t *>(&checkpoint_buffer_[0]);
-              checkpoint_buffer_.resize(0);
-              break;
-            }
-          }
-        }
-        commands.push_back(std::string());
-        while(commands.back().size() < checkpoint_command_size_) {
-          if (0 == checkpoint_slice_.size()) {
-            state_ = READ_COMMAND;
-            return;
-          case READ_COMMAND:
-            ;
-          }
-          std::size_t to_append =  checkpoint_command_size_ - commands.back().size();
-          to_append = to_append > checkpoint_slice_.size() ? checkpoint_slice_.size() : to_append;
-          commands.back().append(reinterpret_cast<const char *>(checkpoint_slice_.data()), to_append);
-          checkpoint_slice_ += to_append;
-        }
-        if (commands.size() == checkpoint_commands_size_ && !is_final) {
-          throw std::runtime_error("INVALID CHECKPOINT");
-        }
-      }
-    }
-  }
-};
 
 template<typename _TestType>
 int run_server(int argc, char ** argv)
@@ -185,7 +24,7 @@ int run_server(int argc, char ** argv)
   typedef typename _TestType::builders_type::linearizable_command_request_builder_type linearizable_command_request_builder;
   typedef typename _TestType::messages_type::client_response_traits_type client_response_traits;
   typedef raft::asio::serialization<typename _TestType::messages_type, typename _TestType::serialization_type> serialization_type;
-  typedef logger<typename _TestType::messages_type, typename _TestType::serialization_type> state_machine_type;
+  typedef logger<typename _TestType::messages_type, typename _TestType::serialization_type, raft::asio::checkpoint_metafunction<typename _TestType::serialization_type>> state_machine_type;
   typedef raft::asio::tcp_server<typename _TestType::messages_type, typename _TestType::builders_type, typename _TestType::serialization_type, state_machine_type> tcp_server_type;
 
   uint32_t id=0;
