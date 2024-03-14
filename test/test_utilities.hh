@@ -87,8 +87,12 @@ namespace raft {
 
     inline int32_t string_slice_compare(std::string_view str, raft::slice && sl)
     {
-      std::string_view tmp(raft::slice::buffer_cast<const char *>(sl), raft::slice::buffer_size(sl));
-      return str.compare(tmp);
+      auto cmp_len = (std::min)(str.size(), sl.size());
+      auto cmp = ::memcmp(str.data(), sl.data(), cmp_len);
+      if (cmp != 0) return cmp;
+      if (str.size() < sl.size()) return -1;
+      if (str.size() > sl.size()) return 1;
+      return 0;
     }
 
     template<typename _Messages>

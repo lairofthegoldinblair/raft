@@ -101,7 +101,7 @@ namespace raft {
       sz += sizeof(boost::endian::little_uint64_t);
       sz += sizeof(boost::endian::little_uint64_t);
       sz += sizeof(boost::endian::little_uint64_t);
-      for(auto & m : s.second->memo_) {
+      for(const auto & m : s.second->memo_) {
         sz += sizeof(boost::endian::little_uint64_t);
         sz += sizeof(boost::endian::little_uint64_t);
         sz += m.second.first.size();
@@ -121,7 +121,7 @@ namespace raft {
       sz += sizeof(boost::endian::little_uint64_t);
       *reinterpret_cast<boost::endian::little_uint64_t *>((b+sz).data()) = s.second->memo_.size();
       sz += sizeof(boost::endian::little_uint64_t);
-      for(auto & m : s.second->memo_) {
+      for(const auto & m : s.second->memo_) {
         *reinterpret_cast<boost::endian::little_uint64_t *>((b+sz).data()) = m.first;
         sz += sizeof(boost::endian::little_uint64_t);
         *reinterpret_cast<boost::endian::little_uint64_t *>((b+sz).data()) = m.second.first.size();

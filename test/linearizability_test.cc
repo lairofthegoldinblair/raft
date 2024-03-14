@@ -105,6 +105,64 @@ BOOST_AUTO_TEST_CASE_TEMPLATE(TestLinearizableCommandSerialization, _TestType, t
   BOOST_CHECK_EQUAL(seq, linearizable_command_request_traits::sequence_number(msg2));
 }
 
+BOOST_AUTO_TEST_CASE_TEMPLATE(TestClientSessionStateSerializationEmptyMemo, _TestType, test_types)
+{
+  typedef raft::state_machine::client_session_state<typename _TestType::messages_type> client_session_state;
+  uint64_t session_id = 92344543U;
+  uint64_t cluster_time = 29344542U;
+  std::pair<const uint64_t, std::unique_ptr<client_session_state>> before(session_id, std::make_unique<client_session_state>(cluster_time));
+  auto sz = client_session_state::serialize_helper(before);
+  BOOST_CHECK_EQUAL(32U, sz);
+  std::vector<uint8_t> buf(sz);
+  sz = client_session_state::serialize_helper(raft::mutable_slice(&buf[0], buf.size()), before);
+  BOOST_CHECK_EQUAL(32U, sz);
+  std::pair<uint64_t, std::unique_ptr<client_session_state>> after;
+  sz = client_session_state::deserialize_helper(raft::slice(&buf[0], buf.size()), after);
+  BOOST_CHECK_EQUAL(32U, sz);
+  BOOST_CHECK_EQUAL(session_id, after.first);
+  BOOST_CHECK_EQUAL(cluster_time, after.second->last_command_received_cluster_time());
+}
+
+BOOST_AUTO_TEST_CASE_TEMPLATE(TestClientSessionStateSerializationNonEmptyMemo, _TestType, test_types)
+{
+  typedef typename _TestType::messages_type::log_entry_command_traits_type log_entry_command_traits;
+  typedef typename _TestType::messages_type::linearizable_command_request_traits_type::arg_type linearizable_command_request_arg_type;
+  typedef typename _TestType::messages_type::linearizable_command_request_traits_type linearizable_command_request_traits;
+  typedef typename _TestType::builders_type::linearizable_command_request_builder_type linearizable_command_request_builder;
+  typedef typename _TestType::builders_type::log_entry_builder_type log_entry_builder;
+  typedef typename _TestType::serialization_type serialization_type;
+  typedef raft::state_machine::client_session_state<typename _TestType::messages_type> client_session_state;
+  uint64_t session_id = 92344543U;
+  uint64_t unack = 82348235U;
+  uint64_t seq = 92377713U;
+
+  uint64_t cluster_time = 29344542U;
+  std::pair<const uint64_t, std::unique_ptr<client_session_state>> before(session_id, std::make_unique<client_session_state>(cluster_time));
+
+  // Memoize a result
+  auto req = linearizable_command_request_builder().session_id(session_id).first_unacknowledged_sequence_number(unack).sequence_number(seq).finish();  
+  auto lec = serialization_type::serialize_log_entry_command(std::move(req));
+  auto le = log_entry_builder().term(1).cluster_time(cluster_time).data(raft::slice(reinterpret_cast<const uint8_t *>(lec.first.data()), lec.first.size())).finish();
+  typename serialization_type::log_entry_command_view_deserialization_type view(le.first);
+  auto ret = before.second->apply(log_entry_command_traits::linearizable_command(view.view()), cluster_time);
+  BOOST_CHECK(ret);
+  std::string response("response");
+  before.second->update_response(seq, std::make_pair(raft::slice::create(response), raft::util::call_on_delete()));
+  
+  auto sz = client_session_state::serialize_helper(before);
+  BOOST_CHECK_EQUAL(56U, sz);
+  std::vector<uint8_t> buf(sz);
+  sz = client_session_state::serialize_helper(raft::mutable_slice(&buf[0], buf.size()), before);
+  BOOST_CHECK_EQUAL(56U, sz);
+  std::pair<uint64_t, std::unique_ptr<client_session_state>> after;
+  sz = client_session_state::deserialize_helper(raft::slice(&buf[0], buf.size()), after);
+  BOOST_CHECK_EQUAL(56U, sz);
+  BOOST_CHECK_EQUAL(session_id, after.first);
+  BOOST_CHECK_EQUAL(cluster_time, after.second->last_command_received_cluster_time());
+  BOOST_REQUIRE_EQUAL(response.size(), after.second->response(seq).size());
+  BOOST_CHECK_EQUAL(0, memcmp(&response[0], after.second->response(seq).data(), response.size()));
+}
+
 // This protocol mock is a non-replicated log with the property that every command added is automatically and immediately "committed"
 // from the point of view of the state machine and session manager
 template<typename _Messages>
@@ -244,9 +302,12 @@ struct logger
     // from the log.   If we reset it after that then we'll lose a async call.
     auto tmp = std::move(cont);
     cont.reset();
-    std::string resp = commands.back();
-    raft::slice s = raft::slice::create(resp);
-    tmp->callback(true, std::make_pair(std::move(s), raft::util::call_on_delete([str = std::move(resp)](){})));
+    // Not safe to just copy the std::string because small strings will be allocated on the stack,
+    // so we force it to be on the heap.
+    uint8_t * resp = new uint8_t [commands.back().size()];
+    ::memcpy(resp, commands.back().c_str(), commands.back().size());
+    tmp->callback(true, std::make_pair(raft::slice(resp, commands.back().size()),
+                                       raft::util::call_on_delete([resp](){ delete [] resp; })));
   }
   template<typename _Callback>
   void on_command(log_entry_command_view_deserialization_type && cmd, _Callback && cb)
@@ -553,7 +614,7 @@ struct SessionManagerMockTestFixture
     BOOST_CHECK(messages_type::client_result_success() == client_response_traits::result(communicator.client_responses.at(endpoint)[0]));
     BOOST_CHECK_EQUAL(log_index, client_response_traits::index(communicator.client_responses.at(endpoint)[0]));
     BOOST_CHECK_EQUAL(protocol.leader_id_, client_response_traits::leader_id(communicator.client_responses.at(endpoint)[0]));
-    BOOST_CHECK(string_slice_compare(cmd, client_response_traits::response(communicator.client_responses.at(endpoint)[0])));
+    BOOST_CHECK_EQUAL(0, string_slice_compare(cmd, client_response_traits::response(communicator.client_responses.at(endpoint)[0])));
     communicator.client_responses.erase(endpoint);
   }
   
@@ -1016,7 +1077,7 @@ struct SessionManagerTestFixture : public raft::test::RaftTestFixtureBase<_TestT
     BOOST_CHECK(messages_type::client_result_success() == client_response_traits::result(communicator.client_responses.at(endpoint)[0]));
     BOOST_CHECK_EQUAL(log_index, client_response_traits::index(communicator.client_responses.at(endpoint)[0]));
     BOOST_CHECK_EQUAL(this->protocol->leader_id(), client_response_traits::leader_id(communicator.client_responses.at(endpoint)[0]));
-    BOOST_CHECK(string_slice_compare(cmd, client_response_traits::response(communicator.client_responses.at(endpoint)[0])));
+    BOOST_CHECK_EQUAL(0, string_slice_compare(cmd, client_response_traits::response(communicator.client_responses.at(endpoint)[0])));
     communicator.client_responses.erase(endpoint);
   }
   
